@@ -1,0 +1,16 @@
+[package]
+name = "wasix-based-evm"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+evm = { path = "../evm", default-features = false }
+evm-precompile = { path = "../evm/precompile", default-features = false }
+evm-interpreter = { path = "../evm/interpreter", default-features = false }
+alloy-primitives = "1.5.7"
+alloy-consensus = "1.6.3"
+alloy-genesis = "1.6.3"
+alloy-serde= "1.6.3"
+alloy-eips = "1.6.3"
+thiserror = "2.0.0"
+uint = "0.10.0"
