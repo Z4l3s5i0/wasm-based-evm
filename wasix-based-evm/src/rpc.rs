@@ -1,7 +1,7 @@
 use crate::executor::Executor;
 use crate::storage::{InMemoryStorage, Transaction, Block};
 use crate::ev::address_to_h160;
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, U256};
 use tonic::{Request, Response, Status};
 use std::sync::Arc;
 use tokio::sync::Mutex;
@@ -33,37 +33,35 @@ impl TransactionService for MyTransactionService {
             Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
         };
 
-        let tx = Transaction {
-            hash: B256::random(), // For demo, generate random hash
-            nonce: req.nonce,
-            from: from_addr,
-            to: to_addr,
-            value: U256::from(req.value),
-            data: req.data,
-            gas_limit: req.gas_limit,
-            gas_price: U256::from(req.gas_price),
-        };
+        let tx = Transaction::builder(from_addr)
+            .nonce(req.nonce)
+            .to(to_addr)
+            .value(U256::from(req.value))
+            .data(req.data)
+            .gas_limit(req.gas_limit)
+            .gas_price(U256::from(req.gas_price))
+            .build();
 
-        let block = Block {
-            number: 1, // Simplified for demo
-            hash: B256::random(),
-            parent_hash: B256::ZERO,
-            timestamp: 123456789,
-            transactions: vec![tx.hash],
-        };
+        let block = Block::builder(1)
+            .timestamp(123456789)
+            .add_transaction(tx.hash)
+            .build();
 
-        // Pre-fund the sender for demo purposes if balance is 0
-        {
-            let mut storage = self.storage.lock().await;
-            let from_h160 = address_to_h160(from_addr);
-            if !storage.backend.state.contains_key(&from_h160) {
-                storage.set_balance(from_addr, U256::from(1000000000000000000u64)); // 1 ETH
-            }
-        }
 
         let mut storage = self.storage.lock().await;
         match self.executor.execute(&mut *storage, tx.clone(), block) {
             Ok(_) => {
+                println!("Transaction executed successfully: {:?}", tx.hash);
+                let from_h160 = address_to_h160(from_addr);
+                let sender_balance = storage.backend.state.get(&from_h160).map(|a| a.balance).unwrap_or_default();
+                println!("new balance for sender {:?}", sender_balance);
+
+                if let Some(to_addr) = to_addr {
+                    let to_h160 = address_to_h160(to_addr);
+                    let receiver_balance = storage.backend.state.get(&to_h160).map(|a| a.balance).unwrap_or_default();
+                    println!("new balance for receiver {:?}", receiver_balance);
+                }
+
                 Ok(Response::new(TransactionResponse {
                     success: true,
                     message: "Transaction executed successfully".to_string(),
@@ -71,6 +69,7 @@ impl TransactionService for MyTransactionService {
                 }))
             }
             Err(e) => {
+                println!("Transaction failed: {:?}, error: {}", tx.hash, e);
                 Ok(Response::new(TransactionResponse {
                     success: false,
                     message: format!("Transaction failed: {}", e),

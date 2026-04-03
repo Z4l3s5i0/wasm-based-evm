@@ -17,7 +17,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "0.0.0.0:50051".parse()?;
     
     let chain_id = EvmU256::from(1);
-    let storage = Arc::new(Mutex::new(InMemoryStorage::new(chain_id)));
+    let storage_inner = InMemoryStorage::new(chain_id);
+    
+    // Log pre-funded accounts for clarity
+    for (h160, account) in &storage_inner.backend.state {
+        println!("Pre-funded account: 0x{:x}, balance: {} wei", h160, account.balance);
+    }
+
+    let storage = Arc::new(Mutex::new(storage_inner));
     let executor = Executor::new();
 
     let transaction_service = MyTransactionService {
