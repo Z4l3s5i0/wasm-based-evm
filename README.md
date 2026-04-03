@@ -17,3 +17,7 @@ import this line
 use alloc::vec::Vec;
 ```
 
+
+### references
+for the [Ethereum Json-Rpc specification](https://ethereum.github.io/execution-apis/)
+

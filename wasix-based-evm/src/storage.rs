@@ -251,6 +251,37 @@ impl InMemoryStorage {
         self.transactions.insert(tx.hash, tx);
     }
 
+    pub fn get_block_by_number(&self, number: u64) -> Option<&Block> {
+        self.blocks.get(&number)
+    }
+
+    pub fn get_block_by_hash(&self, hash: B256) -> Option<&Block> {
+        self.blocks.values().find(|b| b.hash == hash)
+    }
+
+    pub fn get_transaction_by_hash(&self, hash: B256) -> Option<&Transaction> {
+        self.transactions.get(&hash)
+    }
+
+    pub fn get_latest_block_number(&self) -> u64 {
+        self.blocks.keys().last().cloned().unwrap_or(0)
+    }
+
+    pub fn get_balance(&self, address: Address) -> U256 {
+        let h160 = H160::from_slice(address.as_slice());
+        self.backend.state.get(&h160)
+            .map(|a| {
+                let mut bytes = [0u8; 32];
+                a.balance.to_big_endian(&mut bytes);
+                U256::from_be_bytes(bytes)
+            })
+            .unwrap_or_default()
+    }
+
+    pub fn get_accounts(&self) -> Vec<Address> {
+        self.backend.state.keys().map(|h| Address::from(h.0)).collect()
+    }
+
     #[allow(dead_code)]
     pub fn set_contract_code(&mut self, address: Address, code: Vec<u8>) {
         self.contracts.insert(address, code.clone());

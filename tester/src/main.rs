@@ -31,5 +31,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     println!("RESPONSE: {:?}", response.into_inner());
 
+    println!("Querying accounts...");
+    let accounts = client.eth_accounts(tonic::Request::new(evm_rpc::Empty {})).await?;
+    println!("ACCOUNTS: {:?}", accounts.into_inner().addresses);
+
+    println!("Querying latest block number...");
+    let block_number = client.eth_block_number(tonic::Request::new(evm_rpc::Empty {})).await?;
+    println!("BLOCK NUMBER: {:?}", block_number.into_inner().number);
+
     Ok(())
 }
