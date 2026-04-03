@@ -1,5 +1,4 @@
-use crate::ev::{H160, H256, EvmU256, evm};
-use evm::uint::U256Ext;
+use crate::ev::{H160, EvmU256, evm};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, B256, U256};
 use std::collections::BTreeMap;
@@ -7,6 +6,7 @@ use std::collections::BTreeMap;
 #[derive(Debug, Clone)]
 pub struct Transaction {
     pub hash: B256,
+    #[allow(dead_code)]
     pub nonce: u64,
     pub from: Address,
     pub to: Option<Address>,
@@ -19,9 +19,12 @@ pub struct Transaction {
 #[derive(Debug, Clone)]
 pub struct Block {
     pub number: u64,
+    #[allow(dead_code)]
     pub hash: B256,
+    #[allow(dead_code)]
     pub parent_hash: B256,
     pub timestamp: u64,
+    #[allow(dead_code)]
     pub transactions: Vec<B256>,
 }
 
@@ -29,6 +32,7 @@ pub struct InMemoryStorage {
     pub backend: InMemoryBackend,
     pub blocks: BTreeMap<u64, Block>,
     pub transactions: BTreeMap<B256, Transaction>,
+    #[allow(dead_code)]
     pub contracts: BTreeMap<Address, Vec<u8>>,
 }
 
@@ -67,6 +71,7 @@ impl InMemoryStorage {
         self.transactions.insert(tx.hash, tx);
     }
 
+    #[allow(dead_code)]
     pub fn set_contract_code(&mut self, address: Address, code: Vec<u8>) {
         self.contracts.insert(address, code.clone());
         self.backend.state.entry(H160::from_slice(address.as_slice())).or_insert(InMemoryAccount {

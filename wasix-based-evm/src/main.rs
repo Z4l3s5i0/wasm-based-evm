@@ -1,7 +1,36 @@
 mod ev;
 mod executor;
 mod storage;
+mod rpc;
 
-fn main() {
+use crate::executor::Executor;
+use crate::storage::InMemoryStorage;
+use crate::rpc::MyTransactionService;
+use crate::rpc::evm_rpc::transaction_service_server::TransactionServiceServer;
+use crate::ev::EvmU256;
+use std::sync::Arc;
+use tokio::sync::Mutex;
+use tonic::transport::Server;
 
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let addr = "0.0.0.0:50051".parse()?;
+    
+    let chain_id = EvmU256::from(1);
+    let storage = Arc::new(Mutex::new(InMemoryStorage::new(chain_id)));
+    let executor = Executor::new();
+
+    let transaction_service = MyTransactionService {
+        storage,
+        executor,
+    };
+
+    println!("EVM gRPC Server listening on {}", addr);
+
+    Server::builder()
+        .add_service(TransactionServiceServer::new(transaction_service))
+        .serve(addr)
+        .await?;
+
+    Ok(())
 }

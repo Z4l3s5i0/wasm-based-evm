@@ -1,0 +1,22 @@
+syntax = "proto3";
+package evm_rpc;
+
+service TransactionService {
+  rpc ExecuteTransaction (TransactionRequest) returns (TransactionResponse);
+}
+
+message TransactionRequest {
+  string from = 1;
+  string to = 2;
+  uint64 value = 3;
+  bytes data = 4;
+  uint64 gas_limit = 5;
+  uint64 gas_price = 6;
+  uint64 nonce = 7;
+}
+
+message TransactionResponse {
+  bool success = 1;
+  string message = 2;
+  string tx_hash = 3;
+}

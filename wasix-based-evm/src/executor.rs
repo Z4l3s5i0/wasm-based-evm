@@ -1,13 +1,11 @@
-use crate::ev::{H160, H256, EvmU256, evm};
+use crate::ev::{H160, EvmU256, evm};
 use crate::storage::{InMemoryStorage, Transaction, Block};
-use evm::uint::U256Ext;
 use evm::{
     transact,
     backend::OverlayedBackend,
     standard::{Config, Invoker, ExecutionEtable, GasometerEtable, TransactArgs, TransactArgsCallCreate, TransactGasPrice, EtableResolver},
 };
 use evm_precompile::StandardPrecompileSet;
-use alloy_primitives::{B256, U256};
 
 pub struct Executor {
     pub config: Config,
@@ -81,7 +79,7 @@ mod tests {
     use super::*;
     use crate::storage::InMemoryStorage;
     use crate::ev::{H160, EvmU256};
-    use alloy_primitives::{address, uint};
+    use alloy_primitives::{address, uint, B256};
 
     #[test]
     fn test_executor_and_storage() {

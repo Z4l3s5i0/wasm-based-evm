@@ -1,0 +1,35 @@
+pub mod evm_rpc {
+    tonic::include_proto!("evm_rpc");
+}
+
+use evm_rpc::transaction_service_client::TransactionServiceClient;
+use evm_rpc::TransactionRequest;
+use alloy_primitives::{address, uint};
+
+#[tokio::main]
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut client = TransactionServiceClient::connect("http://127.0.0.1:50051").await?;
+
+    println!("Connected to EVM gRPC Server");
+
+    let from_addr = address!("0000000000000000000000000000000000000001");
+    let to_addr = address!("0000000000000000000000000000000000000002");
+    let _transfer_value = uint!(100000000000000000_U256); // 0.1 ETH
+
+    let request = tonic::Request::new(TransactionRequest {
+        from: from_addr.to_string(),
+        to: to_addr.to_string(),
+        value: 100000000000000000u64, // simplified for demo
+        data: vec![],
+        gas_limit: 100000,
+        gas_price: 1000000000,
+        nonce: 0,
+    });
+
+    println!("Sending transaction request...");
+    let response = client.execute_transaction(request).await?;
+
+    println!("RESPONSE: {:?}", response.into_inner());
+
+    Ok(())
+}
