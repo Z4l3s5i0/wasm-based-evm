@@ -39,6 +39,10 @@ impl TransactionService for MyTransactionService {
             Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
         };
 
+        let mut storage = self.storage.lock().await;
+        let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
+        let next_number = latest_block.number + 1;
+        
         let tx = Transaction::builder(from_addr)
             .nonce(req.nonce)
             .to(to_addr)
@@ -48,13 +52,12 @@ impl TransactionService for MyTransactionService {
             .gas_price(U256::from(req.gas_price))
             .build();
 
-        let block = Block::builder(1)
-            .timestamp(123456789)
+        let block = Block::builder(next_number)
+            .parent_hash(latest_block.hash)
+            .timestamp(latest_block.timestamp + 12) // Simple block time increment
             .add_transaction(tx.hash)
             .build();
 
-
-        let mut storage = self.storage.lock().await;
         match self.executor.execute(&mut *storage, tx.clone(), block) {
             Ok(_) => {
                 println!("Transaction executed successfully: {:?}", tx.hash);
@@ -202,6 +205,8 @@ impl TransactionService for MyTransactionService {
         let tx = storage.get_transaction_by_hash(hash)
             .ok_or_else(|| Status::not_found("Transaction not found"))?;
 
+        let block = storage.get_block_by_transaction_hash(hash);
+
         Ok(Response::new(TransactionInfoResponse {
             hash: format!("{:?}", tx.hash),
             nonce: tx.nonce,
@@ -210,9 +215,9 @@ impl TransactionService for MyTransactionService {
             value: tx.value.to_string(),
             data: tx.data.clone(),
             gas_limit: tx.gas_limit,
-            gas_price: tx.gas_price.to_string().parse().unwrap_or(0), // Simplified
-            block_number: 0, // Not stored in Transaction yet
-            block_hash: String::new(), // Not stored in Transaction yet
+            gas_price: tx.gas_price.to_string().parse().unwrap_or(0),
+            block_number: block.map(|b| b.number).unwrap_or(0),
+            block_hash: block.map(|b| format!("{:?}", b.hash)).unwrap_or_default(),
         }))
     }
 

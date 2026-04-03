@@ -263,6 +263,14 @@ impl InMemoryStorage {
         self.transactions.get(&hash)
     }
 
+    pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<&Block> {
+        self.blocks.values().find(|b| b.transactions.contains(&tx_hash))
+    }
+
+    pub fn get_latest_block(&self) -> Option<&Block> {
+        self.blocks.values().last()
+    }
+
     pub fn get_latest_block_number(&self) -> u64 {
         self.blocks.keys().last().cloned().unwrap_or(0)
     }
@@ -295,8 +303,10 @@ impl InMemoryStorage {
     }
 
     pub fn set_balance(&mut self, address: Address, balance: U256) {
-        let evm_balance = EvmU256::from_big_endian(&balance.to_be_bytes::<32>());
-        self.backend.state.entry(H160::from_slice(address.as_slice())).or_insert(InMemoryAccount {
+        let bytes = balance.to_be_bytes::<32>();
+        let evm_balance = EvmU256::from_big_endian(&bytes);
+        let h160 = H160::from_slice(address.as_slice());
+        self.backend.state.entry(h160).or_insert(InMemoryAccount {
             balance: evm_balance,
             code: Vec::new(),
             nonce: EvmU256::zero(),
