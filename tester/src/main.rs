@@ -69,7 +69,7 @@ enum Commands {
         #[arg(long)]
         to: String,
         #[arg(long, default_value = "0")]
-        value: u64,
+        value: String,
         #[arg(long, default_value = "")]
         data: String,
         #[arg(long, default_value = "21000")]
@@ -86,7 +86,7 @@ enum Commands {
         #[arg(long)]
         to: String,
         #[arg(long, default_value = "0")]
-        value: u64,
+        value: String,
         #[arg(long, default_value = "")]
         data: String,
         #[arg(long, default_value = "21000")]

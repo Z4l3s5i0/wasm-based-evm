@@ -74,3 +74,43 @@ impl Executor {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::{Address, U256};
+
+    #[test]
+    fn test_transfer_repro() {
+        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let executor = Executor::new();
+
+        let from = Address::with_last_byte(0x1);
+        let to = Address::with_last_byte(0x2);
+        let value = U256::from(1000);
+
+        storage.set_balance(from, U256::from(1000000000000000000u128));
+        storage.set_balance(to, U256::from(0));
+
+        let tx = Transaction::builder(from)
+            .to(Some(to))
+            .value(value)
+            .gas_limit(100000)
+            .gas_price(U256::from(1))
+            .build();
+
+        let latest = storage.get_latest_block().unwrap();
+        let block = Block::builder(latest.number + 1)
+            .parent_hash(latest.hash)
+            .timestamp(latest.timestamp + 12)
+            .add_transaction(tx.hash)
+            .build();
+
+        executor.execute(&mut storage, tx, block).unwrap();
+
+        let from_balance = storage.get_balance(from);
+        let to_balance = storage.get_balance(to);
+
+        assert_eq!(to_balance, value, "Receiver balance should be updated");
+    }
+}
+

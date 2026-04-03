@@ -90,7 +90,7 @@ message TransactionInfoResponse {
 message TransactionRequest {
   string from = 1;
   string to = 2;
-  uint64 value = 3;
+  string value = 3;
   bytes data = 4;
   uint64 gas_limit = 5;
   uint64 gas_price = 6;

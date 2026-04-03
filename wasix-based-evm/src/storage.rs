@@ -277,13 +277,13 @@ impl InMemoryStorage {
 
     pub fn get_balance(&self, address: Address) -> U256 {
         let h160 = H160::from_slice(address.as_slice());
-        self.backend.state.get(&h160)
-            .map(|a| {
-                let mut bytes = [0u8; 32];
-                a.balance.to_big_endian(&mut bytes);
-                U256::from_be_bytes(bytes)
-            })
-            .unwrap_or_default()
+        if let Some(a) = self.backend.state.get(&h160) {
+            let mut bytes = [0u8; 32];
+            a.balance.to_big_endian(&mut bytes);
+            U256::from_be_bytes(bytes)
+        } else {
+            U256::ZERO
+        }
     }
 
     pub fn get_accounts(&self) -> Vec<Address> {

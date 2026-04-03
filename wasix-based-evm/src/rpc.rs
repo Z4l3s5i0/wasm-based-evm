@@ -1,6 +1,5 @@
 use crate::executor::Executor;
 use crate::storage::{InMemoryStorage, Transaction, Block};
-use crate::ev::address_to_h160;
 use alloy_primitives::{Address, U256, B256};
 use tonic::{Request, Response, Status};
 use std::sync::Arc;
@@ -43,14 +42,21 @@ impl TransactionService for MyTransactionService {
         let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
         let next_number = latest_block.number + 1;
         
+        let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
+            // Try hex if decimal fails
+            U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
+        }).map_err(|_| Status::invalid_argument("Invalid value"))?;
+
         let tx = Transaction::builder(from_addr)
             .nonce(req.nonce)
             .to(to_addr)
-            .value(U256::from(req.value))
+            .value(val_u256)
             .data(req.data)
             .gas_limit(req.gas_limit)
             .gas_price(U256::from(req.gas_price))
             .build();
+
+        println!("DEBUG: Executing tx: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
 
         let block = Block::builder(next_number)
             .parent_hash(latest_block.hash)
@@ -61,14 +67,12 @@ impl TransactionService for MyTransactionService {
         match self.executor.execute(&mut *storage, tx.clone(), block) {
             Ok(_) => {
                 println!("Transaction executed successfully: {:?}", tx.hash);
-                let from_h160 = address_to_h160(from_addr);
-                let sender_balance = storage.backend.state.get(&from_h160).map(|a| a.balance).unwrap_or_default();
-                println!("new balance for sender {:?}", sender_balance);
+                let sender_balance = storage.get_balance(from_addr);
+                println!("new balance for sender {}", sender_balance);
 
                 if let Some(to_addr) = to_addr {
-                    let to_h160 = address_to_h160(to_addr);
-                    let receiver_balance = storage.backend.state.get(&to_h160).map(|a| a.balance).unwrap_or_default();
-                    println!("new balance for receiver {:?}", receiver_balance);
+                    let receiver_balance = storage.get_balance(to_addr);
+                    println!("new balance for receiver {}", receiver_balance);
                 }
 
                 Ok(Response::new(TransactionResponse {

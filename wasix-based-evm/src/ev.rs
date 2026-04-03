@@ -3,6 +3,7 @@ pub use evm_interpreter::uint::{H160, H256, U256 as EvmU256};
 pub use evm;
 // pub use evm_precompile;
 
+#[allow(dead_code)]
 pub fn address_to_h160(address: Address) -> H160 {
     H160(address.0 .0)
 }
