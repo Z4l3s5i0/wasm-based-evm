@@ -8,6 +8,7 @@
 - Install cargo
 - Install wasix
 - Install [wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases)
+- install (protobuf)[https://protobuf.dev/installation/] 
 - Instal nasm with 
 ```choco
 choco install nasm
@@ -23,7 +24,7 @@ use alloc::vec::Vec;
 ### Build and run
 ```shell
 cargo wasix build --release
-wasmer run target/wasm32-wasmer-wasi/release/wasix-based-evm.wasm --net --enable-threads
+wasmer run .\wasm-based-evm\wasix-based-evm\target\wasm32-wasmer-wasi\release\wasix-based-evm.wasm --net --enable-threads --enable-exceptions   
 ```
 
 ### references
