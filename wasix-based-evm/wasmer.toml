@@ -1,0 +1,19 @@
+[package]
+name = "wasix-based-evm"
+version = "0.1.0"
+description = "Description for package wasix-based-evm"
+
+# See more keys and definitions at https://docs.wasmer.io/registry/manifest
+
+[[module]]
+name = "wasix-based-evm"
+source = "target/wasm32-wasip1/release/wasix-based-evm.wasm"
+abi = "wasi"
+
+[module.interfaces]
+wasi = "0.1.0-unstable"
+
+[[command]]
+name = "wasix-based-evm"
+module = "wasix-based-evm"
+runner = "wasi"

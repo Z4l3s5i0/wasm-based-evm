@@ -1,7 +1,13 @@
 use crate::ev::{H160, EvmU256, evm};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
-use alloy_primitives::{Address, B256, U256};
+use alloy_primitives::{Address, FixedBytes, B256, U256};
 use std::collections::BTreeMap;
+use rand::RngCore;
+fn random_b256() -> B256 {
+    let mut buf = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut buf);
+    FixedBytes::<32>(buf)
+}
 
 #[derive(Debug, Clone)]
 pub struct Transaction {
@@ -83,7 +89,7 @@ impl TransactionBuilder {
 
     pub fn build(self) -> Transaction {
         Transaction {
-            hash: self.hash.unwrap_or_else(B256::random),
+            hash: self.hash.unwrap_or_else(random_b256),
             nonce: self.nonce,
             from: self.from,
             to: self.to,
@@ -157,7 +163,7 @@ impl BlockBuilder {
     pub fn build(self) -> Block {
         Block {
             number: self.number,
-            hash: self.hash.unwrap_or_else(B256::random),
+            hash: self.hash.unwrap_or_else(random_b256),
             parent_hash: self.parent_hash,
             timestamp: self.timestamp,
             transactions: self.transactions,
