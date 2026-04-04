@@ -96,8 +96,117 @@ enum Commands {
         #[arg(long, default_value = "0")]
         nonce: u64,
     },
+    /// Opens the block explorer
+    Explorer,
     /// Exits the tester
     Exit,
+}
+
+async fn run_explorer(client: &mut TransactionServiceClient<tonic::transport::Channel>) -> Result<(), Box<dyn std::error::Error>> {
+    println!("--- Block Explorer ---");
+    let mut rl = DefaultEditor::new()?;
+    loop {
+        let readline = rl.readline("explorer> ");
+        match readline {
+            Ok(line) => {
+                let line = line.trim();
+                if line.is_empty() {
+                    continue;
+                }
+                if line == "exit" || line == "quit" || line == "back" {
+                    break;
+                }
+                rl.add_history_entry(line)?;
+
+                let parts: Vec<&str> = line.split_whitespace().collect();
+                if parts.is_empty() {
+                    continue;
+                }
+
+                match parts[0] {
+                    "blocks" => {
+                        let latest = client.eth_block_number(Empty {}).await?.into_inner().number;
+                        println!("Latest blocks (showing up to 10):");
+                        let start = if latest > 10 { latest - 9 } else { 0 };
+                        for n in (start..=latest).rev() {
+                            let block = client.eth_get_block_by_number(GetBlockByNumberRequest {
+                                number: n,
+                                full_transactions: false,
+                            }).await?.into_inner();
+                            println!("Block #{}: hash={}, txs={}", block.number, block.hash, block.transactions.len());
+                        }
+                    }
+                    "block" => {
+                        if parts.len() < 2 {
+                            println!("Usage: block <number>");
+                            continue;
+                        }
+                        if let Ok(number) = parts[1].parse::<u64>() {
+                            let block = client.eth_get_block_by_number(GetBlockByNumberRequest {
+                                number,
+                                full_transactions: true,
+                            }).await?.into_inner();
+                            println!("Block Information:");
+                            println!("  Number: {}", block.number);
+                            println!("  Hash: {}", block.hash);
+                            println!("  Parent Hash: {}", block.parent_hash);
+                            println!("  Timestamp: {}", block.timestamp);
+                            println!("  Transactions ({}):", block.transactions.len());
+                            for tx_hash in block.transactions {
+                                println!("    - {}", tx_hash);
+                            }
+                        } else {
+                            println!("Invalid block number");
+                        }
+                    }
+                    "tx" => {
+                        if parts.len() < 2 {
+                            println!("Usage: tx <hash>");
+                            continue;
+                        }
+                        let hash = parts[1].to_string();
+                        let tx = client.eth_get_transaction_by_hash(GetTransactionByHashRequest {
+                            hash,
+                        }).await?.into_inner();
+                        if tx.hash.is_empty() {
+                            println!("Transaction not found");
+                        } else {
+                            println!("Transaction Information:");
+                            println!("  Hash: {}", tx.hash);
+                            println!("  From: {}", tx.from);
+                            println!("  To: {}", tx.to);
+                            println!("  Value: {} wei", tx.value);
+                            println!("  Nonce: {}", tx.nonce);
+                            println!("  Gas Limit: {}", tx.gas_limit);
+                            println!("  Gas Price: {}", tx.gas_price);
+                            println!("  Block: #{} ({})", tx.block_number, tx.block_hash);
+                            if !tx.data.is_empty() {
+                                println!("  Data: 0x{}", hex::encode(tx.data));
+                            }
+                        }
+                    }
+                    "help" => {
+                        println!("Explorer commands:");
+                        println!("  blocks      - List recent blocks");
+                        println!("  block <n>   - Show details for block <n>");
+                        println!("  tx <hash>   - Show details for transaction <hash>");
+                        println!("  help        - Show this help");
+                        println!("  exit/back   - Return to main menu");
+                    }
+                    _ => {
+                        println!("Unknown command: {}. Type 'help' for help.", parts[0]);
+                    }
+                }
+            }
+            Err(ReadlineError::Interrupted) => break,
+            Err(ReadlineError::Eof) => break,
+            Err(err) => {
+                println!("Error: {:?}", err);
+                break;
+            }
+        }
+    }
+    Ok(())
 }
 
 #[tokio::main]
