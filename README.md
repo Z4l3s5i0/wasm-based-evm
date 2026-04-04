@@ -32,3 +32,18 @@ for the [Ethereum Json-Rpc specification](https://ethereum.github.io/execution-a
 
 for the [patched repos](https://wasix.org/docs/language-guide/rust/patched-repos)
 
+
+### smart contracts
+
+| Action          | `to`      | `data`        | EVM behavior                         |
+|-----------------| --------- | ------------- | ------------------------------------ |
+| ETH to user     | recipient | empty         | update balances only                 |
+| ETH to contract | contract  | empty         | execute `receive()` / fallback       |
+| Contract call   | contract  | function+args | run function logic, may change state |
+| Contract deploy | null      | bytecode      | run constructor, store code          |
+
+| Action                   | New block? | State updated? |
+| ------------------------ | ---------- | -------------- |
+| Deploy contract (tx)     | ✅ Yes      | ✅ Yes          |
+| Call contract (tx)       | ✅ Yes      | ✅ Yes          |
+| Call contract (eth_call) | ❌ No       | ❌ No           |

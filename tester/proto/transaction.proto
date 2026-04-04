@@ -15,6 +15,7 @@ service TransactionService {
   rpc EthGetBlockTransactionCountByNumber (GetBlockTransactionCountByNumberRequest) returns (TransactionCountResponse);
   rpc EthGetTransactionByHash (GetTransactionByHashRequest) returns (TransactionInfoResponse);
   rpc EthSendTransaction (TransactionRequest) returns (TransactionResponse);
+  rpc EthCall (TransactionRequest) returns (TransactionResponse);
 }
 
 message Empty {}
@@ -89,7 +90,7 @@ message TransactionInfoResponse {
 
 message TransactionRequest {
   string from = 1;
-  string to = 2;
+  optional string to = 2;
   string value = 3;
   bytes data = 4;
   uint64 gas_limit = 5;
@@ -101,4 +102,6 @@ message TransactionResponse {
   bool success = 1;
   string message = 2;
   string tx_hash = 3;
+  string contract_address = 4;
+  bytes return_data = 5;
 }

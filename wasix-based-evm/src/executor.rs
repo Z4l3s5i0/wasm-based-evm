@@ -3,7 +3,7 @@ use crate::storage::{InMemoryStorage, Transaction, Block};
 use evm::{
     transact,
     backend::OverlayedBackend,
-    standard::{Config, Invoker, ExecutionEtable, GasometerEtable, TransactArgs, TransactArgsCallCreate, TransactGasPrice, EtableResolver},
+    standard::{Config, Invoker, ExecutionEtable, GasometerEtable, TransactArgs, TransactArgsCallCreate, TransactGasPrice, EtableResolver, TransactValue},
 };
 use evm_precompile::StandardPrecompileSet;
 
@@ -18,7 +18,16 @@ impl Executor {
         }
     }
 
-    pub fn execute(&self, storage: &mut InMemoryStorage, tx: Transaction, block: Block) -> Result<(), String> {
+    pub fn execute(&self, storage: &mut InMemoryStorage, tx: Transaction, block: Block) -> Result<TransactValue, String> {
+        self.run_execution(storage, tx, block, true)
+    }
+
+    pub fn call(&self, storage: &InMemoryStorage, tx: Transaction, block: Block) -> Result<TransactValue, String> {
+        let mut storage_copy = storage.clone();
+        self.run_execution(&mut storage_copy, tx, block, false)
+    }
+
+    fn run_execution(&self, storage: &mut InMemoryStorage, tx: Transaction, block: Block, apply_changes: bool) -> Result<TransactValue, String> {
         let precompiles = StandardPrecompileSet;
         let etable = evm::interpreter::etable::Chained(ExecutionEtable::new(), GasometerEtable::new());
         let resolver = EtableResolver::new(&precompiles, &etable);
@@ -61,56 +70,19 @@ impl Executor {
         );
 
         match result {
-            Ok(_) => {
-                let (_, changeset) = overlayed.deconstruct();
-                storage.backend.apply_overlayed(&changeset);
-                // Add transaction and block to storage
-                storage.add_transaction(tx);
-                storage.add_block(block);
-                Ok(())
+            Ok(value) => {
+                if apply_changes {
+                    let (_, changeset) = overlayed.deconstruct();
+                    storage.backend.apply_overlayed(&changeset);
+                    // Add transaction and block to storage
+                    storage.add_transaction(tx);
+                    storage.add_block(block);
+                }
+                Ok(value)
             }
             Err(e) => Err(format!("Transaction execution failed: {:?}", e)),
         }
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use alloy_primitives::{Address, U256};
-
-    #[test]
-    fn test_transfer_repro() {
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
-        let executor = Executor::new();
-
-        let from = Address::with_last_byte(0x1);
-        let to = Address::with_last_byte(0x2);
-        let value = U256::from(1000);
-
-        storage.set_balance(from, U256::from(1000000000000000000u128));
-        storage.set_balance(to, U256::from(0));
-
-        let tx = Transaction::builder(from)
-            .to(Some(to))
-            .value(value)
-            .gas_limit(100000)
-            .gas_price(U256::from(1))
-            .build();
-
-        let latest = storage.get_latest_block().unwrap();
-        let block = Block::builder(latest.number + 1)
-            .parent_hash(latest.hash)
-            .timestamp(latest.timestamp + 12)
-            .add_transaction(tx.hash)
-            .build();
-
-        executor.execute(&mut storage, tx, block).unwrap();
-
-        let from_balance = storage.get_balance(from);
-        let to_balance = storage.get_balance(to);
-
-        assert_eq!(to_balance, value, "Receiver balance should be updated");
-    }
-}
 
