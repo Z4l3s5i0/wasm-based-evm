@@ -1,7 +1,6 @@
 [target.wasm32-wasmer-wasi]
 runner = "wasmer run"
 rustflags = [
-    "-C", "target-feature=+atomics",
-    "-C", "link-arg=--no-entry",
-    "-C", "link-arg=--export-dynamic"
+    "-C", "target-feature=+bulk-memory",
+    "-C", "panic=abort"
 ]

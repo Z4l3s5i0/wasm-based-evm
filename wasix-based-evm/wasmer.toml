@@ -7,13 +7,13 @@ description = "Description for package wasix-based-evm"
 
 [[module]]
 name = "wasix-based-evm"
-source = "target/wasm32-wasip1/release/wasix-based-evm.wasm"
+source = "target/wasm32-wasmer-wasi/debug/wasix-based-evm.wasm"
 abi = "wasi"
 
 [module.interfaces]
-wasi = "0.1.0-unstable"
+wasix = "0.1.0"
 
 [[command]]
 name = "wasix-based-evm"
 module = "wasix-based-evm"
-runner = "wasi"
+runner = "wasix"
