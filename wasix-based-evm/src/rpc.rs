@@ -1,9 +1,11 @@
 use crate::executor::Executor;
 use crate::storage::{InMemoryStorage, Transaction, Block};
+use crate::ev::h160_to_address;
 use alloy_primitives::{Address, U256, B256};
 use tonic::{Request, Response, Status};
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use evm::standard::TransactValueCallCreate;
 
 pub mod evm_rpc {
     tonic::include_proto!("evm_rpc");
@@ -65,7 +67,7 @@ impl TransactionService for MyTransactionService {
             .build();
 
         match self.executor.execute(&mut *storage, tx.clone(), block) {
-            Ok(_) => {
+            Ok(val) => {
                 println!("Transaction executed successfully: {:?}", tx.hash);
                 let sender_balance = storage.get_balance(from_addr);
                 println!("new balance for sender {}", sender_balance);
@@ -75,10 +77,23 @@ impl TransactionService for MyTransactionService {
                     println!("new balance for receiver {}", receiver_balance);
                 }
 
+                let (contract_address, return_data) = match val.call_create {
+                    TransactValueCallCreate::Call { retval, .. } => {
+                        (String::new(), retval)
+                    }
+                    TransactValueCallCreate::Create { address, .. } => {
+                        let addr = h160_to_address(address);
+                        storage.set_contract_code(addr, tx.data.clone()); // Optional: if you want to explicitly track it in storage.contracts
+                        (format!("{:?}", addr), Vec::new())
+                    }
+                };
+
                 Ok(Response::new(TransactionResponse {
                     success: true,
                     message: "Transaction executed successfully".to_string(),
                     tx_hash: format!("{:?}", tx.hash),
+                    contract_address,
+                    return_data,
                 }))
             }
             Err(e) => {
@@ -87,6 +102,8 @@ impl TransactionService for MyTransactionService {
                     success: false,
                     message: format!("Transaction failed: {}", e),
                     tx_hash: format!("{:?}", tx.hash),
+                    contract_address: String::new(),
+                    return_data: Vec::new(),
                 }))
             }
         }

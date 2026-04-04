@@ -200,7 +200,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             gas_price,
                             nonce,
                         }).await?;
-                        println!("Transaction Response: {:?}", response.into_inner());
+                        let res = response.into_inner();
+                        println!("Transaction Response: success={}, tx_hash={}", res.success, res.tx_hash);
+                        if !res.contract_address.is_empty() {
+                            println!("Contract Address: {}", res.contract_address);
+                        }
+                        if !res.return_data.is_empty() {
+                            println!("Return Data: 0x{}", hex::encode(res.return_data));
+                        }
                     }
                     Commands::ExecuteTransaction { from, to, value, data, gas_limit, gas_price, nonce } => {
                         let data_bytes = hex::decode(data.trim_start_matches("0x")).unwrap_or_else(|_| data.into_bytes());
@@ -213,7 +220,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             gas_price,
                             nonce,
                         }).await?;
-                        println!("Execution Response: {:?}", response.into_inner());
+                        let res = response.into_inner();
+                        println!("Transaction Response: success={}, tx_hash={}", res.success, res.tx_hash);
+                        if !res.contract_address.is_empty() {
+                            println!("Contract Address: {}", res.contract_address);
+                        }
+                        if !res.return_data.is_empty() {
+                            println!("Return Data: 0x{}", hex::encode(res.return_data));
+                        }
+                    }
+                    Commands::Explorer => {
+                        run_explorer(&mut client).await?;
                     }
                 }
             }

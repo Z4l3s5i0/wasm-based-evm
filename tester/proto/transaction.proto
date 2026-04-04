@@ -101,4 +101,6 @@ message TransactionResponse {
   bool success = 1;
   string message = 2;
   string tx_hash = 3;
+  string contract_address = 4;
+  bytes return_data = 5;
 }
