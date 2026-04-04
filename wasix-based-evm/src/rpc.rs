@@ -249,4 +249,72 @@ impl TransactionService for MyTransactionService {
         // For now, eth_sendTransaction is the same as execute_transaction
         self.execute_transaction(request).await
     }
+
+    async fn eth_call(
+        &self,
+        request: Request<TransactionRequest>,
+    ) -> Result<Response<TransactionResponse>, Status> {
+        let req = request.into_inner();
+
+        let from_addr: Address = req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
+        let to_addr: Option<Address> = if req.to.is_empty() {
+            None
+        } else {
+            Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
+        };
+
+        let storage = self.storage.lock().await;
+        let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
+        
+        let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
+            // Try hex if decimal fails
+            U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
+        }).map_err(|_| Status::invalid_argument("Invalid value"))?;
+
+        let tx = Transaction::builder(from_addr)
+            .nonce(req.nonce)
+            .to(to_addr)
+            .value(val_u256)
+            .data(req.data)
+            .gas_limit(req.gas_limit)
+            .gas_price(U256::from(req.gas_price))
+            .build();
+
+        println!("DEBUG: Calling eth_call: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
+
+        // For eth_call, we use the latest block state without incrementing the block number
+        let block = latest_block;
+
+        match self.executor.call(&*storage, tx.clone(), block) {
+            Ok(val) => {
+                let (_, return_data) = match val.call_create {
+                    TransactValueCallCreate::Call { retval, .. } => {
+                        (String::new(), retval)
+                    }
+                    TransactValueCallCreate::Create { address, .. } => {
+                        let addr = h160_to_address(address);
+                        (format!("{:?}", addr), Vec::new())
+                    }
+                };
+
+                Ok(Response::new(TransactionResponse {
+                    success: true,
+                    message: "Call executed successfully".to_string(),
+                    tx_hash: String::new(),
+                    contract_address: String::new(),
+                    return_data,
+                }))
+            }
+            Err(e) => {
+                println!("Call failed: error: {}", e);
+                Ok(Response::new(TransactionResponse {
+                    success: false,
+                    message: format!("Call failed: {}", e),
+                    tx_hash: String::new(),
+                    contract_address: String::new(),
+                    return_data: Vec::new(),
+                }))
+            }
+        }
+    }
 }

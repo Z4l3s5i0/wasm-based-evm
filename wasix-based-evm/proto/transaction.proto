@@ -15,6 +15,7 @@ service TransactionService {
   rpc EthGetBlockTransactionCountByNumber (GetBlockTransactionCountByNumberRequest) returns (TransactionCountResponse);
   rpc EthGetTransactionByHash (GetTransactionByHashRequest) returns (TransactionInfoResponse);
   rpc EthSendTransaction (TransactionRequest) returns (TransactionResponse);
+  rpc EthCall (TransactionRequest) returns (TransactionResponse);
 }
 
 message Empty {}

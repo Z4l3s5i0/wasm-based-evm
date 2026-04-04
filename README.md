@@ -41,3 +41,8 @@ for the [patched repos](https://wasix.org/docs/language-guide/rust/patched-repos
 | Contract call   | contract  | function+args | run function logic, may change state |
 | Contract deploy | null      | bytecode      | run constructor, store code          |
 
+| Action                   | New block? | State updated? |
+| ------------------------ | ---------- | -------------- |
+| Deploy contract (tx)     | ✅ Yes      | ✅ Yes          |
+| Call contract (tx)       | ✅ Yes      | ✅ Yes          |
+| Call contract (eth_call) | ❌ No       | ❌ No           |

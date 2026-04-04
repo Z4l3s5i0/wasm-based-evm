@@ -67,14 +67,14 @@ enum Commands {
         #[arg(long)]
         from: String,
         #[arg(long)]
-        to: String,
+        to: Option<String>,
         #[arg(long, default_value = "0")]
         value: String,
         #[arg(long, default_value = "")]
         data: String,
-        #[arg(long, default_value = "21000")]
+        #[arg(long, default_value = "10000000")]
         gas_limit: u64,
-        #[arg(long, default_value = "1000000000")]
+        #[arg(long, default_value = "10")]
         gas_price: u64,
         #[arg(long, default_value = "0")]
         nonce: u64,
@@ -84,12 +84,29 @@ enum Commands {
         #[arg(long)]
         from: String,
         #[arg(long)]
-        to: String,
+        to: Option<String>,
         #[arg(long, default_value = "0")]
         value: String,
         #[arg(long, default_value = "")]
         data: String,
-        #[arg(long, default_value = "21000")]
+        #[arg(long, default_value = "10000000")]
+        gas_limit: u64,
+        #[arg(long, default_value = "1000000000")]
+        gas_price: u64,
+        #[arg(long, default_value = "0")]
+        nonce: u64,
+    },
+    /// Executes a new message call immediately without creating a transaction
+    EthCall {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long, default_value = "0")]
+        value: String,
+        #[arg(long, default_value = "")]
+        data: String,
+        #[arg(long, default_value = "10000000")]
         gas_limit: u64,
         #[arg(long, default_value = "1000000000")]
         gas_price: u64,
@@ -334,6 +351,23 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if !res.contract_address.is_empty() {
                             println!("Contract Address: {}", res.contract_address);
                         }
+                        if !res.return_data.is_empty() {
+                            println!("Return Data: 0x{}", hex::encode(res.return_data));
+                        }
+                    }
+                    Commands::EthCall { from, to, value, data, gas_limit, gas_price, nonce } => {
+                        let data_bytes = hex::decode(data.trim_start_matches("0x")).unwrap_or_else(|_| data.into_bytes());
+                        let response = client.eth_call(TransactionRequest {
+                            from,
+                            to,
+                            value,
+                            data: data_bytes,
+                            gas_limit,
+                            gas_price,
+                            nonce,
+                        }).await?;
+                        let res = response.into_inner();
+                        println!("Call Response: success={}", res.success);
                         if !res.return_data.is_empty() {
                             println!("Return Data: 0x{}", hex::encode(res.return_data));
                         }

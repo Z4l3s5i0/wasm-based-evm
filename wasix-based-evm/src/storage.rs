@@ -101,7 +101,7 @@ impl TransactionBuilder {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Clone)]
 pub struct Block {
     pub number: u64,
     pub hash: B256,
@@ -197,6 +197,7 @@ impl Default for Genesis {
     }
 }
 
+#[derive(Clone)]
 pub struct InMemoryStorage {
     pub backend: InMemoryBackend,
     pub blocks: BTreeMap<u64, Block>,

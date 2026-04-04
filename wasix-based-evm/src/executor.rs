@@ -19,6 +19,15 @@ impl Executor {
     }
 
     pub fn execute(&self, storage: &mut InMemoryStorage, tx: Transaction, block: Block) -> Result<TransactValue, String> {
+        self.run_execution(storage, tx, block, true)
+    }
+
+    pub fn call(&self, storage: &InMemoryStorage, tx: Transaction, block: Block) -> Result<TransactValue, String> {
+        let mut storage_copy = storage.clone();
+        self.run_execution(&mut storage_copy, tx, block, false)
+    }
+
+    fn run_execution(&self, storage: &mut InMemoryStorage, tx: Transaction, block: Block, apply_changes: bool) -> Result<TransactValue, String> {
         let precompiles = StandardPrecompileSet;
         let etable = evm::interpreter::etable::Chained(ExecutionEtable::new(), GasometerEtable::new());
         let resolver = EtableResolver::new(&precompiles, &etable);
@@ -62,11 +71,13 @@ impl Executor {
 
         match result {
             Ok(value) => {
-                let (_, changeset) = overlayed.deconstruct();
-                storage.backend.apply_overlayed(&changeset);
-                // Add transaction and block to storage
-                storage.add_transaction(tx);
-                storage.add_block(block);
+                if apply_changes {
+                    let (_, changeset) = overlayed.deconstruct();
+                    storage.backend.apply_overlayed(&changeset);
+                    // Add transaction and block to storage
+                    storage.add_transaction(tx);
+                    storage.add_block(block);
+                }
                 Ok(value)
             }
             Err(e) => Err(format!("Transaction execution failed: {:?}", e)),
