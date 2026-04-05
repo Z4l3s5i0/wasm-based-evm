@@ -101,42 +101,190 @@ impl TransactionBuilder {
     }
 }
 
+#[derive(Debug, Clone)]
+pub struct Withdrawal {
+    pub address: Address,
+    pub amount: u64,
+    pub index: u64,
+    pub validator_index: u64,
+}
+
+#[derive(Debug, Clone)]
+pub struct Eth1Data {
+    pub deposit_root: B256,
+    pub deposit_count: u64,
+    pub block_hash: B256,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProposerSlashing {
+    // Placeholder fields for ProposerSlashing
+}
+
+#[derive(Debug, Clone)]
+pub struct AttesterSlashing {
+    // Placeholder fields for AttesterSlashing
+}
+
+#[derive(Debug, Clone)]
+pub struct Attestation {
+    // TODO: Implement Attestation
+}
+
+#[derive(Debug, Clone)]
+pub struct Deposit {
+    // Placeholder fields for Deposit
+}
+
+#[derive(Debug, Clone)]
+pub struct VoluntaryExit {
+    // Placeholder fields for VoluntaryExit
+}
+
+#[derive(Debug, Clone)]
+pub struct SyncAggregate {
+    pub sync_committee_bits: Vec<u8>,
+    pub sync_committee_signature: Vec<u8>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionPayload {
+    pub parent_hash: B256,
+    pub fee_recipient: Address,
+    pub state_root: B256,
+    pub receipts_root: B256,
+    pub logs_bloom: Vec<u8>,
+    pub prev_randao: B256,
+    pub block_number: u64,
+    pub gas_limit: u64,
+    pub gas_used: u64,
+    pub timestamp: u64,
+    pub extra_data: Vec<u8>,
+    pub base_fee_per_gas: u128,
+    pub block_hash: B256,
+
+    pub transactions: Vec<Transaction>,
+    pub withdrawals: Vec<Withdrawal>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ExecutionPayloadHeader {
+    pub parent_hash: B256,
+    pub fee_recipient: Address,
+    pub state_root: B256,
+    pub receipts_root: B256,
+    pub logs_bloom: Vec<u8>,
+    pub prev_randao: B256,
+    pub block_number: u64,
+    pub gas_limit: u64,
+    pub gas_used: u64,
+    pub timestamp: u64,
+    pub extra_data: Vec<u8>,
+    pub base_fee_per_gas: u128,
+    pub block_hash: B256,
+    pub transactions_root: B256,
+    pub withdrawals_root: B256,
+}
+
+#[derive(Debug, Clone)]
+pub struct BlockBody {
+    pub randao_reveal: B256,
+    pub eth1_data: Eth1Data,
+    pub graffiti: Vec<u8>,
+
+    pub proposer_slashings: Vec<ProposerSlashing>,
+    pub attester_slashings: Vec<AttesterSlashing>,
+    pub attestations: Vec<Attestation>,
+
+    pub deposits: Vec<Deposit>,
+    pub voluntary_exits: Vec<VoluntaryExit>,
+    pub sync_aggregate: SyncAggregate,
+
+    pub execution_payload: ExecutionPayload,
+}
+
 #[derive(Clone)]
 pub struct Block {
-    pub number: u64,
-    pub hash: B256,
-    pub parent_hash: B256,
-    pub timestamp: u64,
-    pub transactions: Vec<B256>,
+    pub slot: u64,
+    pub proposer_index: u64,
+    pub parent_root: B256,
+    pub state_root: B256,
+    pub body: BlockBody,
 }
 
 impl Block {
-    pub fn builder(number: u64) -> BlockBuilder {
-        BlockBuilder::new(number)
+    pub fn builder(slot: u64) -> BlockBuilder {
+        BlockBuilder::new(slot)
     }
 }
 
 pub struct BlockBuilder {
-    number: u64,
-    hash: Option<B256>,
+    slot: u64,
+    proposer_index: u64,
+    parent_root: B256,
+    state_root: B256,
+    body: Option<BlockBody>,
+
+    // ExecutionPayload fields for convenience
     parent_hash: B256,
+    fee_recipient: Address,
+    receipts_root: B256,
+    logs_bloom: Vec<u8>,
+    prev_randao: B256,
+    block_number: u64,
+    gas_limit: u64,
+    gas_used: u64,
     timestamp: u64,
-    transactions: Vec<B256>,
+    extra_data: Vec<u8>,
+    base_fee_per_gas: u128,
+    block_hash: B256,
+    transactions: Vec<Transaction>,
+    withdrawals: Vec<Withdrawal>,
 }
 
 impl BlockBuilder {
-    pub fn new(number: u64) -> Self {
+    pub fn new(slot: u64) -> Self {
         Self {
-            number,
-            hash: None,
+            slot,
+            proposer_index: 0,
+            parent_root: B256::ZERO,
+            state_root: B256::ZERO,
+            body: None,
+
             parent_hash: B256::ZERO,
+            fee_recipient: Address::ZERO,
+            receipts_root: B256::ZERO,
+            logs_bloom: Vec::new(),
+            prev_randao: B256::ZERO,
+            block_number: slot, // Default block number to slot
+            gas_limit: 30_000_000,
+            gas_used: 0,
             timestamp: 0,
+            extra_data: Vec::new(),
+            base_fee_per_gas: 0,
+            block_hash: B256::ZERO,
             transactions: Vec::new(),
+            withdrawals: Vec::new(),
         }
     }
 
-    pub fn hash(mut self, hash: B256) -> Self {
-        self.hash = Some(hash);
+    pub fn proposer_index(mut self, proposer_index: u64) -> Self {
+        self.proposer_index = proposer_index;
+        self
+    }
+
+    pub fn parent_root(mut self, parent_root: B256) -> Self {
+        self.parent_root = parent_root;
+        self
+    }
+
+    pub fn state_root(mut self, state_root: B256) -> Self {
+        self.state_root = state_root;
+        self
+    }
+
+    pub fn body(mut self, body: BlockBody) -> Self {
+        self.body = Some(body);
         self
     }
 
@@ -145,28 +293,119 @@ impl BlockBuilder {
         self
     }
 
+    pub fn fee_recipient(mut self, fee_recipient: Address) -> Self {
+        self.fee_recipient = fee_recipient;
+        self
+    }
+
+    pub fn receipts_root(mut self, receipts_root: B256) -> Self {
+        self.receipts_root = receipts_root;
+        self
+    }
+
+    pub fn logs_bloom(mut self, logs_bloom: Vec<u8>) -> Self {
+        self.logs_bloom = logs_bloom;
+        self
+    }
+
+    pub fn prev_randao(mut self, prev_randao: B256) -> Self {
+        self.prev_randao = prev_randao;
+        self
+    }
+
+    pub fn block_number(mut self, block_number: u64) -> Self {
+        self.block_number = block_number;
+        self
+    }
+
+    pub fn gas_limit(mut self, gas_limit: u64) -> Self {
+        self.gas_limit = gas_limit;
+        self
+    }
+
+    pub fn gas_used(mut self, gas_used: u64) -> Self {
+        self.gas_used = gas_used;
+        self
+    }
+
     pub fn timestamp(mut self, timestamp: u64) -> Self {
         self.timestamp = timestamp;
         self
     }
 
-    pub fn transactions(mut self, transactions: Vec<B256>) -> Self {
+    pub fn extra_data(mut self, extra_data: Vec<u8>) -> Self {
+        self.extra_data = extra_data;
+        self
+    }
+
+    pub fn base_fee_per_gas(mut self, base_fee_per_gas: u128) -> Self {
+        self.base_fee_per_gas = base_fee_per_gas;
+        self
+    }
+
+    pub fn block_hash(mut self, block_hash: B256) -> Self {
+        self.block_hash = block_hash;
+        self
+    }
+
+    pub fn transactions(mut self, transactions: Vec<Transaction>) -> Self {
         self.transactions = transactions;
         self
     }
 
-    pub fn add_transaction(mut self, tx_hash: B256) -> Self {
-        self.transactions.push(tx_hash);
+    pub fn add_transaction(mut self, transaction: Transaction) -> Self {
+        self.transactions.push(transaction);
+        self
+    }
+
+    pub fn withdrawals(mut self, withdrawals: Vec<Withdrawal>) -> Self {
+        self.withdrawals = withdrawals;
         self
     }
 
     pub fn build(self) -> Block {
+        let body = self.body.unwrap_or_else(|| BlockBody {
+            randao_reveal: B256::ZERO,
+            eth1_data: Eth1Data {
+                deposit_root: B256::ZERO,
+                deposit_count: 0,
+                block_hash: B256::ZERO,
+            },
+            graffiti: vec![0u8; 32],
+            proposer_slashings: Vec::new(),
+            attester_slashings: Vec::new(),
+            attestations: Vec::new(),
+            deposits: Vec::new(),
+            voluntary_exits: Vec::new(),
+            sync_aggregate: SyncAggregate {
+                sync_committee_bits: Vec::new(),
+                sync_committee_signature: Vec::new(),
+            },
+            execution_payload: ExecutionPayload {
+                parent_hash: self.parent_hash,
+                fee_recipient: self.fee_recipient,
+                state_root: self.state_root,
+                receipts_root: self.receipts_root,
+                logs_bloom: self.logs_bloom,
+                prev_randao: self.prev_randao,
+                block_number: self.block_number,
+                gas_limit: self.gas_limit,
+                gas_used: self.gas_used,
+                timestamp: self.timestamp,
+                extra_data: self.extra_data,
+                base_fee_per_gas: self.base_fee_per_gas,
+                block_hash: if self.block_hash == B256::ZERO { random_b256() } else { self.block_hash },
+                transactions: self.transactions,
+                withdrawals: self.withdrawals,
+            },
+        });
+
         Block {
-            number: self.number,
-            hash: self.hash.unwrap_or_else(random_b256),
-            parent_hash: self.parent_hash,
-            timestamp: self.timestamp,
-            transactions: self.transactions,
+            slot: self.slot,
+            proposer_index: self.proposer_index,
+            parent_root: self.parent_root,
+            state_root: self.state_root,
+            body,
         }
     }
 }
@@ -251,7 +490,7 @@ impl InMemoryStorage {
     }
 
     pub fn add_block(&mut self, block: Block) {
-        self.blocks.insert(block.number, block);
+        self.blocks.insert(block.body.execution_payload.block_number, block);
     }
 
     pub fn add_transaction(&mut self, tx: Transaction) {
@@ -263,7 +502,7 @@ impl InMemoryStorage {
     }
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<&Block> {
-        self.blocks.values().find(|b| b.hash == hash)
+        self.blocks.values().find(|b| b.body.execution_payload.block_hash == hash)
     }
 
     pub fn get_transaction_by_hash(&self, hash: B256) -> Option<&Transaction> {
@@ -271,7 +510,7 @@ impl InMemoryStorage {
     }
 
     pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<&Block> {
-        self.blocks.values().find(|b| b.transactions.contains(&tx_hash))
+        self.blocks.values().find(|b| b.body.execution_payload.transactions.iter().any(|tx| tx.hash == tx_hash))
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {

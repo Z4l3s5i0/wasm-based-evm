@@ -42,7 +42,7 @@ impl TransactionService for MyTransactionService {
 
         let mut storage = self.storage.lock().await;
         let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
-        let next_number = latest_block.number + 1;
+        let next_number = latest_block.body.execution_payload.block_number + 1;
         
         let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
             // Try hex if decimal fails
@@ -61,9 +61,9 @@ impl TransactionService for MyTransactionService {
         println!("DEBUG: Executing tx: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
 
         let block = Block::builder(next_number)
-            .parent_hash(latest_block.hash)
-            .timestamp(latest_block.timestamp + 12) // Simple block time increment
-            .add_transaction(tx.hash)
+            .parent_hash(latest_block.body.execution_payload.block_hash)
+            .timestamp(latest_block.body.execution_payload.timestamp + 12) // Simple block time increment
+            .add_transaction(tx.clone())
             .build();
 
         match self.executor.execute(&mut *storage, tx.clone(), block) {
@@ -160,11 +160,11 @@ impl TransactionService for MyTransactionService {
             .ok_or_else(|| Status::not_found("Block not found"))?;
 
         Ok(Response::new(BlockResponse {
-            number: block.number,
-            hash: format!("{:?}", block.hash),
-            parent_hash: format!("{:?}", block.parent_hash),
-            timestamp: block.timestamp,
-            transactions: block.transactions.iter().map(|t| format!("{:?}", t)).collect(),
+            number: block.body.execution_payload.block_number,
+            hash: format!("{:?}", block.body.execution_payload.block_hash),
+            parent_hash: format!("{:?}", block.body.execution_payload.parent_hash),
+            timestamp: block.body.execution_payload.timestamp,
+            transactions: block.body.execution_payload.transactions.iter().map(|t| format!("{:?}", t.hash)).collect(),
         }))
     }
 
@@ -179,11 +179,11 @@ impl TransactionService for MyTransactionService {
             .ok_or_else(|| Status::not_found("Block not found"))?;
 
         Ok(Response::new(BlockResponse {
-            number: block.number,
-            hash: format!("{:?}", block.hash),
-            parent_hash: format!("{:?}", block.parent_hash),
-            timestamp: block.timestamp,
-            transactions: block.transactions.iter().map(|t| format!("{:?}", t)).collect(),
+            number: block.body.execution_payload.block_number,
+            hash: format!("{:?}", block.body.execution_payload.block_hash),
+            parent_hash: format!("{:?}", block.body.execution_payload.parent_hash),
+            timestamp: block.body.execution_payload.timestamp,
+            transactions: block.body.execution_payload.transactions.iter().map(|t| format!("{:?}", t.hash)).collect(),
         }))
     }
 
@@ -198,7 +198,7 @@ impl TransactionService for MyTransactionService {
             .ok_or_else(|| Status::not_found("Block not found"))?;
 
         Ok(Response::new(TransactionCountResponse {
-            count: block.transactions.len() as u64,
+            count: block.body.execution_payload.transactions.len() as u64,
         }))
     }
 
@@ -212,7 +212,7 @@ impl TransactionService for MyTransactionService {
             .ok_or_else(|| Status::not_found("Block not found"))?;
 
         Ok(Response::new(TransactionCountResponse {
-            count: block.transactions.len() as u64,
+            count: block.body.execution_payload.transactions.len() as u64,
         }))
     }
 
@@ -237,8 +237,8 @@ impl TransactionService for MyTransactionService {
             data: tx.data.clone(),
             gas_limit: tx.gas_limit,
             gas_price: tx.gas_price.to_string().parse().unwrap_or(0),
-            block_number: block.map(|b| b.number).unwrap_or(0),
-            block_hash: block.map(|b| format!("{:?}", b.hash)).unwrap_or_default(),
+            block_number: block.map(|b| b.body.execution_payload.block_number).unwrap_or(0),
+            block_hash: block.map(|b| format!("{:?}", b.body.execution_payload.block_hash)).unwrap_or_default(),
         }))
     }
 

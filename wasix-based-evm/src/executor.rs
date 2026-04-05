@@ -57,8 +57,8 @@ impl Executor {
         };
 
         // Update backend environment for the current block
-        storage.backend.environment.block_number = EvmU256::from(block.number);
-        storage.backend.environment.block_timestamp = EvmU256::from(block.timestamp);
+        storage.backend.environment.block_number = EvmU256::from(block.body.execution_payload.block_number);
+        storage.backend.environment.block_timestamp = EvmU256::from(block.body.execution_payload.timestamp);
 
         let mut overlayed = OverlayedBackend::new(&storage.backend, &self.config.runtime);
 
