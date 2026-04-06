@@ -3,17 +3,11 @@ use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, FixedBytes, B256, U256, keccak256};
 use alloy_genesis::Genesis as AlloyGenesis;
 use alloy_rlp::{RlpEncodable, Encodable};
-use alloy_trie::{EMPTY_ROOT_HASH, root};
+use alloy_trie::{TrieAccount, root::ordered_trie_root};
+use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
 use rand::RngCore;
 
-#[derive(RlpEncodable)]
-pub struct TrieAccount {
-    pub nonce: u64,
-    pub balance: U256,
-    pub storage_root: B256,
-    pub code_hash: B256,
-}
 fn random_b256() -> B256 {
     let mut buf = [0u8; 32];
     rand::thread_rng().fill_bytes(&mut buf);
@@ -21,15 +15,24 @@ fn random_b256() -> B256 {
 }
 
 #[derive(Debug, Clone, RlpEncodable)]
+#[rlp(trailing)]
 pub struct Transaction {
     pub hash: B256,
     pub nonce: u64,
     pub from: Address,
-    pub to: Option<Address>,
     pub value: U256,
     pub data: Vec<u8>,
     pub gas_limit: u64,
     pub gas_price: U256,
+    pub to: Option<Address>,
+}
+
+impl Transaction {
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode(&mut out);
+        out
+    }
 }
 
 impl Transaction {
@@ -118,6 +121,14 @@ pub struct Withdrawal {
     pub validator_index: u64,
     pub address: Address,
     pub amount: u64,
+}
+
+impl Withdrawal {
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode(&mut out);
+        out
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -559,7 +570,7 @@ impl InMemoryStorage {
         };
 
         // Create genesis block
-        let mut genesis_block_builder = Block::builder(0)
+        let genesis_block_builder = Block::builder(0)
             .timestamp(genesis.timestamp)
             .gas_limit(genesis.gas_limit);
 
@@ -661,13 +672,8 @@ impl InMemoryStorage {
     }
 
     pub fn calculate_state_root(&self) -> B256 {
-        let mut accounts: Vec<_> = self.backend.state.iter().collect();
-        accounts.sort_by_key(|(addr, _)| *addr);
-
-        let trie_accounts: Vec<(B256, Vec<u8>)> = accounts.into_iter().map(|(addr, acc)| {
-            let mut storage: Vec<_> = acc.storage.iter().collect();
-            storage.sort_by_key(|(k, _)| *k);
-            let storage_root = root(storage.into_iter().map(|(k, v)| (keccak256(k.0), v.0.to_vec())));
+        state_root_unhashed(self.backend.state.iter().map(|(addr, acc)| {
+            let storage_root = storage_root_unsorted(acc.storage.iter().map(|(k, v)| (B256::from(k.0), U256::from_be_bytes(v.0))));
 
             let trie_acc = TrieAccount {
                 nonce: acc.nonce.as_u64(),
@@ -679,34 +685,15 @@ impl InMemoryStorage {
                 storage_root,
                 code_hash: keccak256(&acc.code),
             };
-
-            let mut acc_rlp = Vec::new();
-            trie_acc.encode(&mut acc_rlp);
-            (keccak256(addr.0), acc_rlp)
-        }).collect();
-
-        root(trie_accounts)
+            (Address::from(addr.0), trie_acc)
+        }))
     }
 
     pub fn calculate_transactions_root(transactions: &[Transaction]) -> B256 {
-        if transactions.is_empty() {
-            return EMPTY_ROOT_HASH;
-        }
-        root(transactions.iter().enumerate().map(|(i, tx)| {
-            let mut key_rlp = Vec::new();
-            i.encode(&mut key_rlp);
-            (keccak256(key_rlp), tx.to_vec())
-        }))
+        ordered_trie_root(transactions)
     }
 
     pub fn calculate_withdrawals_root(withdrawals: &[Withdrawal]) -> B256 {
-        if withdrawals.is_empty() {
-            return EMPTY_ROOT_HASH;
-        }
-        root(withdrawals.iter().enumerate().map(|(i, w)| {
-            let mut key_rlp = Vec::new();
-            i.encode(&mut key_rlp);
-            (keccak256(key_rlp), w.to_vec())
-        }))
+        ordered_trie_root(withdrawals)
     }
 }
