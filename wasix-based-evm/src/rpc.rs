@@ -24,10 +24,15 @@ use evm_rpc::{
     ForkchoiceUpdatedResponse, GetPayloadRequest
 };
 
+pub struct PendingPayload {
+    pub block: Block,
+    pub total_changeset: evm::backend::OverlayedChangeSet,
+}
+
 pub struct MyTransactionService {
     pub storage: Arc<Mutex<InMemoryStorage>>,
     pub executor: Executor,
-    pub pending_payloads: Arc<Mutex<std::collections::HashMap<String, Block>>>,
+    pub pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
 }
 
 #[tonic::async_trait]
@@ -595,6 +600,48 @@ impl TransactionService for MyTransactionService {
         }
 
         let mut transactions = Vec::new();
+
+        // Check if block hash matches any in pending_payloads
+        {
+            let mut pending = self.pending_payloads.lock().await;
+            let mut found_id = None;
+            for (id, payload) in pending.iter() {
+                if payload.block.body.execution_payload.block_hash == block_hash {
+                    found_id = Some(id.clone());
+                    break;
+                }
+            }
+            if let Some(id) = found_id {
+                if let Some(payload) = pending.remove(&id) {
+                    println!("DEBUG: Using pre-executed block from pending payload {}", id);
+                    storage.backend.apply_overlayed(&payload.total_changeset);
+                    
+                    // Decode transactions and add them to storage
+                    for tx_bytes in &payload.block.body.execution_payload.transactions {
+                        if let Ok(tx) = Transaction::decode(&mut tx_bytes.as_slice()) {
+                            let tx_hash = tx.hash;
+                            storage.add_transaction(tx);
+                        }
+                    }
+                    
+                    // Add receipts from block body
+                    for (i, tx_bytes) in payload.block.body.execution_payload.transactions.iter().enumerate() {
+                        if let Ok(tx) = Transaction::decode(&mut tx_bytes.as_slice()) {
+                            if let Some(receipt) = payload.block.body.receipts.get(i) {
+                                storage.add_receipt(tx.hash, receipt.clone());
+                            }
+                        }
+                    }
+                    
+                    storage.add_block(payload.block);
+                    return Ok(Response::new(PayloadStatus {
+                        status: "VALID".to_string(),
+                        latest_valid_hash: format!("{:?}", block_hash),
+                        validation_error: String::new(),
+                    }));
+                }
+            }
+        }
         for tx_bytes in &payload.transactions {
             match Transaction::decode(&mut tx_bytes.as_slice()) {
                 Ok(tx) => transactions.push(tx),
@@ -663,6 +710,29 @@ impl TransactionService for MyTransactionService {
 
         println!("DEBUG: Forkchoice updated: head={:?}, safe={:?}, finalized={:?}", head_hash, safe_hash, finalized_hash);
 
+        // Transactional Rollback: if the new head hash is different, we might want to return 
+        // transactions from pending payloads that were building on the old head.
+        // For simplicity, if head changes, we clear pending payloads and return their transactions to mempool.
+        {
+            let mut pending = self.pending_payloads.lock().await;
+            let mut to_rollback = Vec::new();
+            for (id, payload) in pending.iter() {
+                if payload.block.body.execution_payload.parent_hash != head_hash {
+                    to_rollback.push(id.clone());
+                }
+            }
+            for id in to_rollback {
+                if let Some(payload) = pending.remove(&id) {
+                    println!("DEBUG: Rolling back transactions from pending payload {}", id);
+                    for tx_bytes in &payload.block.body.execution_payload.transactions {
+                        if let Ok(tx) = Transaction::decode(&mut tx_bytes.as_slice()) {
+                            storage.mempool.add_transaction(tx);
+                        }
+                    }
+                }
+            }
+        }
+
         let mut payload_id = String::new();
         if let Some(attr) = req.payload_attributes {
             payload_id = format!("0x{:x}", rand::random::<u64>());
@@ -670,19 +740,48 @@ impl TransactionService for MyTransactionService {
             
             let latest_block = storage.get_block_by_hash(head_hash).cloned().unwrap_or_else(|| storage.get_latest_block().cloned().unwrap());
             
-            let mut pending_block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
+            let next_number = latest_block.body.execution_payload.block_number + 1;
+            let txs = storage.mempool.pop_transactions(10);
+            
+            let block_to_execute = Block::builder(next_number)
                 .parent_hash(head_hash)
                 .timestamp(attr.timestamp)
                 .fee_recipient(attr.suggested_fee_recipient.parse().unwrap_or_default())
-                .prev_randao(attr.prev_randao.parse().unwrap_or_default());
+                .prev_randao(attr.prev_randao.parse().unwrap_or_default())
+                .transactions(txs.clone())
+                .build();
             
-            let txs = storage.mempool.pop_transactions(10);
-            for tx in txs {
-                pending_block_builder = pending_block_builder.add_transaction(tx);
+            // Execute the block to get the state changes
+            match self.executor.execute_with_changeset(&mut storage, txs, block_to_execute.clone()) {
+                Ok((_results, receipts, total_changeset)) => {
+                    // Finalize the block with calculated roots
+                    let cumulative_gas_used = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
+                    let mut finalized_block_builder = Block::builder(block_to_execute.slot)
+                        .parent_hash(block_to_execute.body.execution_payload.parent_hash)
+                        .timestamp(block_to_execute.body.execution_payload.timestamp)
+                        .fee_recipient(block_to_execute.body.execution_payload.fee_recipient)
+                        .prev_randao(block_to_execute.body.execution_payload.prev_randao)
+                        .block_number(block_to_execute.body.execution_payload.block_number)
+                        .gas_used(cumulative_gas_used)
+                        .transactions(block_to_execute.body.execution_payload.transactions.clone());
+                    
+                    for receipt in receipts {
+                        finalized_block_builder = finalized_block_builder.add_receipt(receipt);
+                    }
+                    
+                    let finalized_block = finalized_block_builder.build();
+                    
+                    self.pending_payloads.lock().await.insert(payload_id.clone(), PendingPayload {
+                        block: finalized_block,
+                        total_changeset,
+                    });
+                }
+                Err(e) => {
+                    println!("DEBUG: Failed to build block: {}", e);
+                    // If building fails, payload_id remains empty or we handle it differently
+                    payload_id = String::new();
+                }
             }
-            
-            let pending_block = pending_block_builder.build();
-            self.pending_payloads.lock().await.insert(payload_id.clone(), pending_block);
         }
 
         Ok(Response::new(ForkchoiceUpdatedResponse {
@@ -702,7 +801,8 @@ impl TransactionService for MyTransactionService {
         let req = request.into_inner();
         let pending = self.pending_payloads.lock().await;
         
-        let block = pending.get(&req.payload_id).ok_or_else(|| Status::not_found("Payload not found"))?;
+        let pending_payload = pending.get(&req.payload_id).ok_or_else(|| Status::not_found("Payload not found"))?;
+        let block = &pending_payload.block;
         let payload = block.body.execution_payload.clone();
 
         Ok(Response::new(ExecutionPayload {

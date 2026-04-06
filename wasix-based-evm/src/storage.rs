@@ -732,6 +732,16 @@ impl InMemoryStorage {
         self.blocks.keys().last().cloned().unwrap_or(0)
     }
 
+    /// Get a mutable reference to the backend.
+    pub fn backend_mut(&mut self) -> &mut InMemoryBackend {
+        &mut self.backend
+    }
+
+    /// Set the backend.
+    pub fn set_backend(&mut self, backend: InMemoryBackend) {
+        self.backend = backend;
+    }
+
     pub fn get_balance(&self, address: Address) -> U256 {
         let h160 = H160::from_slice(address.as_slice());
         if let Some(a) = self.backend.state.get(&h160) {
