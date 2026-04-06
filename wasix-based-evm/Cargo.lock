@@ -2457,6 +2457,7 @@ dependencies = [
  "mio 0.8.8",
  "prost",
  "rand 0.8.5",
+ "serde_json",
  "socket2 0.4.5",
  "thiserror",
  "tokio",

@@ -36,6 +36,7 @@ mio = { git = "https://github.com/wasix-org/mio", default-features = false }
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 h2 = "0.4"
 tonic-prost = "0.14.5"
+serde_json = { version = "1.0.0", default-features = false, features = ["alloc", "std"] }
 
 
 [build-dependencies]

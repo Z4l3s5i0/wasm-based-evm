@@ -1,4 +1,4 @@
-use crate::ev::{H160, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
+use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, FixedBytes, B256, U256};
 use alloy_genesis::Genesis as AlloyGenesis;
@@ -542,7 +542,7 @@ impl InMemoryStorage {
             let mut storage_map = BTreeMap::new();
             if let Some(s) = account.storage {
                 for (k, v) in s {
-                    storage_map.insert(EvmU256::from_be_bytes(k.0), EvmU256::from_be_bytes(v.0));
+                    storage_map.insert(H256(k.0), H256(v.0));
                 }
             }
             let im_account = InMemoryAccount {
@@ -550,6 +550,7 @@ impl InMemoryStorage {
                 nonce: EvmU256::from(account.nonce.unwrap_or(0)),
                 code: account.code.unwrap_or_default(),
                 storage: storage_map,
+                transient_storage: Default::default(),
             };
             storage.backend.state.insert(address_to_h160(account.address), im_account);
         }
@@ -611,8 +612,8 @@ impl InMemoryStorage {
             balance: EvmU256::zero(),
             code: code.clone(),
             nonce: EvmU256::zero(),
-            storage: BTreeMap::new(),
-            transient_storage: BTreeMap::new(),
+            storage: BTreeMap::<H256, H256>::new(),
+            transient_storage: BTreeMap::<H256, H256>::new(),
         }).code = code.clone();
     }
 
@@ -624,8 +625,8 @@ impl InMemoryStorage {
             balance: evm_balance,
             code: Vec::new(),
             nonce: EvmU256::zero(),
-            storage: BTreeMap::new(),
-            transient_storage: BTreeMap::new(),
+            storage: BTreeMap::<H256, H256>::new(),
+            transient_storage: BTreeMap::<H256, H256>::new(),
         }).balance = evm_balance;
     }
 }

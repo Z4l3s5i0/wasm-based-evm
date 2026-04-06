@@ -1,9 +1,10 @@
 mod ev;
+mod rpc;
 mod executor;
 mod storage;
 use alloy_primitives::U256;
 
-use crate::ev::{EvmU256, alloy_u256_to_evm_u256};
+use crate::ev::{alloy_u256_to_evm_u256};
 use crate::executor::Executor;
 use crate::storage::{InMemoryStorage, Genesis};
 use crate::rpc::MyTransactionService;
