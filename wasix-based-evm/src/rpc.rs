@@ -1,5 +1,5 @@
 use crate::executor::Executor;
-use crate::storage::{InMemoryStorage, Transaction, Block};
+use crate::storage::{InMemoryStorage, Transaction, Block, Receipt};
 use crate::ev::h160_to_address;
 use alloy_primitives::{Address, U256, B256, hex};
 use tonic::{Request, Response, Status};
@@ -26,6 +26,7 @@ use evm_rpc::{
 
 pub struct PendingPayload {
     pub block: Block,
+    pub receipts: Vec<Receipt>,
     pub total_changeset: evm::backend::OverlayedChangeSet,
 }
 
@@ -617,19 +618,14 @@ impl TransactionService for MyTransactionService {
                     storage.backend.apply_overlayed(&payload.total_changeset);
                     
                     // Decode transactions and add them to storage
-                    for tx_bytes in &payload.block.body.execution_payload.transactions {
-                        if let Ok(tx) = Transaction::decode(&mut tx_bytes.as_slice()) {
-                            let tx_hash = tx.hash;
-                            storage.add_transaction(tx);
-                        }
+                    for tx in &payload.block.body.execution_payload.transactions {
+                        storage.add_transaction(tx.clone());
                     }
                     
                     // Add receipts from block body
-                    for (i, tx_bytes) in payload.block.body.execution_payload.transactions.iter().enumerate() {
-                        if let Ok(tx) = Transaction::decode(&mut tx_bytes.as_slice()) {
-                            if let Some(receipt) = payload.block.body.receipts.get(i) {
-                                storage.add_receipt(tx.hash, receipt.clone());
-                            }
+                    for (i, tx) in payload.block.body.execution_payload.transactions.iter().enumerate() {
+                        if let Some(receipt) = payload.receipts.get(i) {
+                            storage.add_receipt(tx.hash, receipt.clone());
                         }
                     }
                     
@@ -643,7 +639,8 @@ impl TransactionService for MyTransactionService {
             }
         }
         for tx_bytes in &payload.transactions {
-            match Transaction::decode(&mut tx_bytes.as_slice()) {
+            let data = tx_bytes.clone();
+            match Transaction::decode(&mut data.as_slice()) {
                 Ok(tx) => transactions.push(tx),
                 Err(e) => {
                     println!("DEBUG: Failed to decode transaction: {}", e);
@@ -724,10 +721,8 @@ impl TransactionService for MyTransactionService {
             for id in to_rollback {
                 if let Some(payload) = pending.remove(&id) {
                     println!("DEBUG: Rolling back transactions from pending payload {}", id);
-                    for tx_bytes in &payload.block.body.execution_payload.transactions {
-                        if let Ok(tx) = Transaction::decode(&mut tx_bytes.as_slice()) {
-                            storage.mempool.add_transaction(tx);
-                        }
+                    for tx in &payload.block.body.execution_payload.transactions {
+                        storage.mempool.add_transaction(tx.clone());
                     }
                 }
             }
@@ -765,14 +760,13 @@ impl TransactionService for MyTransactionService {
                         .gas_used(cumulative_gas_used)
                         .transactions(block_to_execute.body.execution_payload.transactions.clone());
                     
-                    for receipt in receipts {
-                        finalized_block_builder = finalized_block_builder.add_receipt(receipt);
+                    for receipt in &receipts {
+                        finalized_block_builder = finalized_block_builder.add_receipt(receipt.clone());
                     }
                     
-                    let finalized_block = finalized_block_builder.build();
-                    
                     self.pending_payloads.lock().await.insert(payload_id.clone(), PendingPayload {
-                        block: finalized_block,
+                        block: finalized_block_builder.build(),
+                        receipts,
                         total_changeset,
                     });
                 }

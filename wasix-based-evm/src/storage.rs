@@ -3,7 +3,7 @@ use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use evm::interpreter::runtime::Log as EvmLog;
 use alloy_primitives::{Address, FixedBytes, B256, U256, keccak256, Bloom, BloomInput};
 use alloy_genesis::Genesis as AlloyGenesis;
-use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable};
+use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable};
 use alloy_trie::{TrieAccount, root::ordered_trie_root};
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
