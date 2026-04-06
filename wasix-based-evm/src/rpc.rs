@@ -1,9 +1,10 @@
 use crate::executor::Executor;
 use crate::storage::{InMemoryStorage, Transaction, Block};
 use crate::ev::h160_to_address;
-use alloy_primitives::{Address, U256, B256};
+use alloy_primitives::{Address, U256, B256, hex};
 use tonic::{Request, Response, Status};
 use std::sync::Arc;
+use alloy_rlp::Decodable;
 use tokio::sync::Mutex;
 use evm::standard::TransactValueCallCreate;
 
@@ -19,12 +20,14 @@ use evm_rpc::{
     GetBlockTransactionCountByNumberRequest, TransactionCountResponse,
     GetTransactionByHashRequest, TransactionInfoResponse, TransactionReceiptResponse,
     GetCodeRequest, CodeResponse, RootsResponse, ProposeBlockRequest, ProposeBlockResponse,
-    MempoolResponse
+    MempoolResponse, ExecutionPayload, PayloadStatus, ForkchoiceUpdatedRequest,
+    ForkchoiceUpdatedResponse, GetPayloadRequest
 };
 
 pub struct MyTransactionService {
     pub storage: Arc<Mutex<InMemoryStorage>>,
     pub executor: Executor,
+    pub pending_payloads: Arc<Mutex<std::collections::HashMap<String, Block>>>,
 }
 
 #[tonic::async_trait]
@@ -570,5 +573,158 @@ impl TransactionService for MyTransactionService {
                 }))
             }
         }
+    }
+
+    async fn engine_new_payload(
+        &self,
+        request: Request<ExecutionPayload>,
+    ) -> Result<Response<PayloadStatus>, Status> {
+        let payload = request.into_inner();
+        let mut storage = self.storage.lock().await;
+
+        let parent_hash: B256 = payload.parent_hash.parse().map_err(|_| Status::invalid_argument("Invalid parent hash"))?;
+        let block_hash: B256 = payload.block_hash.parse().map_err(|_| Status::invalid_argument("Invalid block hash"))?;
+        
+        // Basic validation: check if parent exists
+        if storage.get_block_by_hash(parent_hash).is_none() && parent_hash != B256::ZERO {
+            return Ok(Response::new(PayloadStatus {
+                status: "ACCEPTED".to_string(),
+                latest_valid_hash: format!("{:?}", storage.head_block_hash),
+                validation_error: "Parent block not found".to_string(),
+            }));
+        }
+
+        let mut transactions = Vec::new();
+        for tx_bytes in &payload.transactions {
+            match Transaction::decode(&mut tx_bytes.as_slice()) {
+                Ok(tx) => transactions.push(tx),
+                Err(e) => {
+                    println!("DEBUG: Failed to decode transaction: {}", e);
+                    return Ok(Response::new(PayloadStatus {
+                        status: "INVALID".to_string(),
+                        latest_valid_hash: format!("{:?}", storage.head_block_hash),
+                        validation_error: format!("Failed to decode transaction: {}", e),
+                    }));
+                }
+            }
+        }
+
+        // Construct block from payload
+        let block = Block::builder(payload.block_number)
+            .parent_hash(parent_hash)
+            .timestamp(payload.timestamp)
+            .fee_recipient(payload.fee_recipient.parse().unwrap_or_default())
+            .state_root(payload.state_root.parse().unwrap_or_default())
+            .transactions_root(payload.transactions_root.parse().unwrap_or_default())
+            .receipts_root(payload.receipts_root.parse().unwrap_or_default())
+            .withdrawals_root(payload.withdrawals_root.parse().unwrap_or_default())
+            .prev_randao(payload.prev_randao.parse().unwrap_or_default())
+            .gas_limit(payload.gas_limit)
+            .gas_used(payload.gas_used)
+            .block_hash(block_hash)
+            .transactions(transactions.clone())
+            .build();
+
+        // Validate block by executing it
+        let executor = crate::executor::Executor::new();
+        match executor.execute_block(&mut storage, transactions, block.clone()) {
+            Ok(_) => {
+                storage.add_block(block);
+                Ok(Response::new(PayloadStatus {
+                    status: "VALID".to_string(),
+                    latest_valid_hash: format!("{:?}", block_hash),
+                    validation_error: String::new(),
+                }))
+            }
+            Err(e) => {
+                Ok(Response::new(PayloadStatus {
+                    status: "INVALID".to_string(),
+                    latest_valid_hash: format!("{:?}", storage.head_block_hash),
+                    validation_error: format!("Block execution failed: {}", e),
+                }))
+            }
+        }
+    }
+
+    async fn engine_forkchoice_updated(
+        &self,
+        request: Request<ForkchoiceUpdatedRequest>,
+    ) -> Result<Response<ForkchoiceUpdatedResponse>, Status> {
+        let req = request.into_inner();
+        let mut storage = self.storage.lock().await;
+
+        let head_hash: B256 = req.forkchoice_state.as_ref().map(|s| s.head_block_hash.parse().unwrap_or_default()).unwrap_or_default();
+        let safe_hash: B256 = req.forkchoice_state.as_ref().map(|s| s.safe_block_hash.parse().unwrap_or_default()).unwrap_or_default();
+        let finalized_hash: B256 = req.forkchoice_state.as_ref().map(|s| s.finalized_block_hash.parse().unwrap_or_default()).unwrap_or_default();
+
+        storage.head_block_hash = head_hash;
+        storage.safe_block_hash = safe_hash;
+        storage.finalized_block_hash = finalized_hash;
+
+        println!("DEBUG: Forkchoice updated: head={:?}, safe={:?}, finalized={:?}", head_hash, safe_hash, finalized_hash);
+
+        let mut payload_id = String::new();
+        if let Some(attr) = req.payload_attributes {
+            payload_id = format!("0x{:x}", rand::random::<u64>());
+            println!("DEBUG: Starting block building, payload_id={}", payload_id);
+            
+            let latest_block = storage.get_block_by_hash(head_hash).cloned().unwrap_or_else(|| storage.get_latest_block().cloned().unwrap());
+            
+            let mut pending_block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
+                .parent_hash(head_hash)
+                .timestamp(attr.timestamp)
+                .fee_recipient(attr.suggested_fee_recipient.parse().unwrap_or_default())
+                .prev_randao(attr.prev_randao.parse().unwrap_or_default());
+            
+            let txs = storage.mempool.pop_transactions(10);
+            for tx in txs {
+                pending_block_builder = pending_block_builder.add_transaction(tx);
+            }
+            
+            let pending_block = pending_block_builder.build();
+            self.pending_payloads.lock().await.insert(payload_id.clone(), pending_block);
+        }
+
+        Ok(Response::new(ForkchoiceUpdatedResponse {
+            payload_status: Some(PayloadStatus {
+                status: "VALID".to_string(),
+                latest_valid_hash: format!("{:?}", head_hash),
+                validation_error: String::new(),
+            }),
+            payload_id,
+        }))
+    }
+
+    async fn engine_get_payload(
+        &self,
+        request: Request<GetPayloadRequest>,
+    ) -> Result<Response<ExecutionPayload>, Status> {
+        let req = request.into_inner();
+        let pending = self.pending_payloads.lock().await;
+        
+        let block = pending.get(&req.payload_id).ok_or_else(|| Status::not_found("Payload not found"))?;
+        let payload = block.body.execution_payload.clone();
+
+        Ok(Response::new(ExecutionPayload {
+            parent_hash: format!("{:?}", payload.parent_hash),
+            fee_recipient: format!("{:?}", payload.fee_recipient),
+            state_root: format!("{:?}", payload.state_root),
+            receipts_root: format!("{:?}", payload.receipts_root),
+            logs_bloom: hex::encode(payload.logs_bloom),
+            prev_randao: format!("{:?}", payload.prev_randao),
+            block_number: payload.block_number,
+            gas_limit: payload.gas_limit,
+            gas_used: payload.gas_used,
+            timestamp: payload.timestamp,
+            extra_data: payload.extra_data,
+            base_fee_per_gas: payload.base_fee_per_gas.to_string(),
+            block_hash: format!("{:?}", payload.block_hash),
+            transactions: payload.transactions.iter().map(|_| Vec::new()).collect(),
+            withdrawals: Vec::new(),
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+            transactions_root: format!("{:?}",payload.transactions_root),
+            withdrawals_root: format!("{:?}",payload.withdrawals_root)
+        }))
     }
 }

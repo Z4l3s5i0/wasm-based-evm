@@ -45,6 +45,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let transaction_service = MyTransactionService {
         storage,
         executor,
+        pending_payloads: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
 
     println!("EVM gRPC Server listening on {}", addr);

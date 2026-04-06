@@ -21,6 +21,73 @@ service TransactionService {
   rpc EthGetRoots (Empty) returns (RootsResponse);
   rpc ProposeBlock (ProposeBlockRequest) returns (ProposeBlockResponse);
   rpc EthGetMempool (Empty) returns (MempoolResponse);
+
+  rpc EngineNewPayload (ExecutionPayload) returns (PayloadStatus);
+  rpc EngineForkchoiceUpdated (ForkchoiceUpdatedRequest) returns (ForkchoiceUpdatedResponse);
+  rpc EngineGetPayload (GetPayloadRequest) returns (ExecutionPayload);
+}
+
+message ForkchoiceUpdatedRequest {
+  ForkchoiceState forkchoice_state = 1;
+  PayloadAttributes payload_attributes = 2; // Optional, can be null/empty
+}
+
+message ForkchoiceState {
+  string head_block_hash = 1;
+  string safe_block_hash = 2;
+  string finalized_block_hash = 3;
+}
+
+message PayloadAttributes {
+  uint64 timestamp = 1;
+  string prev_randao = 2;
+  string suggested_fee_recipient = 3;
+  repeated Withdrawal withdrawals = 4;
+  string parent_beacon_block_root = 5;
+}
+
+message Withdrawal {
+  uint64 index = 1;
+  uint64 validator_index = 2;
+  string address = 3;
+  string amount = 4; // U256 as string
+}
+
+message ForkchoiceUpdatedResponse {
+  PayloadStatus payload_status = 1;
+  string payload_id = 2; // Optional, hex string
+}
+
+message GetPayloadRequest {
+  string payload_id = 1;
+}
+
+message ExecutionPayload {
+  string parent_hash = 1;
+  string fee_recipient = 2;
+  string state_root = 3;
+  string receipts_root = 4;
+  string logs_bloom = 5;
+  string prev_randao = 6;
+  uint64 block_number = 7;
+  uint64 gas_limit = 8;
+  uint64 gas_used = 9;
+  uint64 timestamp = 10;
+  bytes extra_data = 11;
+  string base_fee_per_gas = 12;
+  string block_hash = 13;
+  repeated bytes transactions = 14;
+  repeated Withdrawal withdrawals = 15;
+  uint64 blob_gas_used = 16;
+  uint64 excess_blob_gas = 17;
+  string transactions_root = 18;
+  string withdrawals_root = 19;
+}
+
+message PayloadStatus {
+  string status = 1; // VALID, INVALID, SYNCING, ACCEPTED, INVALID_BLOCK_HASH
+  string latest_valid_hash = 2;
+  string validation_error = 3;
 }
 
 message Empty {}

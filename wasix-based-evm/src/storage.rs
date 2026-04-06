@@ -3,13 +3,13 @@ use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use evm::interpreter::runtime::Log as EvmLog;
 use alloy_primitives::{Address, FixedBytes, B256, U256, keccak256, Bloom, BloomInput};
 use alloy_genesis::Genesis as AlloyGenesis;
-use alloy_rlp::{RlpEncodable, Encodable};
+use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable};
 use alloy_trie::{TrieAccount, root::ordered_trie_root};
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
 use rand::RngCore;
 
-#[derive(Debug, Clone, RlpEncodable)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Receipt {
     pub success: bool,
     pub cumulative_gas_used: u64,
@@ -17,7 +17,7 @@ pub struct Receipt {
     pub logs: Vec<Log>,
 }
 
-#[derive(Debug, Clone, RlpEncodable)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Log {
     pub address: Address,
     pub topics: Vec<B256>,
@@ -51,7 +51,7 @@ fn random_b256() -> B256 {
     FixedBytes::<32>(buf)
 }
 
-#[derive(Debug, Clone, RlpEncodable)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 #[rlp(trailing)]
 pub struct Transaction {
     pub hash: B256,
@@ -152,7 +152,7 @@ impl TransactionBuilder {
     }
 }
 
-#[derive(Debug, Clone, RlpEncodable)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Withdrawal {
     pub index: u64,
     pub validator_index: u64,
@@ -606,6 +606,9 @@ pub struct InMemoryStorage {
     #[allow(dead_code)]
     pub contracts: BTreeMap<Address, Vec<u8>>,
     pub mempool: crate::mempool::Mempool,
+    pub head_block_hash: B256,
+    pub safe_block_hash: B256,
+    pub finalized_block_hash: B256,
 }
 
 impl InMemoryStorage {
@@ -638,6 +641,9 @@ impl InMemoryStorage {
             receipts: BTreeMap::new(),
             contracts: BTreeMap::new(),
             mempool: crate::mempool::Mempool::new(U256::ZERO),
+            head_block_hash: B256::ZERO,
+            safe_block_hash: B256::ZERO,
+            finalized_block_hash: B256::ZERO,
         };
 
         // Create genesis block
@@ -665,13 +671,19 @@ impl InMemoryStorage {
 
         let state_root = storage.calculate_state_root();
         let genesis_block = genesis_block_builder.state_root(state_root).build();
+        let genesis_hash = genesis_block.body.execution_payload.block_hash;
         storage.add_block(genesis_block);
+        storage.head_block_hash = genesis_hash;
+        storage.safe_block_hash = genesis_hash;
+        storage.finalized_block_hash = genesis_hash;
 
         storage
     }
 
     pub fn add_block(&mut self, block: Block) {
+        let block_hash = block.body.execution_payload.block_hash;
         self.blocks.insert(block.body.execution_payload.block_number, block);
+        self.head_block_hash = block_hash;
     }
 
     pub fn add_transaction(&mut self, tx: Transaction) {

@@ -2,11 +2,42 @@ pub mod evm_rpc {
     tonic::include_proto!("evm_rpc");
 }
 
+use alloy_primitives::{Address, B256, FixedBytes, U256};
+use alloy_rlp::{Encodable, RlpDecodable, RlpEncodable};
+use alloy_trie::root::ordered_trie_root;
 use clap::{Parser, Subcommand};
 use evm_rpc::transaction_service_client::TransactionServiceClient;
 use evm_rpc::*;
 use rustyline::error::ReadlineError;
 use rustyline::DefaultEditor;
+use std::str::FromStr;
+
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
+#[rlp(trailing)]
+pub struct Transaction {
+    pub hash: B256,
+    pub nonce: u64,
+    pub from: Address,
+    pub value: U256,
+    pub data: Vec<u8>,
+    pub gas_limit: u64,
+    pub gas_price: U256,
+    pub to: Option<Address>,
+}
+
+impl Transaction {
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode(&mut out);
+        out
+    }
+}
+
+fn random_b256() -> B256 {
+    let mut buf = [0u8; 32];
+    rand::RngCore::fill_bytes(&mut rand::thread_rng(), &mut buf);
+    FixedBytes::<32>(buf)
+}
 
 #[derive(Parser)]
 #[command(name = "evm-tester")]
@@ -162,6 +193,53 @@ enum Commands {
     },
     /// Clears the current block buffer
     BlockClear,
+    /// Engine API: New Payload
+    EngineNewPayload {
+        #[arg(long)]
+        parent_hash: String,
+        #[arg(long)]
+        fee_recipient: String,
+        #[arg(long)]
+        state_root: String,
+        #[arg(long)]
+        receipts_root: String,
+        #[arg(long)]
+        logs_bloom: String,
+        #[arg(long)]
+        prev_randao: String,
+        #[arg(long)]
+        block_number: u64,
+        #[arg(long)]
+        gas_limit: u64,
+        #[arg(long)]
+        gas_used: u64,
+        #[arg(long)]
+        timestamp: u64,
+        #[arg(long)]
+        block_hash: String,
+        #[arg(long)]
+        base_fee: String,
+    },
+    /// Engine API: Forkchoice Updated
+    EngineForkchoiceUpdated {
+        #[arg(long)]
+        head: String,
+        #[arg(long, default_value = "0x0000000000000000000000000000000000000000000000000000000000000000")]
+        safe: String,
+        #[arg(long, default_value = "0x0000000000000000000000000000000000000000000000000000000000000000")]
+        finalized: String,
+        #[arg(long)]
+        timestamp: Option<u64>,
+        #[arg(long)]
+        prev_randao: Option<String>,
+        #[arg(long)]
+        suggested_fee_recipient: Option<String>,
+    },
+    /// Engine API: Get Payload
+    EngineGetPayload {
+        #[arg(long)]
+        payload_id: String,
+    },
     /// Opens the block explorer
     Explorer,
     /// Exits the tester
@@ -515,6 +593,124 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Commands::BlockClear => {
                         block_buffer = None;
                         println!("Block buffer cleared.");
+                    }
+                    Commands::EngineNewPayload {
+                        parent_hash,
+                        fee_recipient,
+                        state_root,
+                        receipts_root,
+                        logs_bloom,
+                        prev_randao,
+                        block_number,
+                        gas_limit,
+                        gas_used,
+                        timestamp,
+                        block_hash,
+                        base_fee,
+                    } => {
+                        let mut encoded_transactions = Vec::new();
+                        let mut transaction_objs = Vec::new();
+
+                        if let Some(ref buffer) = block_buffer {
+                            for tx_req in &buffer.4 {
+                                let from = Address::from_str(&tx_req.from).unwrap_or_default();
+                                let to = if tx_req.to.is_empty() {
+                                    None
+                                } else {
+                                    Some(Address::from_str(&tx_req.to).unwrap_or_default())
+                                };
+                                let value = U256::from_str(&tx_req.value).unwrap_or_default();
+                                let gas_limit = tx_req.gas_limit;
+                                let gas_price = U256::from(tx_req.gas_price);
+                                let nonce = tx_req.nonce;
+                                let data = tx_req.data.clone();
+
+                                let tx = Transaction {
+                                    hash: random_b256(), // For testing, we generate a random hash
+                                    nonce,
+                                    from,
+                                    value,
+                                    data,
+                                    gas_limit,
+                                    gas_price,
+                                    to,
+                                };
+
+                                encoded_transactions.push(tx.to_vec());
+                                transaction_objs.push(tx);
+                            }
+                        }
+
+                        // Calculate transactions root using alloy-trie
+                        let tx_root = ordered_trie_root(&transaction_objs);
+
+                        let request = ExecutionPayload {
+                            parent_hash,
+                            fee_recipient,
+                            state_root,
+                            receipts_root,
+                            logs_bloom,
+                            prev_randao,
+                            block_number,
+                            gas_limit,
+                            gas_used,
+                            timestamp,
+                            extra_data: Vec::new(),
+                            base_fee_per_gas: base_fee,
+                            block_hash,
+                            transactions: encoded_transactions,
+                            withdrawals: Vec::new(),
+                            blob_gas_used: 0,
+                            excess_blob_gas: 0,
+                            transactions_root: format!("{:?}", tx_root),
+                            withdrawals_root: String::new(),
+                        };
+                        let response = client.engine_new_payload(request).await?;
+                        let res = response.into_inner();
+                        println!("Engine New Payload Response: status={}, latest_valid_hash={}, error={}", res.status, res.latest_valid_hash, res.validation_error);
+                    }
+                    Commands::EngineForkchoiceUpdated {
+                        head,
+                        safe,
+                        finalized,
+                        timestamp,
+                        prev_randao,
+                        suggested_fee_recipient,
+                    } => {
+                        let payload_attributes = if let Some(t) = timestamp {
+                            Some(PayloadAttributes {
+                                timestamp: t,
+                                prev_randao: prev_randao.unwrap_or_default(),
+                                suggested_fee_recipient: suggested_fee_recipient.unwrap_or_default(),
+                                withdrawals: Vec::new(),
+                                parent_beacon_block_root: String::new(),
+                            })
+                        } else {
+                            None
+                        };
+                        let request = ForkchoiceUpdatedRequest {
+                            forkchoice_state: Some(ForkchoiceState {
+                                head_block_hash: head,
+                                safe_block_hash: safe,
+                                finalized_block_hash: finalized,
+                            }),
+                            payload_attributes,
+                        };
+                        let response = client.engine_forkchoice_updated(request).await?;
+                        let res = response.into_inner();
+                        let status = res.payload_status.unwrap_or_default();
+                        println!("Engine Forkchoice Updated Response: status={}, latest_valid_hash={}, payload_id={}", status.status, status.latest_valid_hash, res.payload_id);
+                    }
+                    Commands::EngineGetPayload { payload_id } => {
+                        let request = GetPayloadRequest { payload_id };
+                        let response = client.engine_get_payload(request).await?;
+                        let res = response.into_inner();
+                        println!("Engine Get Payload Response:");
+                        println!("  Block Number: {}", res.block_number);
+                        println!("  Block Hash:   {}", res.block_hash);
+                        println!("  Parent Hash:  {}", res.parent_hash);
+                        println!("  Timestamp:    {}", res.timestamp);
+                        println!("  Transactions: {}", res.transactions.len());
                     }
                     Commands::Explorer => {
                         run_explorer(&mut client).await?;
