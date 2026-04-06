@@ -24,7 +24,7 @@ use alloc::vec::Vec;
 ### Build and run
 ```shell
 cargo wasix build --release
-wasmer run .\wasm-based-evm\wasix-based-evm\target\wasm32-wasmer-wasi\release\wasix-based-evm.wasm --net --enable-threads --enable-exceptions   
+wasmer run .\wasm-based-evm\wasix-based-evm\target\wasm32-wasmer-wasi\release\wasix-based-evm.wasm --net --enable-threads --enable-exceptions --mapdir /genesis:./genesis  
 ```
 
 ### references
