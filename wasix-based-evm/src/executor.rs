@@ -1,5 +1,5 @@
 use crate::ev::{H160, EvmU256, evm};
-use crate::storage::{InMemoryStorage, Transaction, Block};
+use crate::storage::{InMemoryStorage, Transaction, Block, Receipt, Log};
 use evm::{
     transact,
     backend::OverlayedBackend,
@@ -75,6 +75,19 @@ impl Executor {
                     let (_, changeset) = overlayed.deconstruct();
                     storage.backend.apply_overlayed(&changeset);
 
+                    let logs: Vec<Log> = changeset.logs.into_iter().map(Log::from).collect();
+                    let bloom = crate::storage::logs_bloom(&logs);
+                    let success = match value.call_create {
+                        crate::ev::evm::standard::TransactValueCallCreate::Call { .. } => true,
+                        crate::ev::evm::standard::TransactValueCallCreate::Create { .. } => true,
+                    };
+                    let receipt = Receipt {
+                        success,
+                        cumulative_gas_used: value.used_gas.as_u64(), // Simple approach: one tx per block for now
+                        logs_bloom: bloom,
+                        logs,
+                    };
+
                     // Finalize block with correct roots
                     let mut block_builder = Block::builder(block.slot)
                         .proposer_index(block.proposer_index)
@@ -84,10 +97,11 @@ impl Executor {
                         .prev_randao(block.body.execution_payload.prev_randao)
                         .block_number(block.body.execution_payload.block_number)
                         .gas_limit(block.body.execution_payload.gas_limit)
-                        .gas_used(block.body.execution_payload.gas_used)
+                        .gas_used(value.used_gas.as_u64())
                         .timestamp(block.body.execution_payload.timestamp)
                         .extra_data(block.body.execution_payload.extra_data.clone())
                         .base_fee_per_gas(block.body.execution_payload.base_fee_per_gas)
+                        .logs_bloom(bloom.as_slice().to_vec())
                         .add_transaction(tx.clone());
 
                     for withdrawal in &block.body.execution_payload.withdrawals {
@@ -98,15 +112,18 @@ impl Executor {
                     let tx_list = vec![tx.clone()];
                     let txs_root = InMemoryStorage::calculate_transactions_root(&tx_list);
                     let withdrawals_root = InMemoryStorage::calculate_withdrawals_root(&block.body.execution_payload.withdrawals);
+                    let receipts_root = InMemoryStorage::calculate_receipts_root(&[receipt.clone()]);
 
                     let finalized_block = block_builder
                         .state_root(state_root)
                         .transactions_root(txs_root)
                         .withdrawals_root(withdrawals_root)
+                        .receipts_root(receipts_root)
                         .build();
 
-                    // Add transaction and block to storage
-                    storage.add_transaction(tx);
+                    // Add transaction, receipt and block to storage
+                    storage.add_transaction(tx.clone());
+                    storage.add_receipt(tx.hash, receipt);
                     storage.add_block(finalized_block);
                 }
                 Ok(value)

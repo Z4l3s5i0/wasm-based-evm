@@ -14,7 +14,7 @@ evm = { path = "../evm", default-features = false }
 evm-precompile = { path = "../evm/precompile", default-features = false }
 evm-interpreter = { path = "../evm/interpreter", default-features = false }
 alloy-primitives = { version = "1.5.7", default-features = false, features = ["serde"] }
-alloy-consensus = { version = "=1.6.3", default-features = false }
+alloy-consensus = { version = "=1.6.3", default-features = false, features = ["k256"] }
 alloy-tx-macros = { version = "=1.6.3", default-features = false }
 alloy-genesis = { version = "=1.6.3", default-features = false }
 alloy-serde= { version = "=1.6.3", default-features = false }

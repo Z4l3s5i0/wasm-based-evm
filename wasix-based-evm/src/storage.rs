@@ -1,12 +1,49 @@
-use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
+use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, h160_to_address};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
-use alloy_primitives::{Address, FixedBytes, B256, U256, keccak256};
+use evm::interpreter::runtime::Log as EvmLog;
+use alloy_primitives::{Address, FixedBytes, B256, U256, keccak256, Bloom, BloomInput};
 use alloy_genesis::Genesis as AlloyGenesis;
 use alloy_rlp::{RlpEncodable, Encodable};
 use alloy_trie::{TrieAccount, root::ordered_trie_root};
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
 use rand::RngCore;
+
+#[derive(Debug, Clone, RlpEncodable)]
+pub struct Receipt {
+    pub success: bool,
+    pub cumulative_gas_used: u64,
+    pub logs_bloom: Bloom,
+    pub logs: Vec<Log>,
+}
+
+#[derive(Debug, Clone, RlpEncodable)]
+pub struct Log {
+    pub address: Address,
+    pub topics: Vec<B256>,
+    pub data: Vec<u8>,
+}
+
+impl From<EvmLog> for Log {
+    fn from(evm_log: EvmLog) -> Self {
+        Self {
+            address: h160_to_address(evm_log.address),
+            topics: evm_log.topics.into_iter().map(|t| B256::from(t.0)).collect(),
+            data: evm_log.data,
+        }
+    }
+}
+
+pub fn logs_bloom(logs: &[Log]) -> Bloom {
+    let mut bloom = Bloom::ZERO;
+    for log in logs {
+        bloom.accrue(BloomInput::Raw(log.address.as_slice()));
+        for topic in &log.topics {
+            bloom.accrue(BloomInput::Raw(topic.as_slice()));
+        }
+    }
+    bloom
+}
 
 fn random_b256() -> B256 {
     let mut buf = [0u8; 32];
@@ -535,6 +572,7 @@ pub struct InMemoryStorage {
     pub backend: InMemoryBackend,
     pub blocks: BTreeMap<u64, Block>,
     pub transactions: BTreeMap<B256, Transaction>,
+    pub receipts: BTreeMap<B256, Receipt>,
     #[allow(dead_code)]
     pub contracts: BTreeMap<Address, Vec<u8>>,
 }
@@ -566,6 +604,7 @@ impl InMemoryStorage {
             },
             blocks: BTreeMap::new(),
             transactions: BTreeMap::new(),
+            receipts: BTreeMap::new(),
             contracts: BTreeMap::new(),
         };
 
@@ -605,6 +644,10 @@ impl InMemoryStorage {
 
     pub fn add_transaction(&mut self, tx: Transaction) {
         self.transactions.insert(tx.hash, tx);
+    }
+
+    pub fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
+        self.receipts.insert(tx_hash, receipt);
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Option<&Block> {
@@ -695,5 +738,9 @@ impl InMemoryStorage {
 
     pub fn calculate_withdrawals_root(withdrawals: &[Withdrawal]) -> B256 {
         ordered_trie_root(withdrawals)
+    }
+
+    pub fn calculate_receipts_root(receipts: &[Receipt]) -> B256 {
+        ordered_trie_root(receipts)
     }
 }
