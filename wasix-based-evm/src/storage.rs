@@ -605,6 +605,7 @@ pub struct InMemoryStorage {
     pub receipts: BTreeMap<B256, Receipt>,
     #[allow(dead_code)]
     pub contracts: BTreeMap<Address, Vec<u8>>,
+    pub mempool: crate::mempool::Mempool,
 }
 
 impl InMemoryStorage {
@@ -636,6 +637,7 @@ impl InMemoryStorage {
             transactions: BTreeMap::new(),
             receipts: BTreeMap::new(),
             contracts: BTreeMap::new(),
+            mempool: crate::mempool::Mempool::new(U256::ZERO),
         };
 
         // Create genesis block

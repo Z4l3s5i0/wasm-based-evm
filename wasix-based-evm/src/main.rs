@@ -2,6 +2,7 @@ mod ev;
 mod rpc;
 mod executor;
 mod storage;
+mod mempool;
 use alloy_primitives::U256;
 
 use crate::ev::{alloy_u256_to_evm_u256};

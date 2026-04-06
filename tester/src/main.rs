@@ -123,6 +123,8 @@ enum Commands {
     },
     /// Returns the current trie roots for verification
     GetRoots,
+    /// Returns the transactions currently in the mempool
+    GetMempool,
     /// Starts a new block proposal
     BlockStart {
         #[arg(long)]
@@ -152,7 +154,12 @@ enum Commands {
         nonce: u64,
     },
     /// Proposes the current block buffer to the server
-    BlockPropose,
+    BlockPropose {
+        #[arg(long)]
+        from_mempool: bool,
+        #[arg(long, default_value = "100")]
+        max_transactions: u32,
+    },
     /// Clears the current block buffer
     BlockClear,
     /// Opens the block explorer
@@ -438,6 +445,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Receipts Root:     {}", res.receipts_root);
                         println!("  Withdrawals Root:  {}", res.withdrawals_root);
                     }
+                    Commands::GetMempool => {
+                        let response = client.eth_get_mempool(Empty {}).await?;
+                        let res = response.into_inner();
+                        println!("Mempool Transactions ({}):", res.transactions.len());
+                        for tx in res.transactions {
+                            println!("  Hash: {}, From: {}, To: {}, Value: {}", tx.hash, tx.from, tx.to, tx.value);
+                        }
+                    }
                     Commands::BlockStart { slot, parent_hash, timestamp, fee_recipient } => {
                         block_buffer = Some((slot, parent_hash, timestamp, fee_recipient, Vec::new()));
                         println!("Block proposal started for slot {}.", slot);
@@ -459,7 +474,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             println!("No block proposal in progress. Start one with 'block-start'.");
                         }
                     }
-                    Commands::BlockPropose => {
+                    Commands::BlockPropose { from_mempool, max_transactions } => {
                         if let Some((slot, parent_hash, timestamp, fee_recipient, transactions)) = block_buffer.take() {
                             let request = ProposeBlockRequest {
                                 slot,
@@ -467,6 +482,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                                 transactions,
                                 timestamp: timestamp.unwrap_or_default(),
                                 fee_recipient: fee_recipient.unwrap_or_default(),
+                                from_mempool,
+                                max_transactions,
                             };
                             let response = client.propose_block(request).await?;
                             let res = response.into_inner();
@@ -474,8 +491,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                             for (i, tx_res) in res.tx_results.iter().enumerate() {
                                 println!("  Tx {}: success={}, message={}", i, tx_res.success, tx_res.message);
                             }
+                        } else if from_mempool {
+                            // If no buffer but from_mempool is true, we can still propose a block
+                            let request = ProposeBlockRequest {
+                                slot: 0, // Server will decide slot if not provided or we could ask for latest block + 1
+                                parent_hash: String::new(),
+                                transactions: Vec::new(),
+                                timestamp: 0,
+                                fee_recipient: String::new(),
+                                from_mempool,
+                                max_transactions,
+                            };
+                            let response = client.propose_block(request).await?;
+                            let res = response.into_inner();
+                            println!("Block Proposal (Mempool) Response: success={}, block_hash={}, message={}", res.success, res.block_hash, res.message);
+                            for (i, tx_res) in res.tx_results.iter().enumerate() {
+                                println!("  Tx {}: success={}, message={}", i, tx_res.success, tx_res.message);
+                            }
                         } else {
-                            println!("No block proposal in progress.");
+                            println!("No block proposal in progress. Use --from-mempool to propose from mempool.");
                         }
                     }
                     Commands::BlockClear => {

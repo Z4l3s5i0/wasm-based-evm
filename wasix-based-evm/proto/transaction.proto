@@ -20,6 +20,7 @@ service TransactionService {
   rpc EthGetCode (GetCodeRequest) returns (CodeResponse);
   rpc EthGetRoots (Empty) returns (RootsResponse);
   rpc ProposeBlock (ProposeBlockRequest) returns (ProposeBlockResponse);
+  rpc EthGetMempool (Empty) returns (MempoolResponse);
 }
 
 message Empty {}
@@ -158,6 +159,12 @@ message ProposeBlockRequest {
   repeated TransactionRequest transactions = 3;
   uint64 timestamp = 4;
   string fee_recipient = 5;
+  bool from_mempool = 6;
+  uint32 max_transactions = 7;
+}
+
+message MempoolResponse {
+  repeated TransactionInfoResponse transactions = 1;
 }
 
 message ProposeBlockResponse {

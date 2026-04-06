@@ -18,7 +18,8 @@ use evm_rpc::{
     GetBlockByHashRequest, BlockResponse, GetBlockTransactionCountByHashRequest,
     GetBlockTransactionCountByNumberRequest, TransactionCountResponse,
     GetTransactionByHashRequest, TransactionInfoResponse, TransactionReceiptResponse,
-    GetCodeRequest, CodeResponse, RootsResponse, ProposeBlockRequest, ProposeBlockResponse
+    GetCodeRequest, CodeResponse, RootsResponse, ProposeBlockRequest, ProposeBlockResponse,
+    MempoolResponse
 };
 
 pub struct MyTransactionService {
@@ -297,8 +298,41 @@ impl TransactionService for MyTransactionService {
         &self,
         request: Request<TransactionRequest>,
     ) -> Result<Response<TransactionResponse>, Status> {
-        // For now, eth_sendTransaction is the same as execute_transaction
-        self.execute_transaction(request).await
+        let req = request.into_inner();
+
+        let from_addr: Address = req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
+        let to_addr: Option<Address> = if req.to.is_empty() {
+            None
+        } else {
+            Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
+        };
+
+        let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
+            U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
+        }).map_err(|_| Status::invalid_argument("Invalid value"))?;
+
+        let tx = Transaction::builder(from_addr)
+            .nonce(req.nonce)
+            .to(to_addr)
+            .value(val_u256)
+            .data(req.data)
+            .gas_limit(req.gas_limit)
+            .gas_price(U256::from(req.gas_price))
+            .build();
+
+        let mut storage = self.storage.lock().await;
+        let tx_hash = tx.hash;
+        storage.mempool.add_transaction(tx);
+
+        println!("DEBUG: Transaction added to mempool: {:?}", tx_hash);
+
+        Ok(Response::new(TransactionResponse {
+            success: true,
+            message: "Transaction added to mempool".to_string(),
+            tx_hash: format!("{:?}", tx_hash),
+            contract_address: String::new(),
+            return_data: Vec::new(),
+        }))
     }
 
     async fn eth_call(
@@ -403,6 +437,33 @@ impl TransactionService for MyTransactionService {
         }))
     }
 
+    async fn eth_get_mempool(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<MempoolResponse>, Status> {
+        let storage = self.storage.lock().await;
+        let mempool_txs = storage.mempool.get_all_transactions();
+
+        let transactions = mempool_txs.into_iter().map(|tx| {
+            TransactionInfoResponse {
+                hash: format!("{:?}", tx.hash),
+                nonce: tx.nonce,
+                from: format!("{:?}", tx.from),
+                to: tx.to.map(|a| format!("{:?}", a)).unwrap_or_default(),
+                value: tx.value.to_string(),
+                data: tx.data.clone(),
+                gas_limit: tx.gas_limit,
+                gas_price: tx.gas_price.to_string().parse().unwrap_or(0),
+                block_number: 0,
+                block_hash: String::new(),
+            }
+        }).collect();
+
+        Ok(Response::new(MempoolResponse {
+            transactions,
+        }))
+    }
+
     async fn propose_block(
         &self,
         request: Request<ProposeBlockRequest>,
@@ -430,6 +491,16 @@ impl TransactionService for MyTransactionService {
         };
 
         let mut transactions = Vec::new();
+        if req.from_mempool {
+            let n = if req.max_transactions == 0 {
+                100 // Default limit
+            } else {
+                req.max_transactions as usize
+            };
+            transactions = storage.mempool.pop_transactions(n);
+            println!("DEBUG: Pulled {} transactions from mempool", transactions.len());
+        }
+
         for tx_req in req.transactions {
             let from_addr: Address = tx_req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
             let to_addr: Option<Address> = if tx_req.to.is_empty() {
@@ -451,6 +522,10 @@ impl TransactionService for MyTransactionService {
                 .gas_price(U256::from(tx_req.gas_price))
                 .build();
             transactions.push(tx);
+        }
+
+        if transactions.is_empty() {
+             return Err(Status::invalid_argument("No transactions provided and mempool is empty"));
         }
 
         let block = Block::builder(req.slot)
