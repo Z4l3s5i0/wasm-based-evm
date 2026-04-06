@@ -19,6 +19,7 @@ service TransactionService {
   rpc EthCall (TransactionRequest) returns (TransactionResponse);
   rpc EthGetCode (GetCodeRequest) returns (CodeResponse);
   rpc EthGetRoots (Empty) returns (RootsResponse);
+  rpc ProposeBlock (ProposeBlockRequest) returns (ProposeBlockResponse);
 }
 
 message Empty {}
@@ -149,4 +150,19 @@ message LogEntry {
   string transaction_hash = 6;
   uint64 transaction_index = 7;
   uint64 log_index = 8;
+}
+
+message ProposeBlockRequest {
+  uint64 slot = 1;
+  string parent_hash = 2;
+  repeated TransactionRequest transactions = 3;
+  uint64 timestamp = 4;
+  string fee_recipient = 5;
+}
+
+message ProposeBlockResponse {
+  bool success = 1;
+  string block_hash = 2;
+  string message = 3;
+  repeated TransactionResponse tx_results = 4;
 }

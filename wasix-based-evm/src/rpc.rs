@@ -18,7 +18,7 @@ use evm_rpc::{
     GetBlockByHashRequest, BlockResponse, GetBlockTransactionCountByHashRequest,
     GetBlockTransactionCountByNumberRequest, TransactionCountResponse,
     GetTransactionByHashRequest, TransactionInfoResponse, TransactionReceiptResponse,
-    GetCodeRequest, CodeResponse, RootsResponse
+    GetCodeRequest, CodeResponse, RootsResponse, ProposeBlockRequest, ProposeBlockResponse
 };
 
 pub struct MyTransactionService {
@@ -401,5 +401,99 @@ impl TransactionService for MyTransactionService {
             receipts_root: format!("{:?} (calc: {:?})", block.body.execution_payload.receipts_root, calculated_receipts_root),
             withdrawals_root: format!("{:?} (calc: {:?})", block.body.execution_payload.withdrawals_root, calculated_withdrawals_root),
         }))
+    }
+
+    async fn propose_block(
+        &self,
+        request: Request<ProposeBlockRequest>,
+    ) -> Result<Response<ProposeBlockResponse>, Status> {
+        let req = request.into_inner();
+        let mut storage = self.storage.lock().await;
+        let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
+        
+        let parent_hash = if req.parent_hash.is_empty() {
+            latest_block.body.execution_payload.block_hash
+        } else {
+            req.parent_hash.parse().map_err(|_| Status::invalid_argument("Invalid parent hash"))?
+        };
+
+        let timestamp = if req.timestamp == 0 {
+            latest_block.body.execution_payload.timestamp + 12
+        } else {
+            req.timestamp
+        };
+
+        let fee_recipient = if req.fee_recipient.is_empty() {
+            latest_block.body.execution_payload.fee_recipient
+        } else {
+            req.fee_recipient.parse().map_err(|_| Status::invalid_argument("Invalid fee recipient"))?
+        };
+
+        let mut transactions = Vec::new();
+        for tx_req in req.transactions {
+            let from_addr: Address = tx_req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
+            let to_addr: Option<Address> = if tx_req.to.is_empty() {
+                None
+            } else {
+                Some(tx_req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
+            };
+
+            let val_u256 = U256::from_str_radix(&tx_req.value, 10).or_else(|_| {
+                U256::from_str_radix(tx_req.value.trim_start_matches("0x"), 16)
+            }).map_err(|_| Status::invalid_argument("Invalid value"))?;
+
+            let tx = Transaction::builder(from_addr)
+                .nonce(tx_req.nonce)
+                .to(to_addr)
+                .value(val_u256)
+                .data(tx_req.data)
+                .gas_limit(tx_req.gas_limit)
+                .gas_price(U256::from(tx_req.gas_price))
+                .build();
+            transactions.push(tx);
+        }
+
+        let block = Block::builder(req.slot)
+            .parent_hash(parent_hash)
+            .timestamp(timestamp)
+            .fee_recipient(fee_recipient)
+            .state_root(B256::ZERO) // To be calculated
+            .build();
+
+        match self.executor.execute_block(&mut *storage, transactions, block) {
+            Ok(vals) => {
+                let mut tx_results = Vec::new();
+                for (i, val) in vals.into_iter().enumerate() {
+                    let (contract_address, return_data) = match val.call_create {
+                        TransactValueCallCreate::Call { retval, .. } => (String::new(), retval),
+                        TransactValueCallCreate::Create { address, .. } => (format!("{:?}", h160_to_address(address)), Vec::new()),
+                    };
+                    tx_results.push(TransactionResponse {
+                        success: true,
+                        message: format!("Transaction {} executed successfully", i),
+                        tx_hash: String::new(), // We could add hash if needed
+                        contract_address,
+                        return_data,
+                    });
+                }
+                
+                let latest_block = storage.get_latest_block().cloned().expect("Finalized block should exist");
+
+                Ok(Response::new(ProposeBlockResponse {
+                    success: true,
+                    block_hash: format!("{:?}", latest_block.body.execution_payload.block_hash),
+                    message: "Block proposed and executed successfully".to_string(),
+                    tx_results,
+                }))
+            }
+            Err(e) => {
+                Ok(Response::new(ProposeBlockResponse {
+                    success: false,
+                    block_hash: String::new(),
+                    message: format!("Block proposal failed: {}", e),
+                    tx_results: Vec::new(),
+                }))
+            }
+        }
     }
 }

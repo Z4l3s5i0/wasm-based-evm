@@ -123,6 +123,38 @@ enum Commands {
     },
     /// Returns the current trie roots for verification
     GetRoots,
+    /// Starts a new block proposal
+    BlockStart {
+        #[arg(long)]
+        slot: u64,
+        #[arg(long)]
+        parent_hash: Option<String>,
+        #[arg(long)]
+        timestamp: Option<u64>,
+        #[arg(long)]
+        fee_recipient: Option<String>,
+    },
+    /// Adds a transaction to the current block buffer
+    BlockAddTx {
+        #[arg(long)]
+        from: String,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        value: String,
+        #[arg(long, default_value = "")]
+        data: String,
+        #[arg(long, default_value = "21000")]
+        gas_limit: u64,
+        #[arg(long, default_value = "0")]
+        gas_price: u64,
+        #[arg(long, default_value = "0")]
+        nonce: u64,
+    },
+    /// Proposes the current block buffer to the server
+    BlockPropose,
+    /// Clears the current block buffer
+    BlockClear,
     /// Opens the block explorer
     Explorer,
     /// Exits the tester
@@ -241,6 +273,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     let mut client = TransactionServiceClient::connect(cli.server).await?;
+    let mut block_buffer: Option<(u64, Option<String>, Option<u64>, Option<String>, Vec<TransactionRequest>)> = None;
+
     println!("Connected to EVM gRPC server.");
     println!("Type 'help' for available commands, or 'exit' to quit.");
 
@@ -403,6 +437,50 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  Transactions Root: {}", res.transactions_root);
                         println!("  Receipts Root:     {}", res.receipts_root);
                         println!("  Withdrawals Root:  {}", res.withdrawals_root);
+                    }
+                    Commands::BlockStart { slot, parent_hash, timestamp, fee_recipient } => {
+                        block_buffer = Some((slot, parent_hash, timestamp, fee_recipient, Vec::new()));
+                        println!("Block proposal started for slot {}.", slot);
+                    }
+                    Commands::BlockAddTx { from, to, value, data, gas_limit, gas_price, nonce } => {
+                        if let Some(ref mut buffer) = block_buffer {
+                            let tx = TransactionRequest {
+                                from,
+                                to: to.unwrap_or_default(),
+                                value,
+                                data: if data.starts_with("0x") { hex::decode(&data[2..])? } else { data.into_bytes() },
+                                gas_limit,
+                                gas_price,
+                                nonce,
+                            };
+                            buffer.4.push(tx);
+                            println!("Transaction added to block buffer (total: {}).", buffer.4.len());
+                        } else {
+                            println!("No block proposal in progress. Start one with 'block-start'.");
+                        }
+                    }
+                    Commands::BlockPropose => {
+                        if let Some((slot, parent_hash, timestamp, fee_recipient, transactions)) = block_buffer.take() {
+                            let request = ProposeBlockRequest {
+                                slot,
+                                parent_hash: parent_hash.unwrap_or_default(),
+                                transactions,
+                                timestamp: timestamp.unwrap_or_default(),
+                                fee_recipient: fee_recipient.unwrap_or_default(),
+                            };
+                            let response = client.propose_block(request).await?;
+                            let res = response.into_inner();
+                            println!("Block Proposal Response: success={}, block_hash={}, message={}", res.success, res.block_hash, res.message);
+                            for (i, tx_res) in res.tx_results.iter().enumerate() {
+                                println!("  Tx {}: success={}, message={}", i, tx_res.success, tx_res.message);
+                            }
+                        } else {
+                            println!("No block proposal in progress.");
+                        }
+                    }
+                    Commands::BlockClear => {
+                        block_buffer = None;
+                        println!("Block buffer cleared.");
                     }
                     Commands::Explorer => {
                         run_explorer(&mut client).await?;
