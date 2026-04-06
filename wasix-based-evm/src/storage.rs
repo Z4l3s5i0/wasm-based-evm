@@ -650,6 +650,10 @@ impl InMemoryStorage {
         self.receipts.insert(tx_hash, receipt);
     }
 
+    pub fn get_receipt_by_tx_hash(&self, tx_hash: B256) -> Option<&Receipt> {
+        self.receipts.get(&tx_hash)
+    }
+
     pub fn get_block_by_number(&self, number: u64) -> Option<&Block> {
         self.blocks.get(&number)
     }
@@ -664,6 +668,16 @@ impl InMemoryStorage {
 
     pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<&Block> {
         self.blocks.values().find(|b| b.body.execution_payload.transactions.iter().any(|tx| tx.hash == tx_hash))
+    }
+
+    pub fn get_block_receipts(&self, block_hash: B256) -> Vec<Receipt> {
+        let block = match self.get_block_by_hash(block_hash) {
+            Some(b) => b,
+            None => return Vec::new(),
+        };
+        block.body.execution_payload.transactions.iter()
+            .filter_map(|tx| self.receipts.get(&tx.hash).cloned())
+            .collect()
     }
 
     pub fn get_latest_block(&self) -> Option<&Block> {
@@ -687,6 +701,12 @@ impl InMemoryStorage {
 
     pub fn get_accounts(&self) -> Vec<Address> {
         self.backend.state.keys().map(|h| Address::from(h.0)).collect()
+    }
+
+    pub fn get_code(&self, address: Address) -> Vec<u8> {
+        self.backend.state.get(&H160::from_slice(address.as_slice()))
+            .map(|a| a.code.clone())
+            .unwrap_or_default()
     }
 
     #[allow(dead_code)]

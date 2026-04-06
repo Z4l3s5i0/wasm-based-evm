@@ -114,6 +114,20 @@ impl Executor {
                     let withdrawals_root = InMemoryStorage::calculate_withdrawals_root(&block.body.execution_payload.withdrawals);
                     let receipts_root = InMemoryStorage::calculate_receipts_root(&[receipt.clone()]);
 
+                    // Verify roots against block
+                    if state_root != block.body.execution_payload.state_root {
+                        return Err(format!("State root mismatch: expected {:?}, got {:?}", block.body.execution_payload.state_root, state_root));
+                    }
+                    if txs_root != block.body.execution_payload.transactions_root {
+                        return Err(format!("Transactions root mismatch: expected {:?}, got {:?}", block.body.execution_payload.transactions_root, txs_root));
+                    }
+                    if receipts_root != block.body.execution_payload.receipts_root {
+                        return Err(format!("Receipts root mismatch: expected {:?}, got {:?}", block.body.execution_payload.receipts_root, receipts_root));
+                    }
+                    if withdrawals_root != block.body.execution_payload.withdrawals_root {
+                        return Err(format!("Withdrawals root mismatch: expected {:?}, got {:?}", block.body.execution_payload.withdrawals_root, withdrawals_root));
+                    }
+
                     let finalized_block = block_builder
                         .state_root(state_root)
                         .transactions_root(txs_root)

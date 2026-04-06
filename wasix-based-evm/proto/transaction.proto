@@ -14,8 +14,11 @@ service TransactionService {
   rpc EthGetBlockTransactionCountByHash (GetBlockTransactionCountByHashRequest) returns (TransactionCountResponse);
   rpc EthGetBlockTransactionCountByNumber (GetBlockTransactionCountByNumberRequest) returns (TransactionCountResponse);
   rpc EthGetTransactionByHash (GetTransactionByHashRequest) returns (TransactionInfoResponse);
+  rpc EthGetTransactionReceipt (GetTransactionByHashRequest) returns (TransactionReceiptResponse);
   rpc EthSendTransaction (TransactionRequest) returns (TransactionResponse);
   rpc EthCall (TransactionRequest) returns (TransactionResponse);
+  rpc EthGetCode (GetCodeRequest) returns (CodeResponse);
+  rpc EthGetRoots (Empty) returns (RootsResponse);
 }
 
 message Empty {}
@@ -39,6 +42,22 @@ message GetBalanceRequest {
 
 message BalanceResponse {
   string balance = 1; // Return as string to handle large U256 values
+}
+
+message GetCodeRequest {
+  string address = 1;
+  string block_tag = 2;
+}
+
+message CodeResponse {
+  bytes code = 1;
+}
+
+message RootsResponse {
+  string state_root = 1;
+  string transactions_root = 2;
+  string receipts_root = 3;
+  string withdrawals_root = 4;
 }
 
 message GetBlockByNumberRequest {
@@ -104,4 +123,30 @@ message TransactionResponse {
   string tx_hash = 3;
   string contract_address = 4;
   bytes return_data = 5;
+}
+
+message TransactionReceiptResponse {
+  string transaction_hash = 1;
+  uint64 transaction_index = 2;
+  string block_hash = 3;
+  uint64 block_number = 4;
+  string from = 5;
+  string to = 6;
+  uint64 cumulative_gas_used = 7;
+  uint64 gas_used = 8;
+  string contract_address = 9;
+  repeated LogEntry logs = 10;
+  string logs_bloom = 11;
+  uint64 status = 12; // 1 for success, 0 for failure
+}
+
+message LogEntry {
+  string address = 1;
+  repeated string topics = 2;
+  bytes data = 3;
+  uint64 block_number = 4;
+  string block_hash = 5;
+  string transaction_hash = 6;
+  uint64 transaction_index = 7;
+  uint64 log_index = 8;
 }

@@ -62,7 +62,9 @@ enum Commands {
     GetTransactionByHash {
         hash: String,
     },
-    /// Signs and submits a transaction
+    GetTransactionReceipt {
+        hash: String,
+    },
     SendTransaction {
         #[arg(long)]
         from: String,
@@ -113,6 +115,14 @@ enum Commands {
         #[arg(long, default_value = "0")]
         nonce: u64,
     },
+    /// Returns the code at a given address
+    GetCode {
+        address: String,
+        #[arg(long, default_value = "latest")]
+        block_tag: String,
+    },
+    /// Returns the current trie roots for verification
+    GetRoots,
     /// Opens the block explorer
     Explorer,
     /// Exits the tester
@@ -315,6 +325,12 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }).await?;
                         println!("Transaction: {:?}", response.into_inner());
                     }
+                    Commands::GetTransactionReceipt { hash } => {
+                        let response = client.eth_get_transaction_receipt(GetTransactionByHashRequest {
+                            hash,
+                        }).await?;
+                        println!("Receipt: {:?}", response.into_inner());
+                    }
                     Commands::SendTransaction { from, to, value, data, gas_limit, gas_price, nonce } => {
                         let data_bytes = hex::decode(data.trim_start_matches("0x")).unwrap_or_else(|_| data.into_bytes());
                         let response = client.eth_send_transaction(TransactionRequest {
@@ -371,6 +387,22 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         if !res.return_data.is_empty() {
                             println!("Return Data: 0x{}", hex::encode(res.return_data));
                         }
+                    }
+                    Commands::GetCode { address, block_tag } => {
+                        let response = client.eth_get_code(GetCodeRequest {
+                            address,
+                            block_tag,
+                        }).await?;
+                        println!("Code: 0x{}", hex::encode(response.into_inner().code));
+                    }
+                    Commands::GetRoots => {
+                        let response = client.eth_get_roots(Empty {}).await?;
+                        let res = response.into_inner();
+                        println!("Latest Roots:");
+                        println!("  State Root:        {}", res.state_root);
+                        println!("  Transactions Root: {}", res.transactions_root);
+                        println!("  Receipts Root:     {}", res.receipts_root);
+                        println!("  Withdrawals Root:  {}", res.withdrawals_root);
                     }
                     Commands::Explorer => {
                         run_explorer(&mut client).await?;
