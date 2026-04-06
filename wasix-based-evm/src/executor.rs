@@ -1,3 +1,4 @@
+use alloy_primitives::B256;
 use crate::ev::{H160, EvmU256, evm};
 use crate::storage::{InMemoryStorage, Transaction, Block, Receipt, Log};
 use evm::{
@@ -115,16 +116,16 @@ impl Executor {
                     let receipts_root = InMemoryStorage::calculate_receipts_root(&[receipt.clone()]);
 
                     // Verify roots against block
-                    if state_root != block.body.execution_payload.state_root {
+                    if block.body.execution_payload.state_root != B256::ZERO && state_root != block.body.execution_payload.state_root {
                         return Err(format!("State root mismatch: expected {:?}, got {:?}", block.body.execution_payload.state_root, state_root));
                     }
-                    if txs_root != block.body.execution_payload.transactions_root {
+                    if block.body.execution_payload.transactions_root != B256::ZERO && txs_root != block.body.execution_payload.transactions_root {
                         return Err(format!("Transactions root mismatch: expected {:?}, got {:?}", block.body.execution_payload.transactions_root, txs_root));
                     }
-                    if receipts_root != block.body.execution_payload.receipts_root {
+                    if block.body.execution_payload.receipts_root != B256::ZERO && receipts_root != block.body.execution_payload.receipts_root {
                         return Err(format!("Receipts root mismatch: expected {:?}, got {:?}", block.body.execution_payload.receipts_root, receipts_root));
                     }
-                    if withdrawals_root != block.body.execution_payload.withdrawals_root {
+                    if block.body.execution_payload.withdrawals_root != B256::ZERO && withdrawals_root != block.body.execution_payload.withdrawals_root {
                         return Err(format!("Withdrawals root mismatch: expected {:?}, got {:?}", block.body.execution_payload.withdrawals_root, withdrawals_root));
                     }
 

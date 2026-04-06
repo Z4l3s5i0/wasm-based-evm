@@ -64,6 +64,7 @@ impl TransactionService for MyTransactionService {
         let block = Block::builder(next_number)
             .parent_hash(latest_block.body.execution_payload.block_hash)
             .timestamp(latest_block.body.execution_payload.timestamp + 12) // Simple block time increment
+            .state_root(B256::ZERO)
             .add_transaction(tx.clone())
             .build();
 

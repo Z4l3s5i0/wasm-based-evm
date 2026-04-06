@@ -335,7 +335,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let data_bytes = hex::decode(data.trim_start_matches("0x")).unwrap_or_else(|_| data.into_bytes());
                         let response = client.eth_send_transaction(TransactionRequest {
                             from,
-                            to,
+                            to: to.unwrap_or_default(),
                             value,
                             data: data_bytes,
                             gas_limit,
@@ -355,7 +355,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let data_bytes = hex::decode(data.trim_start_matches("0x")).unwrap_or_else(|_| data.into_bytes());
                         let response = client.execute_transaction(TransactionRequest {
                             from,
-                            to,
+                            to: to.unwrap_or_default(),
                             value,
                             data: data_bytes,
                             gas_limit,
@@ -375,7 +375,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         let data_bytes = hex::decode(data.trim_start_matches("0x")).unwrap_or_else(|_| data.into_bytes());
                         let response = client.eth_call(TransactionRequest {
                             from,
-                            to,
+                            to: to.unwrap_or_default(),
                             value,
                             data: data_bytes,
                             gas_limit,

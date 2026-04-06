@@ -301,6 +301,7 @@ pub struct BlockBuilder {
     block_hash: B256,
     transactions_root: B256,
     withdrawals_root: B256,
+    receipts: Vec<Receipt>,
     transactions: Vec<Transaction>,
     withdrawals: Vec<Withdrawal>,
 }
@@ -328,6 +329,7 @@ impl BlockBuilder {
             block_hash: B256::ZERO,
             transactions_root: B256::ZERO,
             withdrawals_root: B256::ZERO,
+            receipts: Vec::new(),
             transactions: Vec::new(),
             withdrawals: Vec::new(),
         }
@@ -433,12 +435,40 @@ impl BlockBuilder {
         self
     }
 
+    pub fn receipts(mut self, receipts: Vec<Receipt>) -> Self {
+        self.receipts = receipts;
+        self
+    }
+
+    pub fn add_receipt(mut self, receipt: Receipt) -> Self {
+        self.receipts.push(receipt);
+        self
+    }
+
     pub fn withdrawals(mut self, withdrawals: Vec<Withdrawal>) -> Self {
         self.withdrawals = withdrawals;
         self
     }
 
     pub fn build(self) -> Block {
+        let transactions_root = if self.transactions_root == B256::ZERO && !self.transactions.is_empty() {
+            InMemoryStorage::calculate_transactions_root(&self.transactions)
+        } else {
+            self.transactions_root
+        };
+
+        let withdrawals_root = if self.withdrawals_root == B256::ZERO && !self.withdrawals.is_empty() {
+            InMemoryStorage::calculate_withdrawals_root(&self.withdrawals)
+        } else {
+            self.withdrawals_root
+        };
+
+        let receipts_root = if self.receipts_root == B256::ZERO && !self.receipts.is_empty() {
+            InMemoryStorage::calculate_receipts_root(&self.receipts)
+        } else {
+            self.receipts_root
+        };
+
         let body = self.body.unwrap_or_else(|| BlockBody {
             randao_reveal: B256::ZERO,
             eth1_data: Eth1Data {
@@ -460,7 +490,7 @@ impl BlockBuilder {
                 parent_hash: self.parent_hash,
                 fee_recipient: self.fee_recipient,
                 state_root: self.state_root,
-                receipts_root: self.receipts_root,
+                receipts_root,
                 logs_bloom: self.logs_bloom,
                 prev_randao: self.prev_randao,
                 block_number: self.block_number,
@@ -470,8 +500,8 @@ impl BlockBuilder {
                 extra_data: self.extra_data,
                 base_fee_per_gas: self.base_fee_per_gas,
                 block_hash: if self.block_hash == B256::ZERO { random_b256() } else { self.block_hash },
-                transactions_root: self.transactions_root,
-                withdrawals_root: self.withdrawals_root,
+                transactions_root,
+                withdrawals_root,
                 transactions: self.transactions,
                 withdrawals: self.withdrawals,
             },
