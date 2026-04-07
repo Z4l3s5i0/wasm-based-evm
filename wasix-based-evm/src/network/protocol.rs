@@ -9,7 +9,6 @@ use tentacle::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::storage::{InMemoryStorage, Transaction};
-use tracing::{info, error};
 use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable};
 use alloy_primitives::{B256, U256};
 
@@ -61,11 +60,11 @@ struct EthProtocolHandler {
 #[async_trait::async_trait]
 impl ServiceProtocol for EthProtocolHandler {
     async fn init(&mut self, context: &mut ProtocolContext) {
-        info!("EthProtocol initiated on protocol: {}", context.proto_id);
+        println!("EthProtocol initiated on protocol: {}", context.proto_id);
     }
 
     async fn connected(&mut self, context: ProtocolContextMutRef<'_>, version: &str) {
-        info!("EthProtocol connected on session: {}, version: {}", context.session.id, version);
+        println!("EthProtocol connected on session: {}, version: {}", context.session.id, version);
         
         // Send Status message immediately
         let storage = self.storage.lock().await;
@@ -83,12 +82,12 @@ impl ServiceProtocol for EthProtocolHandler {
         status.encode(&mut data);
         
         if let Err(e) = context.send_message(data.freeze()).await {
-            error!("Failed to send Status message: {:?}", e);
+            println!("Failed to send Status message: {:?}", e);
         }
     }
 
     async fn disconnected(&mut self, context: ProtocolContextMutRef<'_>) {
-        info!("EthProtocol disconnected on session: {}", context.session.id);
+        println!("EthProtocol disconnected on session: {}", context.session.id);
     }
 
     async fn received(&mut self, context: ProtocolContextMutRef<'_>, data: Bytes) {
@@ -102,34 +101,34 @@ impl ServiceProtocol for EthProtocolHandler {
         match msg_id {
             id if id == MessageId::Status as u8 => {
                 match Status::decode(&mut &payload[..]) {
-                    Ok(status) => info!("Received Status from {}: {:?}", context.session.id, status),
-                    Err(e) => error!("Failed to decode Status from {}: {:?}", context.session.id, e),
+                    Ok(status) => println!("Received Status from {}: {:?}", context.session.id, status),
+                    Err(e) => println!("Failed to decode Status from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::Transactions as u8 => {
                 match Transactions::decode(&mut &payload[..]) {
                     Ok(txs) => {
-                        info!("Received {} transactions from {}", txs.0.len(), context.session.id);
+                        println!("Received {} transactions from {}", txs.0.len(), context.session.id);
                         let mut storage = self.storage.lock().await;
                         for tx in txs.0 {
                             storage.add_transaction(tx);
                         }
                     }
-                    Err(e) => error!("Failed to decode Transactions from {}: {:?}", context.session.id, e),
+                    Err(e) => println!("Failed to decode Transactions from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::NewBlock as u8 => {
                 match NewBlock::decode(&mut &payload[..]) {
                     Ok(new_block) => {
-                        info!("Received new block {} from {}", new_block.block.body.execution_payload.block_hash, context.session.id);
+                        println!("Received new block {} from {}", new_block.block.body.execution_payload.block_hash, context.session.id);
                         let mut storage = self.storage.lock().await;
                         storage.add_block(new_block.block);
                     }
-                    Err(e) => error!("Failed to decode NewBlock from {}: {:?}", context.session.id, e),
+                    Err(e) => println!("Failed to decode NewBlock from {}: {:?}", context.session.id, e),
                 }
             }
             _ => {
-                info!("EthProtocol received unknown message ID {} ({} bytes) from session: {}", 
+                println!("EthProtocol received unknown message ID {} ({} bytes) from session: {}",
                     msg_id, data.len(), context.session.id);
             }
         }

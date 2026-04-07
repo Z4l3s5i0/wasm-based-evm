@@ -1,7 +1,6 @@
 use discv5::{Discv5, ConfigBuilder, Enr, enr::CombinedKey, ListenConfig};
 use std::net::SocketAddr;
 use std::str::FromStr;
-use tracing::{info, warn};
 
 pub struct DiscoveryService {
     discv5: Discv5,
@@ -21,8 +20,8 @@ impl DiscoveryService {
             .udp4(listen_addr.port())
             .build(&enr_key)?;
 
-        info!("Local ENR: {}", enr.to_base64());
-        info!("Node ID: {}", enr.node_id());
+        println!("Local ENR: {}", enr.to_base64());
+        println!("Node ID: {}", enr.node_id());
 
         // Configure discv5
         let listen_config = ListenConfig::from(listen_addr);
@@ -34,10 +33,10 @@ impl DiscoveryService {
             match Enr::from_str(&bootnode) {
                 Ok(enr) => {
                     if let Err(e) = discv5.add_enr(enr) {
-                        warn!("Failed to add bootnode ENR: {:?}", e);
+                        println!("Failed to add bootnode ENR: {:?}", e);
                     }
                 }
-                Err(e) => warn!("Invalid bootnode ENR: {:?}, error: {:?}", bootnode, e),
+                Err(e) => println!("Invalid bootnode ENR: {:?}, error: {:?}", bootnode, e),
             }
         }
 

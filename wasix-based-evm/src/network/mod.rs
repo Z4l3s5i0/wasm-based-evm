@@ -25,7 +25,7 @@ pub async fn start_network(
     let service = service::NetworkService::new(config, storage, rx_broadcast).await?;
     tokio::spawn(async move {
         if let Err(e) = service.run().await {
-            tracing::error!("Network service error: {:?}", e);
+            println!("Network service error: {:?}", e);
         }
     });
 

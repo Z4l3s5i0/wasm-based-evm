@@ -14,23 +14,19 @@ evm = { path = "../evm", default-features = false }
 evm-precompile = { path = "../evm/precompile", default-features = false }
 evm-interpreter = { path = "../evm/interpreter", default-features = false }
 alloy-primitives = { version = "1.5.7", default-features = false, features = ["serde"] }
-alloy-consensus = { version = "=1.6.3", default-features = false, features = ["k256"] }
-alloy-tx-macros = { version = "=1.6.3", default-features = false }
 alloy-genesis = { version = "=1.6.3", default-features = false }
 alloy-serde= { version = "=1.6.3", default-features = false }
 alloy-eips = { version = "=1.6.3", default-features = false }
 alloy-trie = { version = "0.9.5", default-features = false, features = ["std"] }
 alloy-rlp = { version = "0.3.15", default-features = false, features = ["derive"] }
-thiserror = { version = "2.0.0", default-features = false }
-uint = { version = "0.10.0", default-features = false }
 
 # gRPC and WASIX dependencies
 
 wasix = { version = "0.13.1" }
-#wasm-streams = { version = "0.5.0", default-features = false }
-rand = "=0.8.5"
+rand = { version = "=0.8.5", default-features = false }
+getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" , default-features = false}
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [
-    "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net",
+    "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net"
 ] }
 tonic = { version = "0.14.5", default-features = false, features = ["codegen", "router", "server"]}
 prost = "0.14.3"
@@ -39,23 +35,19 @@ socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", 
 h2 = "0.4"
 tonic-prost = "0.14.5"
 serde_json = { version = "1.0.0", default-features = false, features = ["alloc", "std"] }
+#wasmtime-debug = { version = "0.29.0",default-features = false }
+tentacle = { path = "../tentacle-wasmer/tentacle", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
 
-tentacle = { version = "0.7.5", default-features = false, features =["wasm-timer"] }
+#tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", default-features = false, features =["generic-timer"] }
+
 discv5 = "0.10.4"
-futures = { version = "0.3.30",default-features = false, features = ["default"] }
-tracing = { version = "0.1.44", default-features = false, features = ["default"] }
-tracing-subscriber = {version = "0.3.23", default-features = false, features = ["env-filter"] }
-tower = { version = "0.4", default-features = false, features = ["default"] }
-tower-http = { version = "0.5.2", default-features = false, features = ["cors"] }
 async-trait = "0.1.89"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"
 
 [patch.crates-io]
-#yamux = { git = "https://github.com/libp2p/rust-yamux", tag = "yamux-v0.12.1" }
-#tempfile = { git = "https://github.com/Stebalien/tempfile",tag = "v3.13.0" }
-
+tentacle = { path = "../tentacle-wasmer/tentacle"}
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
 mio = { git = "https://github.com/wasix-org/mio" }
 
@@ -67,7 +59,3 @@ hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.28" }
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0" }
 socket2 = { git = "https://github.com/wasix-org/socket2", branch = "wasix" }
 libc = { git = "https://github.com/john-sharratt/libc.git", rev = "682f9e91" }
-
-
-#[lib]
-#crate-type = ["cdylib"]

@@ -11,7 +11,6 @@ use tentacle::{
     secio::SecioKeyPair,
     bytes::BytesMut,
 };
-use tracing::{info, warn, error};
 use alloy_rlp::Encodable;
 
 pub struct NetworkService {
@@ -58,7 +57,7 @@ impl NetworkService {
         let mut discv5_events = self.discovery.discv5().event_stream().await
             .map_err(|e| format!("{:?}", e))?;
         
-        info!("Network service running");
+        println!("Network service running");
 
         loop {
             tokio::select! {
@@ -66,7 +65,7 @@ impl NetworkService {
                     if let Some(event) = event {
                         match event {
                             discv5::Event::Discovered(enr) => {
-                                info!("Peer discovered via Discv5: {}", enr.node_id());
+                                println!("Peer discovered via Discv5: {}", enr.node_id());
                                 // Try to connect via P2P
                                 if let Some(tcp_port) = enr.tcp4() {
                                     if let Some(ip) = enr.ip4() {
@@ -81,7 +80,7 @@ impl NetworkService {
                 }
                 tx = self.rx_broadcast.recv() => {
                     if let Some(tx) = tx {
-                        info!("Broadcasting transaction: {:?}", tx.hash);
+                        println!("Broadcasting transaction: {:?}", tx.hash);
                         let mut data = BytesMut::new();
                         data.extend_from_slice(&[MessageId::Transactions as u8]);
                         let msg = Transactions(vec![tx]);
@@ -93,7 +92,7 @@ impl NetworkService {
                             ETH_PROTOCOL_ID,
                             msg_bytes
                         ).await {
-                            error!("Failed to broadcast transaction: {:?}", e);
+                            println!("Failed to broadcast transaction: {:?}", e);
                         }
                     }
                 }
@@ -110,10 +109,10 @@ struct SimpleServiceHandle;
 #[async_trait::async_trait]
 impl ServiceHandle for SimpleServiceHandle {
     async fn handle_error(&mut self, _control: &mut ServiceContext, error: ServiceError) {
-        warn!("P2P Service error: {:?}", error);
+        println!("P2P Service error: {:?}", error);
     }
 
     async fn handle_event(&mut self, _control: &mut ServiceContext, event: ServiceEvent) {
-        info!("P2P Service event: {:?}", event);
+        println!("P2P Service event: {:?}", event);
     }
 }
