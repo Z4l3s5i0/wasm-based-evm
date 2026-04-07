@@ -3,6 +3,7 @@ mod rpc;
 mod executor;
 mod storage;
 mod mempool;
+mod network;
 use alloy_primitives::U256;
 
 use crate::ev::{alloy_u256_to_evm_u256};
@@ -15,7 +16,7 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::Server;
 
-#[tokio::main(flavor = "current_thread")]
+#[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:50051".parse()?;
 
@@ -42,11 +43,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let storage = Arc::new(Mutex::new(storage_inner));
     let executor = Executor::new();
 
+    // Start networking
+    let network_config = network::NetworkConfig {
+        discv5_addr: "0.0.0.0:9000".parse()?,
+        p2p_addr: "0.0.0.0:9001".parse()?,
+        bootnodes: vec![], // Add default bootnodes here if any
+    };
+    network::start_network(network_config, storage.clone()).await?;
+
     let transaction_service = MyTransactionService {
         storage,
         executor,
         pending_payloads: Arc::new(Mutex::new(std::collections::HashMap::new())),
     };
+
+
 
     println!("EVM gRPC Server listening on {}", addr);
 

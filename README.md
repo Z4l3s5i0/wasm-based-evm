@@ -8,8 +8,8 @@
 - Install cargo
 - Install wasix
 - Install [wasi-sdk](https://github.com/WebAssembly/wasi-sdk/releases)
-- Install (protobuf)[https://protobuf.dev/installation/] 
-
+- Install [protobuf](https://protobuf.dev/installation/) 
+- Install [Clang+LLVM](https://releases.llvm.org/)
 
 - Clone https://github.com/rust-ethereum/evm to /evm
 - in evm/precompile/src/kzg.rs

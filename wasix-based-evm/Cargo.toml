@@ -30,7 +30,7 @@ wasix = { version = "0.13.1" }
 #wasm-streams = { version = "0.5.0", default-features = false }
 rand = "=0.8.5"
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [
-    "rt", "macros", "sync", "time", "io-util", "net"
+    "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net",
 ] }
 tonic = { version = "0.14.5", default-features = false, features = ["codegen", "router", "server"]}
 prost = "0.14.3"
@@ -40,18 +40,23 @@ h2 = "0.4"
 tonic-prost = "0.14.5"
 serde_json = { version = "1.0.0", default-features = false, features = ["alloc", "std"] }
 
-libp2p = {version = "0.56.0", default-features = false, features = ["gossipsub", "webtransport-websys", "websocket-websys", "ping", "tcp"] }
-futures = "0.3.30"
-tracing = "0.1.44"
+tentacle = { version = "0.7.5", default-features = false, features =["wasm-timer"] }
+discv5 = "0.10.4"
+futures = { version = "0.3.30",default-features = false, features = ["default"] }
+tracing = { version = "0.1.44", default-features = false, features = ["default"] }
 tracing-subscriber = {version = "0.3.23", default-features = false, features = ["env-filter"] }
-tower = "0.4"
-tower-http = { version = "0.5.2", features = ["cors"] }
+tower = { version = "0.4", default-features = false, features = ["default"] }
+tower-http = { version = "0.5.2", default-features = false, features = ["cors"] }
+async-trait = "0.1.89"
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"
 
 [patch.crates-io]
-getrandom = { git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
+#yamux = { git = "https://github.com/libp2p/rust-yamux", tag = "yamux-v0.12.1" }
+#tempfile = { git = "https://github.com/Stebalien/tempfile",tag = "v3.13.0" }
+
+getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
 mio = { git = "https://github.com/wasix-org/mio" }
 
 h2 = { git = "https://github.com/wasix-org/h2", branch = "wasix-0.4.12" }
@@ -61,7 +66,7 @@ hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.28" }
 #sct = { git = "https://github.com/wasix-org/sct", branch = "v0.7.0" }
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0" }
 socket2 = { git = "https://github.com/wasix-org/socket2", branch = "wasix" }
-libc = { git = "https://github.com/john-sharratt/libc.git#682f9e91", branch = "master" }
+libc = { git = "https://github.com/john-sharratt/libc.git", rev = "682f9e91" }
 
 
 #[lib]
