@@ -168,45 +168,45 @@ impl Withdrawal {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Eth1Data {
     pub deposit_root: B256,
     pub deposit_count: u64,
     pub block_hash: B256,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct ProposerSlashing {
     // Placeholder fields for ProposerSlashing
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct AttesterSlashing {
     // Placeholder fields for AttesterSlashing
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Attestation {
     // TODO: Implement Attestation
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Deposit {
     // Placeholder fields for Deposit
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct VoluntaryExit {
     // Placeholder fields for VoluntaryExit
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct SyncAggregate {
     pub sync_committee_bits: Vec<u8>,
     pub sync_committee_signature: Vec<u8>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct ExecutionPayload {
     pub parent_hash: B256,
     pub fee_recipient: Address,
@@ -228,7 +228,7 @@ pub struct ExecutionPayload {
     pub withdrawals: Vec<Withdrawal>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct ExecutionPayloadHeader {
     pub parent_hash: B256,
     pub fee_recipient: Address,
@@ -247,7 +247,7 @@ pub struct ExecutionPayloadHeader {
     pub withdrawals_root: B256,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct BlockBody {
     pub randao_reveal: B256,
     pub eth1_data: Eth1Data,
@@ -264,7 +264,7 @@ pub struct BlockBody {
     pub execution_payload: ExecutionPayload,
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Block {
     pub slot: u64,
     pub proposer_index: u64,

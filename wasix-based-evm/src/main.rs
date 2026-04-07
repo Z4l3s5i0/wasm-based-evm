@@ -49,12 +49,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         p2p_addr: "0.0.0.0:9001".parse()?,
         bootnodes: vec![], // Add default bootnodes here if any
     };
-    network::start_network(network_config, storage.clone()).await?;
+    let network_handle = network::start_network(network_config, storage.clone()).await?;
 
     let transaction_service = MyTransactionService {
         storage,
         executor,
         pending_payloads: Arc::new(Mutex::new(std::collections::HashMap::new())),
+        network_handle: Some(network_handle),
     };
 
 

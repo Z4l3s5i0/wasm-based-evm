@@ -1,5 +1,6 @@
 use crate::executor::Executor;
 use crate::storage::{InMemoryStorage, Transaction, Block, Receipt};
+use crate::network::NetworkHandle;
 use crate::ev::h160_to_address;
 use alloy_primitives::{Address, U256, B256, hex};
 use tonic::{Request, Response, Status};
@@ -34,6 +35,7 @@ pub struct MyTransactionService {
     pub storage: Arc<Mutex<InMemoryStorage>>,
     pub executor: Executor,
     pub pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
+    pub network_handle: Option<NetworkHandle>,
 }
 
 #[tonic::async_trait]
@@ -331,13 +333,18 @@ impl TransactionService for MyTransactionService {
 
         let mut storage = self.storage.lock().await;
         let tx_hash = tx.hash;
-        storage.mempool.add_transaction(tx);
+        storage.mempool.add_transaction(tx.clone());
+
+        // Broadcast to P2P network
+        if let Some(handle) = &self.network_handle {
+            let _ = handle.tx_broadcast.send(tx).await;
+        }
 
         println!("DEBUG: Transaction added to mempool: {:?}", tx_hash);
 
         Ok(Response::new(TransactionResponse {
             success: true,
-            message: "Transaction added to mempool".to_string(),
+            message: "Transaction added to mempool and broadcasted".to_string(),
             tx_hash: format!("{:?}", tx_hash),
             contract_address: String::new(),
             return_data: Vec::new(),

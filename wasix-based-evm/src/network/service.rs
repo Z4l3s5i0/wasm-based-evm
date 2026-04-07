@@ -1,26 +1,30 @@
-use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID}, NetworkConfig};
-use crate::storage::InMemoryStorage;
+use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, Transactions}, NetworkConfig};
+use crate::storage::{InMemoryStorage, Transaction};
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use tentacle::{
     builder::ServiceBuilder,
-    service::{HandshakeType, ServiceControl, ServiceError, ServiceEvent},
+    service::{HandshakeType, ServiceAsyncControl, ServiceError, ServiceEvent, TargetProtocol},
     traits::ServiceHandle,
     context::ServiceContext,
     multiaddr::Multiaddr,
     secio::SecioKeyPair,
+    bytes::BytesMut,
 };
-use tracing::{info, warn};
+use tracing::{info, warn, error};
+use alloy_rlp::Encodable;
 
 pub struct NetworkService {
     discovery: DiscoveryService,
-    p2p_control: tentacle::service::ServiceAsyncControl,
+    p2p_control: ServiceAsyncControl,
+    rx_broadcast: mpsc::Receiver<Transaction>,
 }
 
 impl NetworkService {
     pub async fn new(
         config: NetworkConfig,
         storage: Arc<Mutex<InMemoryStorage>>,
+        rx_broadcast: mpsc::Receiver<Transaction>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         let discovery = DiscoveryService::new(config.discv5_addr, config.bootnodes)?;
         
@@ -44,6 +48,7 @@ impl NetworkService {
         Ok(Self {
             discovery,
             p2p_control,
+            rx_broadcast,
         })
     }
 
@@ -66,11 +71,29 @@ impl NetworkService {
                                 if let Some(tcp_port) = enr.tcp4() {
                                     if let Some(ip) = enr.ip4() {
                                         let addr: Multiaddr = format!("/ip4/{}/tcp/{}", ip, tcp_port).parse().unwrap();
-                                        let _ = self.p2p_control.dial(addr, tentacle::service::TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
+                                        let _ = self.p2p_control.dial(addr, TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
                                     }
                                 }
                             }
                             _ => {}
+                        }
+                    }
+                }
+                tx = self.rx_broadcast.recv() => {
+                    if let Some(tx) = tx {
+                        info!("Broadcasting transaction: {:?}", tx.hash);
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&[MessageId::Transactions as u8]);
+                        let msg = Transactions(vec![tx]);
+                        msg.encode(&mut data);
+                        let msg_bytes = data.freeze();
+                        
+                        if let Err(e) = self.p2p_control.filter_broadcast(
+                            tentacle::service::TargetSession::All,
+                            ETH_PROTOCOL_ID,
+                            msg_bytes
+                        ).await {
+                            error!("Failed to broadcast transaction: {:?}", e);
                         }
                     }
                 }
