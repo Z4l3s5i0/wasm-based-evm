@@ -242,8 +242,11 @@ enum Commands {
     },
     /// Opens the block explorer
     Explorer,
-    /// Exits the tester
     Exit,
+    NetPeerCount,
+    NetPeers,
+    NetAddPeer { addr: String },
+    NetNodeInfo,
 }
 
 async fn run_explorer(client: &mut TransactionServiceClient<tonic::transport::Channel>) -> Result<(), Box<dyn std::error::Error>> {
@@ -393,6 +396,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
                 match cmd_cli.command {
                     Commands::Exit => break,
+                    Commands::NetPeerCount => {
+                        let response = client.net_peer_count(Empty {}).await?;
+                        println!("Peer count: {}", response.into_inner().count);
+                    }
+                    Commands::NetPeers => {
+                        let response = client.net_peers(Empty {}).await?;
+                        println!("Peers: {:?}", response.into_inner().peers);
+                    }
+                    Commands::NetAddPeer { addr } => {
+                        let response = client.net_add_peer(NetAddPeerRequest { addr }).await?;
+                        let res = response.into_inner();
+                        println!("Add Peer Response: success={}, message={}", res.success, res.message);
+                    }
+                    Commands::NetNodeInfo => {
+                        let response = client.net_node_info(Empty {}).await?;
+                        let res = response.into_inner();
+                        println!("Node Info:");
+                        println!("  ENR: {}", res.enr);
+                        println!("  Node ID: {}", res.node_id);
+                        println!("  Listen Addresses: {:?}", res.listen_addresses);
+                    }
                     Commands::Accounts => {
                         let response = client.eth_accounts(Empty {}).await?;
                         println!("Accounts: {:?}", response.into_inner().addresses);

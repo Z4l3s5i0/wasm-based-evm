@@ -1,7 +1,9 @@
+use std::str::FromStr;
 use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, Transactions}, NetworkConfig};
 use crate::storage::{InMemoryStorage, Transaction};
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
+use discv5::enr::{self, Enr};
 use tentacle::{
     builder::ServiceBuilder,
     service::{HandshakeType, ServiceAsyncControl, ServiceError, ServiceEvent, TargetProtocol},
@@ -17,6 +19,8 @@ pub struct NetworkService {
     discovery: DiscoveryService,
     p2p_control: ServiceAsyncControl,
     rx_broadcast: mpsc::Receiver<Transaction>,
+    network_recv: mpsc::Receiver<crate::network::NetworkMessage>,
+    p2p_listen_addr: Multiaddr,
 }
 
 impl NetworkService {
@@ -24,6 +28,7 @@ impl NetworkService {
         config: NetworkConfig,
         storage: Arc<Mutex<InMemoryStorage>>,
         rx_broadcast: mpsc::Receiver<Transaction>,
+        network_recv: mpsc::Receiver<crate::network::NetworkMessage>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         println!("[NetworkService] Initializing NetworkService...");
         println!("[NetworkService] Creating DiscoveryService with discv5_addr: {}", config.discv5_addr);
@@ -44,7 +49,7 @@ impl NetworkService {
         // Listen on P2P address
         let listen_addr: Multiaddr = format!("/ip4/{}/tcp/{}", config.p2p_addr.ip(), config.p2p_addr.port()).parse()?;
         println!("[NetworkService] Binding P2P service to {}...", listen_addr);
-        service.listen(listen_addr).await?;
+        service.listen(listen_addr.clone()).await?;
         println!("[NetworkService] P2P service bound and listening.");
 
         tokio::spawn(async move {
@@ -57,6 +62,8 @@ impl NetworkService {
             discovery,
             p2p_control,
             rx_broadcast,
+            network_recv,
+            p2p_listen_addr: listen_addr,
         })
     }
 
@@ -107,6 +114,37 @@ impl NetworkService {
                             msg_bytes
                         ).await {
                             println!("Failed to broadcast transaction: {:?}", e);
+                        }
+                    }
+                }
+                msg = self.network_recv.recv() => {
+                    if let Some(msg) = msg {
+                        match msg {
+                            crate::network::NetworkMessage::GetPeerCount(tx) => {
+                                let _ = tx.send(0); // TODO: implement in tentacle or track sessions
+                            }
+                            crate::network::NetworkMessage::GetPeers(tx) => {
+                                let _ = tx.send(vec![]); // TODO: implement
+                            }
+                            crate::network::NetworkMessage::AddPeer(addr, tx) => {
+                                if let Ok(enr) = Enr::<enr::CombinedKey>::from_str(&addr) {
+                                     let _ = self.discovery.discv5().add_enr(enr);
+                                     let _ = tx.send(Ok(()));
+                                } else if let Ok(maddr) = addr.parse::<Multiaddr>() {
+                                    let _ = self.p2p_control.dial(maddr, TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
+                                    let _ = tx.send(Ok(()));
+                                } else {
+                                    let _ = tx.send(Err("Invalid address format".to_string()));
+                                }
+                            }
+                            crate::network::NetworkMessage::GetNodeInfo(tx) => {
+                                let node_info = crate::network::NodeInfo {
+                                    enr: self.discovery.discv5().local_enr().to_base64(),
+                                    node_id: self.discovery.discv5().local_enr().node_id().to_string(),
+                                    listen_addresses: vec![self.p2p_listen_addr.to_string()],
+                                };
+                                let _ = tx.send(node_info);
+                            }
                         }
                     }
                 }

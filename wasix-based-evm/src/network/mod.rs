@@ -3,7 +3,7 @@ pub mod protocol;
 pub mod service;
 
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::storage::{InMemoryStorage, Transaction};
 
 #[derive(Debug)]
@@ -13,8 +13,30 @@ pub struct NetworkConfig {
     pub bootnodes: Vec<String>,
 }
 
+pub enum NetworkMessage {
+    GetPeerCount(oneshot::Sender<usize>),
+    GetPeers(oneshot::Sender<Vec<PeerInfo>>),
+    AddPeer(String, oneshot::Sender<Result<(), String>>),
+    GetNodeInfo(oneshot::Sender<NodeInfo>),
+}
+
+#[derive(Debug, Clone)]
+pub struct PeerInfo {
+    pub id: String,
+    pub addr: String,
+    pub enr: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct NodeInfo {
+    pub enr: String,
+    pub node_id: String,
+    pub listen_addresses: Vec<String>,
+}
+
 pub struct NetworkHandle {
     pub tx_broadcast: mpsc::Sender<Transaction>,
+    pub network_send: mpsc::Sender<NetworkMessage>,
 }
 
 pub async fn start_network(
@@ -22,9 +44,10 @@ pub async fn start_network(
     storage: Arc<Mutex<InMemoryStorage>>,
 ) -> Result<NetworkHandle, Box<dyn std::error::Error>> {
     let (tx_broadcast, rx_broadcast) = mpsc::channel(100);
+    let (network_send, network_recv) = mpsc::channel(100);
     
     println!("[network::mod] Starting network with config: {:?}", config.discv5_addr);
-    let service = match service::NetworkService::new(config, storage, rx_broadcast).await {
+    let service = match service::NetworkService::new(config, storage, rx_broadcast, network_recv).await {
         Ok(s) => {
             println!("[network::mod] NetworkService instance created successfully.");
             s
@@ -43,5 +66,5 @@ pub async fn start_network(
         println!("[network::mod] Network service loop terminated.");
     });
 
-    Ok(NetworkHandle { tx_broadcast })
+    Ok(NetworkHandle { tx_broadcast, network_send })
 }

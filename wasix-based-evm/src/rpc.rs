@@ -6,7 +6,7 @@ use alloy_primitives::{Address, U256, B256, hex};
 use tonic::{Request, Response, Status};
 use std::sync::Arc;
 use alloy_rlp::Decodable;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, oneshot};
 use evm::standard::TransactValueCallCreate;
 
 pub mod evm_rpc {
@@ -22,7 +22,8 @@ use evm_rpc::{
     GetTransactionByHashRequest, TransactionInfoResponse, TransactionReceiptResponse,
     GetCodeRequest, CodeResponse, RootsResponse, ProposeBlockRequest, ProposeBlockResponse,
     MempoolResponse, ExecutionPayload, PayloadStatus, ForkchoiceUpdatedRequest,
-    ForkchoiceUpdatedResponse, GetPayloadRequest
+    ForkchoiceUpdatedResponse, GetPayloadRequest, NetPeerCountResponse, NetPeersResponse,
+    NetAddPeerRequest, NetAddPeerResponse, NetNodeInfoResponse, PeerInfo as ProtoPeerInfo
 };
 
 pub struct PendingPayload {
@@ -478,6 +479,78 @@ impl TransactionService for MyTransactionService {
         Ok(Response::new(MempoolResponse {
             transactions,
         }))
+    }
+
+    async fn net_peer_count(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<NetPeerCountResponse>, Status> {
+        if let Some(handle) = &self.network_handle {
+            let (tx, rx) = oneshot::channel();
+            handle.network_send.send(crate::network::NetworkMessage::GetPeerCount(tx)).await
+                .map_err(|_| Status::internal("Failed to send to network service"))?;
+            let count = rx.await.map_err(|_| Status::internal("Failed to receive from network service"))?;
+            Ok(Response::new(NetPeerCountResponse { count: count as u64 }))
+        } else {
+            Err(Status::unavailable("Network not started"))
+        }
+    }
+
+    async fn net_peers(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<NetPeersResponse>, Status> {
+        if let Some(handle) = &self.network_handle {
+            let (tx, rx) = oneshot::channel();
+            handle.network_send.send(crate::network::NetworkMessage::GetPeers(tx)).await
+                .map_err(|_| Status::internal("Failed to send to network service"))?;
+            let peers = rx.await.map_err(|_| Status::internal("Failed to receive from network service"))?;
+            let proto_peers = peers.into_iter().map(|p| ProtoPeerInfo {
+                id: p.id,
+                addr: p.addr,
+                enr: p.enr.unwrap_or_default(),
+            }).collect();
+            Ok(Response::new(NetPeersResponse { peers: proto_peers }))
+        } else {
+            Err(Status::unavailable("Network not started"))
+        }
+    }
+
+    async fn net_add_peer(
+        &self,
+        request: Request<NetAddPeerRequest>,
+    ) -> Result<Response<NetAddPeerResponse>, Status> {
+        let req = request.into_inner();
+        if let Some(handle) = &self.network_handle {
+            let (tx, rx) = oneshot::channel();
+            handle.network_send.send(crate::network::NetworkMessage::AddPeer(req.addr, tx)).await
+                .map_err(|_| Status::internal("Failed to send to network service"))?;
+            match rx.await.map_err(|_| Status::internal("Failed to receive from network service"))? {
+                Ok(_) => Ok(Response::new(NetAddPeerResponse { success: true, message: "Peer added".to_string() })),
+                Err(e) => Ok(Response::new(NetAddPeerResponse { success: false, message: e })),
+            }
+        } else {
+            Err(Status::unavailable("Network not started"))
+        }
+    }
+
+    async fn net_node_info(
+        &self,
+        _request: Request<Empty>,
+    ) -> Result<Response<NetNodeInfoResponse>, Status> {
+        if let Some(handle) = &self.network_handle {
+            let (tx, rx) = oneshot::channel();
+            handle.network_send.send(crate::network::NetworkMessage::GetNodeInfo(tx)).await
+                .map_err(|_| Status::internal("Failed to send to network service"))?;
+            let info = rx.await.map_err(|_| Status::internal("Failed to receive from network service"))?;
+            Ok(Response::new(NetNodeInfoResponse {
+                enr: info.enr,
+                node_id: info.node_id,
+                listen_addresses: info.listen_addresses,
+            }))
+        } else {
+            Err(Status::unavailable("Network not started"))
+        }
     }
 
     async fn propose_block(

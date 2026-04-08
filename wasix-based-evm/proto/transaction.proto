@@ -25,6 +25,41 @@ service TransactionService {
   rpc EngineNewPayload (ExecutionPayload) returns (PayloadStatus);
   rpc EngineForkchoiceUpdated (ForkchoiceUpdatedRequest) returns (ForkchoiceUpdatedResponse);
   rpc EngineGetPayload (GetPayloadRequest) returns (ExecutionPayload);
+  
+  // P2P RPCs
+  rpc NetPeerCount (Empty) returns (NetPeerCountResponse);
+  rpc NetPeers (Empty) returns (NetPeersResponse);
+  rpc NetAddPeer (NetAddPeerRequest) returns (NetAddPeerResponse);
+  rpc NetNodeInfo (Empty) returns (NetNodeInfoResponse);
+}
+
+message NetPeerCountResponse {
+  uint64 count = 1;
+}
+
+message NetPeersResponse {
+  repeated PeerInfo peers = 1;
+}
+
+message PeerInfo {
+  string id = 1;
+  string addr = 2;
+  string enr = 3;
+}
+
+message NetAddPeerRequest {
+  string addr = 1; // Multiaddr or ENR
+}
+
+message NetAddPeerResponse {
+  bool success = 1;
+  string message = 2;
+}
+
+message NetNodeInfoResponse {
+  string enr = 1;
+  string node_id = 2;
+  repeated string listen_addresses = 3;
 }
 
 message ForkchoiceUpdatedRequest {
