@@ -36,13 +36,13 @@ impl DiscoveryService {
                 enr_builder.tcp6(p2p_port);
             }
         }
-        println!("[DiscoveryService] Building local ENR...");
+        debug!("[DiscoveryService] Building local ENR...");
         let enr = enr_builder.build(&enr_key)?;
-        println!("[DiscoveryService] Local ENR: {}", enr.to_base64());
-        println!("[DiscoveryService] Node ID: {}", enr.node_id());
+        info!("[DiscoveryService] Local ENR: {}", enr.to_base64());
+        info!("[DiscoveryService] Node ID: {}", enr.node_id());
 
         // Configure discv5
-        println!("[DiscoveryService] Configuring discv5...");
+        debug!("[DiscoveryService] Configuring discv5...");
         let listen_config = match listen_addr.ip() {
             IpAddr::V4(ip) => {
                 ListenConfig::default().with_ipv4(ip, listen_addr.port())
@@ -53,20 +53,20 @@ impl DiscoveryService {
         };
         
         let config = ConfigBuilder::new(listen_config).build();
-        println!("[DiscoveryService] Creating Discv5 instance...");
+        debug!("[DiscoveryService] Creating Discv5 instance...");
         let discv5_raw = Discv5::new(enr, enr_key, config)?;
-        println!("[DiscoveryService] Discv5 instance created.");
+        debug!("[DiscoveryService] Discv5 instance created.");
 
         // Add bootnodes
         for bootnode in bootnodes {
             match Enr::from_str(&bootnode) {
                 Ok(enr) => {
                     if let Err(e) = discv5_raw.add_enr(enr.clone()) {
-                        println!("Failed to add bootnode ENR: {:?}", e);
+                        info!("[DiscoveryService] Failed to add bootnode ENR: {:?}", e);
                     }
-                    println!("Successfully added bootnode ENR: {:?}", enr);
+                    debug!("[DiscoveryService] Successfully added bootnode ENR: {:?}", enr);
                 }
-                Err(e) => println!("Invalid bootnode ENR: {:?}, error: {:?}", bootnode, e),
+                Err(e) => info!("[DiscoveryService] Invalid bootnode ENR: {:?}, error: {:?}", bootnode, e),
             }
         }
 
@@ -76,20 +76,20 @@ impl DiscoveryService {
     }
 
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
-        println!("[DiscoveryService] Starting discv5...");
+        debug!("[DiscoveryService] Starting discv5...");
         let local_enr = {
             let discv5 = self.discv5.lock().await;
             discv5.local_enr().to_base64()
         };
-        println!("[DiscoveryService] Local ENR for start: {}", local_enr);
+        debug!("[DiscoveryService] Local ENR for start: {}", local_enr);
         let mut discv5 = self.discv5.lock().await;
         match discv5.start().await {
             Ok(_) => {
-                println!("[DiscoveryService] Discv5 started successfully.");
+                info!("[DiscoveryService] Discv5 started successfully.");
                 Ok(())
             }
             Err(e) => {
-                println!("[DiscoveryService] Failed to start discv5: {:?}", e);
+                info!("[DiscoveryService] Failed to start discv5: {:?}", e);
                 Err(format!("{:?}", e).into())
             }
         }

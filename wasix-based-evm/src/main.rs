@@ -42,6 +42,10 @@ struct Args {
     /// Chain name (mainnet, sepolia, devnet)
     #[arg(long, default_value = "devnet")]
     chain: String,
+
+    /// Verbosity level (0: none, 1: info, 2: debug)
+    #[arg(long, default_value_t = 1)]
+    verbose: u8,
 }
 
 use crate::ev::{alloy_u256_to_evm_u256};
@@ -54,9 +58,53 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::Server;
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum LogLevel {
+    None = 0,
+    Info = 1,
+    Debug = 2,
+}
+
+pub static mut LOG_LEVEL: LogLevel = LogLevel::Info;
+
+pub fn set_log_level(level: LogLevel) {
+    unsafe {
+        LOG_LEVEL = level;
+    }
+}
+
+pub fn get_log_level() -> LogLevel {
+    unsafe { LOG_LEVEL }
+}
+
+#[macro_export]
+macro_rules! info {
+    ($($arg:tt)*) => {
+        if $crate::get_log_level() >= $crate::LogLevel::Info {
+            println!($($arg)*);
+        }
+    };
+}
+
+#[macro_export]
+macro_rules! debug {
+    ($($arg:tt)*) => {
+        if $crate::get_log_level() >= $crate::LogLevel::Debug {
+            println!($($arg)*);
+        }
+    };
+}
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
+
+    let level = match args.verbose {
+        0 => LogLevel::None,
+        1 => LogLevel::Info,
+        _ => LogLevel::Debug,
+    };
+    set_log_level(level);
 
     let rpc_addr = format!("127.0.0.1:{}", args.rpc_port).parse()?;
 
@@ -69,7 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
 
     let genesis_path = data_dir.join("genesis/genesis.json");
-    println!("Loading genesis from {:?}", genesis_path);
+    info!("[Main] Loading genesis from {:?}", genesis_path);
     let genesis_file = std::fs::File::open(genesis_path)?;
     let alloy_genesis: AlloyGenesis = serde_json::from_reader(genesis_file)?;
     let genesis = Genesis::from(alloy_genesis);
@@ -79,7 +127,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Log pre-funded accounts for clarity
     for (h160, account) in &storage_inner.backend.state {
-        println!("Pre-funded account: 0x{:x}, balance: {} wei", h160, account.balance);
+        debug!("[Main] Pre-funded account: 0x{:x}, balance: {} wei", h160, account.balance);
     }
 
     let storage = Arc::new(Mutex::new(storage_inner));
@@ -102,7 +150,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         network_handle: Some(network_handle),
     };
 
-    println!("EVM gRPC Server listening on {}", rpc_addr);
+    info!("[Main] EVM gRPC Server listening on {}", rpc_addr);
 
     Server::builder()
         .add_service(TransactionServiceServer::new(transaction_service))

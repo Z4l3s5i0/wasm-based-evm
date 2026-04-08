@@ -11,6 +11,7 @@ use tokio::sync::Mutex;
 use crate::network::sync::SyncEvent;
 use tokio::sync::mpsc;
 use crate::storage::{InMemoryStorage, Transaction};
+use crate::{info, debug};
 use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable, BufMut};
 use alloy_primitives::{B256, U256};
 
@@ -144,11 +145,11 @@ struct EthProtocolHandler {
 #[async_trait::async_trait]
 impl ServiceProtocol for EthProtocolHandler {
     async fn init(&mut self, context: &mut ProtocolContext) {
-        println!("EthProtocol initiated on protocol: {}", context.proto_id);
+        debug!("[EthProtocol] initiated on protocol: {}", context.proto_id);
     }
 
     async fn connected(&mut self, context: ProtocolContextMutRef<'_>, version: &str) {
-        println!("EthProtocol connected on session: {}, version: {}", context.session.id, version);
+        info!("[EthProtocol] connected on session: {}, version: {}", context.session.id, version);
         
         // Notify SyncService about new peer
         let _ = self.sync_send.send(SyncEvent::PeerConnected(context.session.id)).await;
@@ -169,12 +170,12 @@ impl ServiceProtocol for EthProtocolHandler {
         status.encode(&mut data);
         
         if let Err(e) = context.send_message(data.freeze()).await {
-            println!("Failed to send Status message: {:?}", e);
+            info!("[EthProtocol] Failed to send Status message: {:?}", e);
         }
     }
 
     async fn disconnected(&mut self, context: ProtocolContextMutRef<'_>) {
-        println!("EthProtocol disconnected on session: {}", context.session.id);
+        info!("[EthProtocol] disconnected on session: {}", context.session.id);
     }
 
     async fn received(&mut self, context: ProtocolContextMutRef<'_>, data: Bytes) {
@@ -188,26 +189,26 @@ impl ServiceProtocol for EthProtocolHandler {
         match msg_id {
             id if id == MessageId::Status as u8 => {
                 match Status::decode(&mut &payload[..]) {
-                    Ok(status) => println!("Received Status from {}: {:?}", context.session.id, status),
-                    Err(e) => println!("Failed to decode Status from {}: {:?}", context.session.id, e),
+                    Ok(status) => info!("[EthProtocol] Received Status from {}: {:?}", context.session.id, status),
+                    Err(e) => info!("[EthProtocol] Failed to decode Status from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::Transactions as u8 => {
                 match Transactions::decode(&mut &payload[..]) {
                     Ok(txs) => {
-                        println!("Received {} transactions from {}", txs.0.len(), context.session.id);
+                        info!("[EthProtocol] Received {} transactions from {}", txs.0.len(), context.session.id);
                         let mut storage = self.storage.lock().await;
                         for tx in txs.0 {
                             storage.add_transaction(tx);
                         }
                     }
-                    Err(e) => println!("Failed to decode Transactions from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode Transactions from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::NewBlock as u8 => {
                 match NewBlock::decode(&mut &payload[..]) {
                     Ok(new_block) => {
-                        println!("Received new block {} from {}", new_block.block.body.execution_payload.block_hash, context.session.id);
+                        info!("[EthProtocol] Received new block {} from {}", new_block.block.body.execution_payload.block_hash, context.session.id);
                         let mut storage = self.storage.lock().await;
                         if storage.get_block_by_hash(new_block.block.body.execution_payload.block_hash).is_none() {
                             storage.add_block(new_block.block.clone());
@@ -220,13 +221,13 @@ impl ServiceProtocol for EthProtocolHandler {
                             });
                         }
                     }
-                    Err(e) => println!("Failed to decode NewBlock from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode NewBlock from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::GetBlockHeaders as u8 => {
                 match GetBlockHeaders::decode(&mut &payload[..]) {
                     Ok(req) => {
-                        println!("Received GetBlockHeaders from {}: {:?}", context.session.id, req);
+                        debug!("[EthProtocol] Received GetBlockHeaders from {}: {:?}", context.session.id, req);
                         let storage = self.storage.lock().await;
                         let mut headers = Vec::new();
                         let start_block = match req.block {
@@ -256,13 +257,13 @@ impl ServiceProtocol for EthProtocolHandler {
                         resp.encode(&mut data);
                         let _ = context.send_message(data.freeze()).await;
                     }
-                    Err(e) => println!("Failed to decode GetBlockHeaders from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode GetBlockHeaders from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::GetBlockBodies as u8 => {
                 match GetBlockBodies::decode(&mut &payload[..]) {
                     Ok(req) => {
-                        println!("Received GetBlockBodies from {}: {:?}", context.session.id, req);
+                        debug!("[EthProtocol] Received GetBlockBodies from {}: {:?}", context.session.id, req);
                         let storage = self.storage.lock().await;
                         let mut bodies = Vec::new();
                         for hash in req.hashes {
@@ -276,13 +277,13 @@ impl ServiceProtocol for EthProtocolHandler {
                         resp.encode(&mut data);
                         let _ = context.send_message(data.freeze()).await;
                     }
-                    Err(e) => println!("Failed to decode GetBlockBodies from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode GetBlockBodies from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::GetPooledTransactions as u8 => {
                 match GetPooledTransactions::decode(&mut &payload[..]) {
                     Ok(req) => {
-                        println!("Received GetPooledTransactions from {}: {:?}", context.session.id, req);
+                        debug!("[EthProtocol] Received GetPooledTransactions from {}: {:?}", context.session.id, req);
                         let storage = self.storage.lock().await;
                         let mut transactions = Vec::new();
                         for hash in req.hashes {
@@ -296,50 +297,50 @@ impl ServiceProtocol for EthProtocolHandler {
                         resp.encode(&mut data);
                         let _ = context.send_message(data.freeze()).await;
                     }
-                    Err(e) => println!("Failed to decode GetPooledTransactions from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode GetPooledTransactions from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::PooledTransactions as u8 => {
                 match PooledTransactions::decode(&mut &payload[..]) {
                     Ok(txs) => {
-                        println!("Received {} pooled transactions from {}", txs.transactions.len(), context.session.id);
+                        info!("[EthProtocol] Received {} pooled transactions from {}", txs.transactions.len(), context.session.id);
                         let mut storage = self.storage.lock().await;
                         for tx in txs.transactions {
                             storage.add_transaction(tx);
                         }
                     }
-                    Err(e) => println!("Failed to decode PooledTransactions from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode PooledTransactions from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::BlockHeaders as u8 => {
                  match BlockHeaders::decode(&mut &payload[..]) {
                     Ok(headers) => {
-                        println!("Received {} BlockHeaders from {}", headers.headers.len(), context.session.id);
+                        info!("[EthProtocol] Received {} BlockHeaders from {}", headers.headers.len(), context.session.id);
                         let _ = self.sync_send.send(SyncEvent::Headers(context.session.id, headers)).await;
                     }
-                    Err(e) => println!("Failed to decode BlockHeaders from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode BlockHeaders from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::BlockBodies as u8 => {
                  match BlockBodies::decode(&mut &payload[..]) {
                     Ok(bodies) => {
-                        println!("Received {} BlockBodies from {}", bodies.bodies.len(), context.session.id);
+                        info!("[EthProtocol] Received {} BlockBodies from {}", bodies.bodies.len(), context.session.id);
                         let _ = self.sync_send.send(SyncEvent::Bodies(context.session.id, bodies)).await;
                     }
-                    Err(e) => println!("Failed to decode BlockBodies from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode BlockBodies from {}: {:?}", context.session.id, e),
                 }
             }
             id if id == MessageId::NewPooledTransactionHashes as u8 => {
                  match NewPooledTransactionHashes::decode(&mut &payload[..]) {
                     Ok(hashes) => {
-                        println!("Received {} new pooled transaction hashes from {}", hashes.0.len(), context.session.id);
+                        debug!("[EthProtocol] Received {} new pooled transaction hashes from {}", hashes.0.len(), context.session.id);
                         // In a real implementation, we would check which ones we are missing and request them
                     }
-                    Err(e) => println!("Failed to decode NewPooledTransactionHashes from {}: {:?}", context.session.id, e),
+                    Err(e) => info!("[EthProtocol] Failed to decode NewPooledTransactionHashes from {}: {:?}", context.session.id, e),
                 }
             }
             _ => {
-                println!("EthProtocol received unknown message ID {} ({} bytes) from session: {}",
+                debug!("[EthProtocol] received unknown message ID {} ({} bytes) from session: {}", 
                     msg_id, data.len(), context.session.id);
             }
         }

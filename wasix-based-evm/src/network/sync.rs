@@ -5,6 +5,7 @@ use crate::network::NetworkMessage;
 use crate::network::protocol::{GetBlockHeaders, BlockHashOrNumber, GetBlockBodies};
 use crate::executor::Executor;
 use std::collections::VecDeque;
+use crate::{info, debug};
 
 pub struct SyncService {
     storage: Arc<Mutex<InMemoryStorage>>,
@@ -40,7 +41,7 @@ impl SyncService {
     }
 
     pub async fn run(mut self) {
-        println!("[SyncService] Starting SyncService...");
+        info!("[SyncService] Starting SyncService...");
         
         loop {
             tokio::select! {
@@ -48,19 +49,19 @@ impl SyncService {
                     if let Some(event) = event {
                         match event {
                             SyncEvent::PeerConnected(session_id) => {
-                                println!("[SyncService] New peer connected: {}. Requesting headers...", session_id);
+                                debug!("[SyncService] New peer connected: {}. Requesting headers...", session_id);
                                 self.request_headers(session_id).await;
                             }
                             SyncEvent::Headers(session_id, headers) => {
-                                println!("[SyncService] Received {} headers from session {}", headers.headers.len(), session_id);
+                                info!("[SyncService] Received {} headers from session {}", headers.headers.len(), session_id);
                                 self.handle_headers(session_id, headers).await;
                             }
                             SyncEvent::Bodies(session_id, bodies) => {
-                                println!("[SyncService] Received {} bodies from session {}", bodies.bodies.len(), session_id);
+                                info!("[SyncService] Received {} bodies from session {}", bodies.bodies.len(), session_id);
                                 self.handle_bodies(bodies).await;
                             }
                             SyncEvent::NewBlock(block) => {
-                                println!("[SyncService] Received new block via gossip: {}. Broadcasting to other peers...", block.body.execution_payload.block_hash);
+                                info!("[SyncService] Received new block via gossip: {}. Broadcasting to other peers...", block.body.execution_payload.block_hash);
                                 let _ = self.network_send.send(NetworkMessage::BroadcastBlock(block)).await;
                             }
                         }
@@ -91,7 +92,7 @@ impl SyncService {
             session_id,
             request,
         }).await {
-            println!("[SyncService] Failed to send RequestHeaders: {:?}", e);
+            info!("[SyncService] Failed to send RequestHeaders: {:?}", e);
         }
     }
 
@@ -115,7 +116,7 @@ impl SyncService {
             session_id,
             request,
         }).await {
-            println!("[SyncService] Failed to send RequestBodies: {:?}", e);
+            info!("[SyncService] Failed to send RequestBodies: {:?}", e);
         }
     }
 
@@ -125,20 +126,20 @@ impl SyncService {
             if let Some(header) = self.pending_headers.pop_front() {
                 // In a real implementation, we should match body with header via hash
                 if header.body.execution_payload.block_hash == body.body.execution_payload.block_hash {
-                    println!("[SyncService] Executing block {}", header.body.execution_payload.block_number);
+                    debug!("[SyncService] Executing block {}", header.body.execution_payload.block_number);
                     // Execute block
                     let txs = body.body.execution_payload.transactions.clone();
                     match self.executor.execute_block(&mut storage, txs, body.clone()) {
                         Ok(_) => {
-                            println!("[SyncService] Block {} executed successfully", body.body.execution_payload.block_number);
+                            info!("[SyncService] Block {} executed successfully", body.body.execution_payload.block_number);
                             storage.add_block(body);
                         }
                         Err(e) => {
-                            println!("[SyncService] Failed to execute block {}: {:?}", body.body.execution_payload.block_number, e);
+                            info!("[SyncService] Failed to execute block {}: {:?}", body.body.execution_payload.block_number, e);
                         }
                     }
                 } else {
-                    println!("[SyncService] Mismatched body for block");
+                    debug!("[SyncService] Mismatched body for block");
                     self.pending_headers.push_front(header);
                     break;
                 }

@@ -2,6 +2,7 @@ use alloy_primitives::B256;
 use crate::ev::{H160, EvmU256, evm};
 use evm::backend::OverlayedChangeSet;
 use crate::storage::{InMemoryStorage, Transaction, Block, Receipt, Log};
+use crate::{info, debug};
 use evm::{
     transact,
     backend::OverlayedBackend,
@@ -57,7 +58,7 @@ impl Executor {
         };
 
         for tx in &transactions {
-            println!("DEBUG: Executing tx: from={:?}, to={:?}, value={:?}, gas_limit={:?}", tx.from, tx.to, tx.value, tx.gas_limit);
+            debug!("[Executor] DEBUG: Executing tx: from={:?}, to={:?}, value={:?}, gas_limit={:?}", tx.from, tx.to, tx.value, tx.gas_limit);
             let gas_price = TransactGasPrice::Legacy(EvmU256::from_big_endian(&tx.gas_price.to_be_bytes::<32>()));
             
             let call_create = match tx.to {
@@ -95,7 +96,7 @@ impl Executor {
 
             match result {
                 Ok(value) => {
-                    println!("Transaction executed successfully: hash={:?}, used_gas={:?}", tx.hash, value.used_gas);
+                    info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}", tx.hash, value.used_gas);
                     cumulative_gas_used += value.used_gas.as_u64();
                     
                     let (_, changeset) = overlayed.deconstruct();
@@ -127,7 +128,7 @@ impl Executor {
                     results.push(value);
                 }
                 Err(e) => {
-                    println!("Transaction execution failed: hash={:?}, error={:?}", tx.hash, e);
+                    info!("[Executor] Transaction execution failed: hash={:?}, error={:?}", tx.hash, e);
                     return Err(format!("Transaction execution failed: {:?}", e));
                 }
             }
@@ -179,27 +180,27 @@ impl Executor {
         let withdrawals_root = InMemoryStorage::calculate_withdrawals_root(&block.body.execution_payload.withdrawals);
         let receipts_root = InMemoryStorage::calculate_receipts_root(&receipts);
 
-        println!("Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", state_root, txs_root, receipts_root, withdrawals_root);
+        debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", state_root, txs_root, receipts_root, withdrawals_root);
 
         // Verify roots against block
         if block.body.execution_payload.state_root != B256::ZERO && state_root != block.body.execution_payload.state_root {
             let err = format!("State root mismatch: expected {:?}, got {:?}", block.body.execution_payload.state_root, state_root);
-            println!("ERROR: {}", err);
+            info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
         if block.body.execution_payload.transactions_root != B256::ZERO && txs_root != block.body.execution_payload.transactions_root {
             let err = format!("Transactions root mismatch: expected {:?}, got {:?}", block.body.execution_payload.transactions_root, txs_root);
-            println!("ERROR: {}", err);
+            info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
         if block.body.execution_payload.receipts_root != B256::ZERO && receipts_root != block.body.execution_payload.receipts_root {
             let err = format!("Receipts root mismatch: expected {:?}, got {:?}", block.body.execution_payload.receipts_root, receipts_root);
-            println!("ERROR: {}", err);
+            info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
         if block.body.execution_payload.withdrawals_root != B256::ZERO && withdrawals_root != block.body.execution_payload.withdrawals_root {
             let err = format!("Withdrawals root mismatch: expected {:?}, got {:?}", block.body.execution_payload.withdrawals_root, withdrawals_root);
-            println!("ERROR: {}", err);
+            info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
 
@@ -220,7 +221,7 @@ impl Executor {
             storage.add_receipt(tx_hash, receipt);
         }
         storage.add_block(finalized_block);
-        println!("Block finalized and saved to storage: slot={:?}", block.slot);
+        info!("[Executor] Block finalized and saved to storage: slot={:?}", block.slot);
 
         Ok(results)
     }

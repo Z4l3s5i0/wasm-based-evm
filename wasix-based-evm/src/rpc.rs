@@ -2,6 +2,7 @@ use crate::executor::Executor;
 use crate::storage::{InMemoryStorage, Transaction, Block, Receipt};
 use crate::network::NetworkHandle;
 use crate::ev::h160_to_address;
+use crate::{info, debug};
 use alloy_primitives::{Address, U256, B256, hex};
 use tonic::{Request, Response, Status};
 use std::sync::Arc;
@@ -72,7 +73,7 @@ impl TransactionService for MyTransactionService {
             .gas_price(U256::from(req.gas_price))
             .build();
 
-        println!("DEBUG: Executing tx: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
+        debug!("[RPC] DEBUG: Executing tx: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
 
         let block = Block::builder(next_number)
             .parent_hash(latest_block.body.execution_payload.block_hash)
@@ -83,13 +84,13 @@ impl TransactionService for MyTransactionService {
 
         match self.executor.execute(&mut *storage, tx.clone(), block) {
             Ok(val) => {
-                println!("Transaction executed successfully: {:?}", tx.hash);
+                info!("[RPC] Transaction executed successfully: {:?}", tx.hash);
                 let sender_balance = storage.get_balance(from_addr);
-                println!("new balance for sender {}", sender_balance);
+                debug!("[RPC] new balance for sender {}", sender_balance);
 
                 if let Some(to_addr) = to_addr {
                     let receiver_balance = storage.get_balance(to_addr);
-                    println!("new balance for receiver {}", receiver_balance);
+                    debug!("[RPC] new balance for receiver {}", receiver_balance);
                 }
 
                 let (contract_address, return_data) = match val.call_create {
@@ -112,7 +113,7 @@ impl TransactionService for MyTransactionService {
                 }))
             }
             Err(e) => {
-                println!("Transaction failed: {:?}, error: {}", tx.hash, e);
+                info!("[RPC] Transaction failed: {:?}, error: {}", tx.hash, e);
                 Ok(Response::new(TransactionResponse {
                     success: false,
                     message: format!("Transaction failed: {}", e),
@@ -341,7 +342,7 @@ impl TransactionService for MyTransactionService {
             let _ = handle.tx_broadcast.send(tx).await;
         }
 
-        println!("DEBUG: Transaction added to mempool: {:?}", tx_hash);
+        debug!("[RPC] DEBUG: Transaction added to mempool: {:?}", tx_hash);
 
         Ok(Response::new(TransactionResponse {
             success: true,
@@ -382,7 +383,7 @@ impl TransactionService for MyTransactionService {
             .gas_price(U256::from(req.gas_price))
             .build();
 
-        println!("DEBUG: Calling eth_call: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
+        debug!("[RPC] DEBUG: Calling eth_call: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
 
         // For eth_call, we use the latest block state without incrementing the block number
         let block = latest_block;
@@ -408,7 +409,7 @@ impl TransactionService for MyTransactionService {
                 }))
             }
             Err(e) => {
-                println!("Call failed: error: {}", e);
+                info!("[RPC] Call failed: error: {}", e);
                 Ok(Response::new(TransactionResponse {
                     success: false,
                     message: format!("Call failed: {}", e),
@@ -587,7 +588,7 @@ impl TransactionService for MyTransactionService {
                 req.max_transactions as usize
             };
             transactions = storage.mempool.pop_transactions(n);
-            println!("DEBUG: Pulled {} transactions from mempool", transactions.len());
+            debug!("[RPC] DEBUG: Pulled {} transactions from mempool", transactions.len());
         }
 
         for tx_req in req.transactions {
@@ -699,7 +700,7 @@ impl TransactionService for MyTransactionService {
             }
             if let Some(id) = found_id {
                 if let Some(payload) = pending.remove(&id) {
-                    println!("DEBUG: Using pre-executed block from pending payload {}", id);
+                    debug!("[RPC] DEBUG: Using pre-executed block from pending payload {}", id);
                     storage.backend.apply_overlayed(&payload.total_changeset);
                     
                     // Decode transactions and add them to storage
@@ -728,7 +729,7 @@ impl TransactionService for MyTransactionService {
             match Transaction::decode(&mut data.as_slice()) {
                 Ok(tx) => transactions.push(tx),
                 Err(e) => {
-                    println!("DEBUG: Failed to decode transaction: {}", e);
+                    debug!("[RPC] DEBUG: Failed to decode transaction: {}", e);
                     return Ok(Response::new(PayloadStatus {
                         status: "INVALID".to_string(),
                         latest_valid_hash: format!("{:?}", storage.head_block_hash),
@@ -796,7 +797,7 @@ impl TransactionService for MyTransactionService {
         storage.safe_block_hash = safe_hash;
         storage.finalized_block_hash = finalized_hash;
 
-        println!("DEBUG: Forkchoice updated: head={:?}, safe={:?}, finalized={:?}", head_hash, safe_hash, finalized_hash);
+        debug!("[RPC] DEBUG: Forkchoice updated: head={:?}, safe={:?}, finalized={:?}", head_hash, safe_hash, finalized_hash);
 
         // Transactional Rollback: if the new head hash is different, we might want to return 
         // transactions from pending payloads that were building on the old head.
@@ -811,7 +812,7 @@ impl TransactionService for MyTransactionService {
             }
             for id in to_rollback {
                 if let Some(payload) = pending.remove(&id) {
-                    println!("DEBUG: Rolling back transactions from pending payload {}", id);
+                    debug!("[RPC] DEBUG: Rolling back transactions from pending payload {}", id);
                     for tx in &payload.block.body.execution_payload.transactions {
                         storage.mempool.add_transaction(tx.clone());
                     }
@@ -822,7 +823,7 @@ impl TransactionService for MyTransactionService {
         let mut payload_id = String::new();
         if let Some(attr) = req.payload_attributes {
             payload_id = format!("0x{:x}", rand::random::<u64>());
-            println!("DEBUG: Starting block building, payload_id={}", payload_id);
+            debug!("[RPC] DEBUG: Starting block building, payload_id={}", payload_id);
             
             let latest_block = storage.get_block_by_hash(head_hash).cloned().unwrap_or_else(|| storage.get_latest_block().cloned().unwrap());
             
@@ -862,7 +863,7 @@ impl TransactionService for MyTransactionService {
                     });
                 }
                 Err(e) => {
-                    println!("DEBUG: Failed to build block: {}", e);
+                    debug!("[RPC] DEBUG: Failed to build block: {}", e);
                     // If building fails, payload_id remains empty or we handle it differently
                     payload_id = String::new();
                 }

@@ -63,24 +63,24 @@ pub async fn start_network(
     
     let (sync_service, sync_send) = sync::SyncService::new(storage.clone(), network_send.clone());
     
-    println!("[network::mod] Starting network with config: {:?}", config.discv5_addr);
+    info!("[network::mod] Starting network with config: {:?}", config.discv5_addr);
     let service = match service::NetworkService::new(config, storage, rx_broadcast, network_recv, sync_send).await {
         Ok(s) => {
-            println!("[network::mod] NetworkService instance created successfully.");
+            info!("[network::mod] NetworkService instance created successfully.");
             s
         }
         Err(e) => {
-            println!("[network::mod] Error creating NetworkService: {:?}", e);
+            info!("[network::mod] Error creating NetworkService: {:?}", e);
             return Err(e);
         }
     };
 
     tokio::spawn(async move {
-        println!("[network::mod] Spawning network service loop...");
+        debug!("[network::mod] Spawning network service loop...");
         if let Err(e) = service.run().await {
-            println!("[network::mod] Network service error during run: {:?}", e);
+            info!("[network::mod] Network service error during run: {:?}", e);
         }
-        println!("[network::mod] Network service loop terminated.");
+        debug!("[network::mod] Network service loop terminated.");
     });
 
     tokio::spawn(async move {
