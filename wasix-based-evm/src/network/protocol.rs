@@ -9,7 +9,7 @@ use tentacle::{
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::storage::{InMemoryStorage, Transaction};
-use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable};
+use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable, BufMut};
 use alloy_primitives::{B256, U256};
 
 pub const ETH_PROTOCOL_ID: ProtocolId = ProtocolId::new(1);
@@ -26,6 +26,8 @@ pub enum MessageId {
     GetBlockBodies = 0x05,
     BlockBodies = 0x06,
     NewBlock = 0x07,
+    GetPooledTransactions = 0x09,
+    PooledTransactions = 0x0a,
 }
 
 /// `Status` message (eth/66+)
@@ -51,6 +53,84 @@ pub struct NewPooledTransactionHashes(pub Vec<B256>);
 pub struct NewBlock {
     pub block: crate::storage::Block,
     pub total_difficulty: U256,
+}
+
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
+pub struct GetBlockHeaders {
+    pub request_id: u64,
+    pub block: BlockHashOrNumber,
+    pub amount: u64,
+    pub skip: u64,
+    pub reverse: bool,
+}
+
+#[derive(Debug, Clone)]
+pub enum BlockHashOrNumber {
+    Hash(B256),
+    Number(u64),
+}
+
+impl Encodable for BlockHashOrNumber {
+    fn encode(&self, out: &mut dyn BufMut) {
+        match self {
+            BlockHashOrNumber::Hash(hash) => hash.encode(out),
+            BlockHashOrNumber::Number(num) => num.encode(out),
+        }
+    }
+
+    fn length(&self) -> usize {
+        match self {
+            BlockHashOrNumber::Hash(hash) => hash.length(),
+            BlockHashOrNumber::Number(num) => num.length(),
+        }
+    }
+}
+
+impl Decodable for BlockHashOrNumber {
+    fn decode(buf: &mut &[u8]) -> alloy_rlp::Result<Self> {
+        if buf.is_empty() {
+            return Err(alloy_rlp::Error::InputTooShort);
+        }
+
+        // Try to decode as B256 first (32 bytes), then as u64
+        // In Ethereum RLP, a 32-byte hash and a number have different prefixes
+        let first_byte = buf[0];
+        if first_byte == 0xa0 { // RLP prefix for 32-byte string
+            Ok(BlockHashOrNumber::Hash(B256::decode(buf)?))
+        } else {
+            Ok(BlockHashOrNumber::Number(u64::decode(buf)?))
+        }
+    }
+}
+
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
+pub struct BlockHeaders {
+    pub request_id: u64,
+    pub headers: Vec<crate::storage::Block>,
+}
+
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
+pub struct GetBlockBodies {
+    pub request_id: u64,
+    pub hashes: Vec<B256>,
+}
+
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
+pub struct BlockBodies {
+    pub request_id: u64,
+    pub bodies: Vec<crate::storage::Block>,
+}
+
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
+pub struct GetPooledTransactions {
+    pub request_id: u64,
+    pub hashes: Vec<B256>,
+}
+
+#[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
+pub struct PooledTransactions {
+    pub request_id: u64,
+    pub transactions: Vec<Transaction>,
 }
 
 struct EthProtocolHandler {
@@ -125,6 +205,109 @@ impl ServiceProtocol for EthProtocolHandler {
                         storage.add_block(new_block.block);
                     }
                     Err(e) => println!("Failed to decode NewBlock from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::GetBlockHeaders as u8 => {
+                match GetBlockHeaders::decode(&mut &payload[..]) {
+                    Ok(req) => {
+                        println!("Received GetBlockHeaders from {}: {:?}", context.session.id, req);
+                        let storage = self.storage.lock().await;
+                        let mut headers = Vec::new();
+                        let start_block = match req.block {
+                            BlockHashOrNumber::Hash(h) => storage.get_block_by_hash(h).map(|b| b.body.execution_payload.block_number),
+                            BlockHashOrNumber::Number(n) => Some(n),
+                        };
+
+                        if let Some(start_num) = start_block {
+                            for i in 0..req.amount {
+                                let num = if req.reverse {
+                                    if start_num < i * (req.skip + 1) { break; }
+                                    start_num - i * (req.skip + 1)
+                                } else {
+                                    start_num + i * (req.skip + 1)
+                                };
+                                if let Some(block) = storage.get_block_by_number(num) {
+                                    headers.push(block.clone());
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+
+                        let resp = BlockHeaders { request_id: req.request_id, headers };
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&[MessageId::BlockHeaders as u8]);
+                        resp.encode(&mut data);
+                        let _ = context.send_message(data.freeze()).await;
+                    }
+                    Err(e) => println!("Failed to decode GetBlockHeaders from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::GetBlockBodies as u8 => {
+                match GetBlockBodies::decode(&mut &payload[..]) {
+                    Ok(req) => {
+                        println!("Received GetBlockBodies from {}: {:?}", context.session.id, req);
+                        let storage = self.storage.lock().await;
+                        let mut bodies = Vec::new();
+                        for hash in req.hashes {
+                            if let Some(block) = storage.get_block_by_hash(hash) {
+                                bodies.push(block.clone());
+                            }
+                        }
+                        let resp = BlockBodies { request_id: req.request_id, bodies };
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&[MessageId::BlockBodies as u8]);
+                        resp.encode(&mut data);
+                        let _ = context.send_message(data.freeze()).await;
+                    }
+                    Err(e) => println!("Failed to decode GetBlockBodies from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::GetPooledTransactions as u8 => {
+                match GetPooledTransactions::decode(&mut &payload[..]) {
+                    Ok(req) => {
+                        println!("Received GetPooledTransactions from {}: {:?}", context.session.id, req);
+                        let storage = self.storage.lock().await;
+                        let mut transactions = Vec::new();
+                        for hash in req.hashes {
+                            if let Some(tx) = storage.get_transaction_by_hash(hash) {
+                                transactions.push(tx.clone());
+                            }
+                        }
+                        let resp = PooledTransactions { request_id: req.request_id, transactions };
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&[MessageId::PooledTransactions as u8]);
+                        resp.encode(&mut data);
+                        let _ = context.send_message(data.freeze()).await;
+                    }
+                    Err(e) => println!("Failed to decode GetPooledTransactions from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::PooledTransactions as u8 => {
+                match PooledTransactions::decode(&mut &payload[..]) {
+                    Ok(txs) => {
+                        println!("Received {} pooled transactions from {}", txs.transactions.len(), context.session.id);
+                        let mut storage = self.storage.lock().await;
+                        for tx in txs.transactions {
+                            storage.add_transaction(tx);
+                        }
+                    }
+                    Err(e) => println!("Failed to decode PooledTransactions from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::BlockHeaders as u8 => {
+                 println!("Received BlockHeaders from {}", context.session.id);
+            }
+            id if id == MessageId::BlockBodies as u8 => {
+                 println!("Received BlockBodies from {}", context.session.id);
+            }
+            id if id == MessageId::NewPooledTransactionHashes as u8 => {
+                 match NewPooledTransactionHashes::decode(&mut &payload[..]) {
+                    Ok(hashes) => {
+                        println!("Received {} new pooled transaction hashes from {}", hashes.0.len(), context.session.id);
+                        // In a real implementation, we would check which ones we are missing and request them
+                    }
+                    Err(e) => println!("Failed to decode NewPooledTransactionHashes from {}: {:?}", context.session.id, e),
                 }
             }
             _ => {

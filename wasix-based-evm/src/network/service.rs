@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::collections::HashMap;
 use tentacle::SessionId;
-use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, Transactions}, NetworkConfig, PeerInfo};
+use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, NewPooledTransactionHashes}, NetworkConfig, PeerInfo};
 use crate::storage::{InMemoryStorage, Transaction};
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
@@ -147,10 +147,10 @@ impl NetworkService {
                 }
                 tx = self.rx_broadcast.recv() => {
                     if let Some(tx) = tx {
-                        println!("Broadcasting transaction: {:?}", tx.hash);
+                        println!("Broadcasting transaction hash: {:?}", tx.hash);
                         let mut data = BytesMut::new();
-                        data.extend_from_slice(&[MessageId::Transactions as u8]);
-                        let msg = Transactions(vec![tx]);
+                        data.extend_from_slice(&[MessageId::NewPooledTransactionHashes as u8]);
+                        let msg = NewPooledTransactionHashes(vec![tx.hash]);
                         msg.encode(&mut data);
                         let msg_bytes = data.freeze();
                         
@@ -159,7 +159,7 @@ impl NetworkService {
                             ETH_PROTOCOL_ID,
                             msg_bytes
                         ).await {
-                            println!("Failed to broadcast transaction: {:?}", e);
+                            println!("Failed to broadcast transaction hash: {:?}", e);
                         }
                     }
                 }

@@ -17,6 +17,14 @@ pub struct Receipt {
     pub logs: Vec<Log>,
 }
 
+impl Receipt {
+    pub fn to_vec(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        self.encode(&mut out);
+        out
+    }
+}
+
 #[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct Log {
     pub address: Address,
