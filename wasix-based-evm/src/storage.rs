@@ -1,4 +1,5 @@
 use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, h160_to_address};
+use crate::{info, debug};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use evm::interpreter::runtime::Log as EvmLog;
 use alloy_primitives::{Address, FixedBytes, B256, U256, keccak256, Bloom, BloomInput};
@@ -689,16 +690,20 @@ impl InMemoryStorage {
     }
 
     pub fn add_block(&mut self, block: Block) {
+        let block_number = block.body.execution_payload.block_number;
         let block_hash = block.body.execution_payload.block_hash;
-        self.blocks.insert(block.body.execution_payload.block_number, block);
+        debug!("[Storage] Adding block #{} with hash {:?}", block_number, block_hash);
+        self.blocks.insert(block_number, block);
         self.head_block_hash = block_hash;
     }
 
     pub fn add_transaction(&mut self, tx: Transaction) {
+        debug!("[Storage] Adding transaction {:?}", tx.hash);
         self.transactions.insert(tx.hash, tx);
     }
 
     pub fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
+        debug!("[Storage] Adding receipt for transaction {:?}", tx_hash);
         self.receipts.insert(tx_hash, receipt);
     }
 
@@ -773,6 +778,7 @@ impl InMemoryStorage {
 
     #[allow(dead_code)]
     pub fn set_contract_code(&mut self, address: Address, code: Vec<u8>) {
+        debug!("[Storage] Setting contract code for address {:?}", address);
         self.contracts.insert(address, code.clone());
         self.backend.state.entry(H160::from_slice(address.as_slice())).or_insert(InMemoryAccount {
             balance: EvmU256::zero(),
@@ -780,10 +786,11 @@ impl InMemoryStorage {
             nonce: EvmU256::zero(),
             storage: BTreeMap::<H256, H256>::new(),
             transient_storage: BTreeMap::<H256, H256>::new(),
-        }).code = code.clone();
+        }).code = code;
     }
 
     pub fn set_balance(&mut self, address: Address, balance: U256) {
+        debug!("[Storage] Setting balance for address {:?} to {}", address, balance);
         let bytes = balance.to_be_bytes::<32>();
         let evm_balance = EvmU256::from_big_endian(&bytes);
         let h160 = H160::from_slice(address.as_slice());

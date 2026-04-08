@@ -1,6 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use alloy_primitives::{Address, B256, U256};
 use crate::storage::Transaction;
+use crate::{info, debug};
 
 /// A simple mempool to store pending transactions.
 #[derive(Debug, Default, Clone)]
@@ -22,6 +23,7 @@ impl Mempool {
 
     /// Add a transaction to the mempool.
     pub fn add_transaction(&mut self, tx: Transaction) {
+        debug!("[Mempool] Adding transaction {:?} to mempool", tx.hash);
         let queue = self.pending_transactions
             .entry(tx.from)
             .or_insert_with(VecDeque::new);
