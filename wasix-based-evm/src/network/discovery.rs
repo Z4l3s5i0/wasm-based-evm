@@ -1,14 +1,18 @@
+use std::sync::Arc;
+use tokio::sync::Mutex;
 use discv5::{Discv5, ConfigBuilder, Enr, enr::CombinedKey, ListenConfig};
 use std::net::{SocketAddr, IpAddr};
 use std::str::FromStr;
 
 pub struct DiscoveryService {
-    discv5: Discv5,
+    discv5: Arc<Mutex<Discv5>>,
 }
 
 impl DiscoveryService {
     pub fn new(
         listen_addr: SocketAddr,
+        p2p_port: u16,
+        ext_ip: Option<IpAddr>,
         bootnodes: Vec<String>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         // Generate a random key for the local ENR
@@ -16,14 +20,20 @@ impl DiscoveryService {
         
         // Build the local ENR
         let mut enr_builder = Enr::builder();
-        match listen_addr.ip() {
+        
+        // Use external IP if provided, otherwise fallback to listen IP
+        let public_ip = ext_ip.unwrap_or(listen_addr.ip());
+        
+        match public_ip {
             IpAddr::V4(ip) => {
                 enr_builder.ip4(ip);
                 enr_builder.udp4(listen_addr.port());
+                enr_builder.tcp4(p2p_port);
             }
             IpAddr::V6(ip) => {
                 enr_builder.ip6(ip);
                 enr_builder.udp6(listen_addr.port());
+                enr_builder.tcp6(p2p_port);
             }
         }
         println!("[DiscoveryService] Building local ENR...");
@@ -44,28 +54,36 @@ impl DiscoveryService {
         
         let config = ConfigBuilder::new(listen_config).build();
         println!("[DiscoveryService] Creating Discv5 instance...");
-        let discv5 = Discv5::new(enr, enr_key, config)?;
+        let discv5_raw = Discv5::new(enr, enr_key, config)?;
         println!("[DiscoveryService] Discv5 instance created.");
 
         // Add bootnodes
         for bootnode in bootnodes {
             match Enr::from_str(&bootnode) {
                 Ok(enr) => {
-                    if let Err(e) = discv5.add_enr(enr) {
+                    if let Err(e) = discv5_raw.add_enr(enr.clone()) {
                         println!("Failed to add bootnode ENR: {:?}", e);
                     }
+                    println!("Successfully added bootnode ENR: {:?}", enr);
                 }
                 Err(e) => println!("Invalid bootnode ENR: {:?}, error: {:?}", bootnode, e),
             }
         }
 
+        let discv5 = Arc::new(Mutex::new(discv5_raw));
+        
         Ok(Self { discv5 })
     }
 
-    pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
         println!("[DiscoveryService] Starting discv5...");
-        println!("[DiscoveryService] Local ENR for start: {}", self.discv5.local_enr().to_base64());
-        match self.discv5.start().await {
+        let local_enr = {
+            let discv5 = self.discv5.lock().await;
+            discv5.local_enr().to_base64()
+        };
+        println!("[DiscoveryService] Local ENR for start: {}", local_enr);
+        let mut discv5 = self.discv5.lock().await;
+        match discv5.start().await {
             Ok(_) => {
                 println!("[DiscoveryService] Discv5 started successfully.");
                 Ok(())
@@ -77,14 +95,31 @@ impl DiscoveryService {
         }
     }
 
-    pub fn discv5(&self) -> &Discv5 {
-        &self.discv5
+    pub async fn discv5_local_enr(&self) -> Enr {
+        let discv5 = self.discv5.lock().await;
+        discv5.local_enr().clone()
+    }
+    
+    pub fn discv5_clone(&self) -> Arc<Mutex<Discv5>> {
+        Arc::clone(&self.discv5)
+    }
+
+    pub async fn bootnodes(&self) -> Vec<Enr> {
+        let discv5 = self.discv5.lock().await;
+        discv5.table_entries_enr()
+    }
+
+    pub async fn add_enr(&self, enr: Enr) -> Result<(), String> {
+        let discv5 = self.discv5.lock().await;
+        discv5.add_enr(enr).map_err(|e| format!("{:?}", e))
+    }
+
+    pub async fn event_stream(&self) -> Result<tokio::sync::mpsc::Receiver<discv5::Event>, String> {
+        let discv5 = self.discv5.lock().await;
+        discv5.event_stream().await.map_err(|e| format!("{:?}", e))
     }
 
     pub async fn find_peers(&self) {
         // Simple periodic peer discovery could be implemented here
-        // For now, we rely on the discv5 internal routing table and bootstrapping
-        // bootstrap() was removed or renamed in recent versions, use query_nodes or similar if needed
-        // but discv5 usually starts finding peers automatically if bootnodes are added.
     }
 }

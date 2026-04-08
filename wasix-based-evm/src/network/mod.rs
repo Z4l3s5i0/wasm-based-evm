@@ -10,6 +10,7 @@ use crate::storage::{InMemoryStorage, Transaction};
 pub struct NetworkConfig {
     pub discv5_addr: std::net::SocketAddr,
     pub p2p_addr: std::net::SocketAddr,
+    pub ext_ip: Option<std::net::IpAddr>,
     pub bootnodes: Vec<String>,
     pub max_peers: usize,
 }

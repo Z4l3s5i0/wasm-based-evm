@@ -1,10 +1,10 @@
 ### Engine API Test Use Cases
 
-To test the newly implemented Ethereum Engine API methods using the `tester` tool, you can follow these documented use cases. These scenarios cover the typical lifecycle of block production and chain management.
+To test the implemented Ethereum Engine API methods using the `tester` tool, you can follow these documented use cases. These scenarios cover the typical lifecycle of block production and chain management.
 
 ---
 
-### Use Case 1: Standard Block Production (The Proposer Flow)
+#### Use Case 1: Standard Block Production (The Proposer Flow)
 This simulates a consensus client (CL) asking the execution client (EL) to build a new block from pending transactions in the mempool.
 
 1.  **Add transactions to the mempool**:
@@ -41,7 +41,7 @@ This simulates a consensus client (CL) asking the execution client (EL) to build
 
 ---
 
-### Use Case 2: Chain Reorganization and Rollback
+#### Use Case 2: Chain Reorganization and Rollback
 This tests the mempool's ability to recover transactions when a pending block is superseded by a different head.
 
 1.  **Queue transactions**:
@@ -70,7 +70,7 @@ This tests the mempool's ability to recover transactions when a pending block is
 
 ---
 
-### Use Case 3: Payload Validation and Execution
+#### Use Case 3: Payload Validation and Execution
 This tests the server's RLP decoding and state transition logic using the `tester`'s local block buffer.
 
 1.  **Prepare a block in the tester**:
@@ -88,7 +88,7 @@ This tests the server's RLP decoding and state transition logic using the `teste
 
 ---
 
-### Use Case 4: Fee Market and Priority Testing
+#### Use Case 4: Fee Market and Priority Testing
 Test the mempool's sorting logic (Gas Price vs. Nonce).
 
 1.  **Add transactions out of order**:
@@ -106,7 +106,7 @@ Test the mempool's sorting logic (Gas Price vs. Nonce).
 
 ---
 
-### Use Case 5: Transaction Replacement
+#### Use Case 5: Transaction Replacement
 Test the "Replace by Fee" (RBF) logic in the mempool.
 
 1.  **Send a low-fee transaction**:
@@ -123,4 +123,131 @@ Test the "Replace by Fee" (RBF) logic in the mempool.
     Check the mempool to ensure only the transaction with the higher gas price remains for nonce 5.
     ```bash
     evm> get-mempool
+    ```
+
+
+To test the P2P capabilities of the WASIX-based EVM nodes using the `tester` tool, you can follow these scenarios. These scenarios assume you have multiple instances of the EVM running (e.g., Node A on RPC port 50051, Node B on RPC port 50052).
+
+### P2P Testing Scenarios
+
+#### Scenario 1: Basic Peer Discovery and Connectivity
+This scenario verifies that nodes can discover each other via Discv5 and establish a P2P session.
+
+1.  **Start Node A** (Seed/Bootnode):
+    ```bash
+    # Assuming Node A starts on default ports (P2P: 9001, Disc: 9000, RPC: 50051)
+    ./wasix-based-evm
+    ```
+2.  **Start Node B** (Connecting to Node A):
+    ```bash
+    # Node B on different ports, using Node A as bootnode
+    # Get Node A's ENR from its logs
+    ./wasix-based-evm --p2p-port 9003 --discovery-port 9002 --rpc-port 50052 --bootnodes <NODE_A_ENR>
+    ```
+3.  **Verify with `tester`**:
+    ```bash
+    evm> connect http://127.0.0.1:50051
+    evm> net-node-info
+    # (Note Node A's ID)
+
+    evm> connect http://127.0.0.1:50052
+    evm> net-peer-count
+    # Should return at least 1
+    evm> net-peers
+    # Verify Node A's ID is in the list
+    ```
+
+---
+
+#### Scenario 2: Transaction Propagation (Gossip)
+This scenario tests if a transaction sent to one node is correctly broadcasted to its peers.
+
+1.  **Connect to Node A**:
+    ```bash
+    evm> connect http://127.0.0.1:50051
+    ```
+2.  **Send a transaction to Node A**:
+    ```bash
+    evm> send-transaction --from 0xaf349557fca502757fd26ce7dc71c246dee2ec33 --to 0xd384636941d9081844bb23291e545a503823f5c4 --value 100 --nonce 0
+    ```
+3.  **Verify propagation on Node B**:
+    ```bash
+    evm> connect http://127.0.0.1:50052
+    evm> get-mempool
+    # The transaction sent to Node A should now appear in Node B's mempool
+    ```
+
+---
+
+#### Scenario 3: Block Propagation
+This scenario tests if a new block accepted by one node is propagated to and stored by its peers.
+
+1.  **Prepare a block on Node A**:
+    ```bash
+    evm> connect http://127.0.0.1:50051
+    # Get current head
+    evm> get-roots
+    evm> engine-forkchoice-updated --head <CURRENT_HEAD> --timestamp 1712400000
+    # Use the payload_id to get the payload and then submit it
+    evm> engine-get-payload --payload-id <PAYLOAD_ID>
+    evm> engine-new-payload --block-hash <NEW_HASH> ... [other fields from get-payload]
+    evm> engine-forkchoice-updated --head <NEW_HASH>
+    ```
+2.  **Verify Block on Node B**:
+    ```bash
+    evm> connect http://127.0.0.1:50052
+    evm> get-block-by-hash --hash <NEW_HASH> --full true
+    # Node B should have received the block via P2P and stored it
+    ```
+
+---
+
+#### Scenario 4: Manual Peer Addition (Ad-hoc Networking)
+Tests the ability to force a connection between nodes without relying on discovery.
+
+1.  **Start two isolated nodes** (No bootnodes):
+    ```bash
+    # Node A
+    ./wasix-based-evm --rpc-port 50051
+    # Node B
+    ./wasix-based-evm --rpc-port 50052 --p2p-port 9003 --discovery-port 9002
+    ```
+2.  **Manually link them via `tester`**:
+    ```bash
+    # Get Node A's P2P address (e.g., /ip4/127.0.0.1/tcp/9001/p2p/...)
+    evm> connect http://127.0.0.1:50051
+    evm> net-node-info
+
+    # Tell Node B to dial Node A
+    evm> connect http://127.0.0.1:50052
+    evm> net-add-peer --addr <NODE_A_P2P_ADDRESS>
+    ```
+3.  **Confirm Link**:
+    ```bash
+    evm> net-peer-count
+    # Should now be 1
+    ```
+
+---
+
+#### Scenario 5: Network Health and Limits (Complex)
+Tests the node's behavior when reaching the `max-peers` limit.
+
+1.  **Start Node A with a low peer limit**:
+    ```bash
+    ./wasix-based-evm --max-peers 1 --rpc-port 50051
+    ```
+2.  **Connect Node B to Node A**:
+    ```bash
+    ./wasix-based-evm --rpc-port 50052 --p2p-port 9002 --bootnodes <NODE_A_ENR>
+    ```
+3.  **Attempt to connect Node C to Node A**:
+    ```bash
+    ./wasix-based-evm --rpc-port 50053 --p2p-port 9004 --bootnodes <NODE_A_ENR>
+    ```
+4.  **Verify Limits**:
+    ```bash
+    evm> connect http://127.0.0.1:50051
+    evm> net-peer-count
+    # Should stay at 1. Node C should be rejected or unable to maintain a session.
     ```

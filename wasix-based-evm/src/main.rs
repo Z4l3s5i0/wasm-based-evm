@@ -30,6 +30,10 @@ struct Args {
     /// Maximum number of concurrent P2P connections
     #[arg(long, default_value_t = 50)]
     max_peers: usize,
+    
+    /// External IP to report in ENR (optional)
+    #[arg(long)]
+    ext_ip: Option<std::net::IpAddr>,
 
     /// Path for persistent storage
     #[arg(long)]
@@ -85,6 +89,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let network_config = network::NetworkConfig {
         discv5_addr: format!("0.0.0.0:{}", args.discovery_port).parse()?,
         p2p_addr: format!("0.0.0.0:{}", args.p2p_port).parse()?,
+        ext_ip: args.ext_ip,
         bootnodes: args.bootnodes,
         max_peers: args.max_peers,
     };
