@@ -4,49 +4,12 @@ mod executor;
 mod storage;
 mod mempool;
 mod network;
+mod cli;
+mod logging;
+
 use alloy_primitives::U256;
 use clap::Parser;
 use std::path::PathBuf;
-
-#[derive(Parser, Debug)]
-#[command(author, version, about, long_about = None)]
-struct Args {
-    /// TCP port for RLPx/Tentacle
-    #[arg(long, default_value_t = 9001)]
-    p2p_port: u16,
-
-    /// UDP port for Discv5
-    #[arg(long, default_value_t = 9000)]
-    discovery_port: u16,
-
-    /// gRPC/JSON-RPC port
-    #[arg(long, default_value_t = 50051)]
-    rpc_port: u16,
-
-    /// Comma-separated list of ENRs for bootstrapping
-    #[arg(long, value_delimiter = ',')]
-    bootnodes: Vec<String>,
-
-    /// Maximum number of concurrent P2P connections
-    #[arg(long, default_value_t = 50)]
-    max_peers: usize,
-    
-    /// External IP to report in ENR (optional)
-    #[arg(long)]
-    ext_ip: Option<std::net::IpAddr>,
-
-    /// Path for persistent storage
-    #[arg(long)]
-    data_dir: Option<PathBuf>,
-
-    /// Chain name (mainnet, sepolia, devnet)
-    #[arg(long, default_value = "devnet")]
-    chain: String,
-
-    /// Verbosity level (0: none, 1: info, 2: debug)
-    #[arg(long, default_value_t = 1)]
-    verbose: u8,
-}
 
 use crate::ev::{alloy_u256_to_evm_u256};
 use crate::executor::Executor;
@@ -58,54 +21,18 @@ use tokio::sync::Mutex;
 use tonic::transport::Server;
 use crate::storage::genesis::Genesis;
 use crate::storage::storage::InMemoryStorage;
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-pub enum LogLevel {
-    None = 0,
-    Info = 1,
-    Debug = 2,
-}
-
-pub static mut LOG_LEVEL: LogLevel = LogLevel::Info;
-
-pub fn set_log_level(level: LogLevel) {
-    unsafe {
-        LOG_LEVEL = level;
-    }
-}
-
-pub fn get_log_level() -> LogLevel {
-    unsafe { LOG_LEVEL }
-}
-
-#[macro_export]
-macro_rules! info {
-    ($($arg:tt)*) => {
-        if $crate::get_log_level() >= $crate::LogLevel::Info {
-            println!($($arg)*);
-        }
-    };
-}
-
-#[macro_export]
-macro_rules! debug {
-    ($($arg:tt)*) => {
-        if $crate::get_log_level() >= $crate::LogLevel::Debug {
-            println!($($arg)*);
-        }
-    };
-}
+use crate::logging::LogLevel;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let args = Args::parse();
+    let args = cli::Args::parse();
 
     let level = match args.verbose {
         0 => LogLevel::None,
         1 => LogLevel::Info,
         _ => LogLevel::Debug,
     };
-    set_log_level(level);
+    logging::set_log_level(level);
 
     let rpc_addr = format!("127.0.0.1:{}", args.rpc_port).parse()?;
 
