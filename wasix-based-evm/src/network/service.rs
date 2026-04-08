@@ -1,6 +1,4 @@
 use std::str::FromStr;
-use std::collections::HashMap;
-use tentacle::SessionId;
 use crate::network::{discovery::{DiscoveryService, DiscoveryEvent}, NetworkConfig, PeerInfo, peer_manager::{PeerManager, PeerManagerEvent}, protocol_handler};
 use crate::storage::{InMemoryStorage, Transaction};
 use crate::network::sync::SyncEvent;
@@ -18,7 +16,7 @@ use tentacle::{
 };
 use tentacle::bytes::BytesMut;
 use alloy_rlp::Encodable;
-use crate::network::protocol::{ETH_PROTOCOL_ID, MessageId, NewBlock, GetBlockHeaders, BlockHashOrNumber, BlockHeaders, GetBlockBodies, BlockBodies, GetPooledTransactions, PooledTransactions, NewPooledTransactionHashes};
+use crate::network::protocol::{ETH_PROTOCOL_ID, MessageId, NewBlock, NewPooledTransactionHashes};
 use crate::network::NetworkMessage;
 use crate::{info, debug};
 
@@ -38,9 +36,9 @@ impl NetworkService {
         config: NetworkConfig,
         storage: Arc<Mutex<InMemoryStorage>>,
         rx_broadcast: mpsc::Receiver<Transaction>,
-        network_recv: mpsc::Receiver<crate::network::NetworkMessage>,
+        network_recv: mpsc::Receiver<NetworkMessage>,
         sync_send: mpsc::Sender<SyncEvent>,
-        network_send: mpsc::Sender<crate::network::NetworkMessage>,
+        network_send: mpsc::Sender<NetworkMessage>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         debug!("[NetworkService] Initializing NetworkService...");
         debug!("[NetworkService] Creating DiscoveryService with discv5_addr: {}, p2p_port: {}, ext_ip: {:?}", config.discv5_addr, config.p2p_addr.port(), config.ext_ip);
@@ -181,21 +179,21 @@ impl NetworkService {
                     debug!("[NetworkService] Received NetworkMessage");
                     if let Some(msg) = msg {
                         match msg {
-                            crate::network::NetworkMessage::GetPeerCount(tx) => {
+                            NetworkMessage::GetPeerCount(tx) => {
                                 let len = {
                                     let pm = self.peer_manager.lock().await;
                                     pm.peer_count()
                                 };
                                 let _ = tx.send(len);
                             }
-                            crate::network::NetworkMessage::GetPeers(tx) => {
+                            NetworkMessage::GetPeers(tx) => {
                                 let peer_infos = {
                                     let pm = self.peer_manager.lock().await;
                                     pm.get_all_peers()
                                 };
                                 let _ = tx.send(peer_infos);
                             }
-                            crate::network::NetworkMessage::AddPeer(addr, tx) => {
+                            NetworkMessage::AddPeer(addr, tx) => {
                                 if let Ok(enr) = Enr::from_str(&addr) {
                                      let _ = self.discovery.add_enr(enr).await;
                                      let _ = tx.send(Ok(()));
@@ -206,7 +204,7 @@ impl NetworkService {
                                     let _ = tx.send(Err("Invalid address format".to_string()));
                                 }
                             }
-                            crate::network::NetworkMessage::GetNodeInfo(tx) => {
+                            NetworkMessage::GetNodeInfo(tx) => {
                                 let local_enr = self.discovery.discv5_local_enr().await;
                                 let p2p_listen_addr = self.p2p_listen_addr.clone();
                                 let addr = {
@@ -220,7 +218,7 @@ impl NetworkService {
                                 };
                                 let _ = tx.send(node_info);
                             }
-                            crate::network::NetworkMessage::BroadcastBlock(block) => {
+                            NetworkMessage::BroadcastBlock(block) => {
                                 info!("[NetworkService] Broadcasting block: {}", block.body.execution_payload.block_hash);
                                 let mut data = BytesMut::new();
                                 data.extend_from_slice(&[MessageId::NewBlock as u8]);
@@ -239,30 +237,30 @@ impl NetworkService {
                                     info!("[NetworkService] Failed to broadcast block: {:?}", e);
                                 }
                             }
-                            crate::network::NetworkMessage::RequestHeaders { session_id, request } => {
+                            NetworkMessage::RequestHeaders { session_id, request } => {
                                 debug!("[NetworkService] Sending GetBlockHeaders (id: {}) to session {}", request.request_id, session_id);
                                 let mut data = BytesMut::new();
                                 data.extend_from_slice(&[MessageId::GetBlockHeaders as u8]);
                                 request.encode(&mut data);
                                 let _ = self.p2p_control.send_message_to(session_id, ETH_PROTOCOL_ID, data.freeze()).await;
                             }
-                            crate::network::NetworkMessage::RequestBodies { session_id, request } => {
+                            NetworkMessage::RequestBodies { session_id, request } => {
                                 debug!("[NetworkService] Sending GetBlockBodies (id: {}) to session {}", request.request_id, session_id);
                                 let mut data = BytesMut::new();
                                 data.extend_from_slice(&[MessageId::GetBlockBodies as u8]);
                                 request.encode(&mut data);
                                 let _ = self.p2p_control.send_message_to(session_id, ETH_PROTOCOL_ID, data.freeze()).await;
                             }
-                            crate::network::NetworkMessage::SyncHeaders(session_id, headers) => {
+                            NetworkMessage::SyncHeaders(session_id, headers) => {
                                 let _ = self.sync_send.send(SyncEvent::Headers(session_id, headers)).await;
                             }
-                            crate::network::NetworkMessage::SyncBodies(session_id, bodies) => {
+                            NetworkMessage::SyncBodies(session_id, bodies) => {
                                 let _ = self.sync_send.send(SyncEvent::Bodies(session_id, bodies)).await;
                             }
-                            crate::network::NetworkMessage::PeerDisconnected(session_id) => {
+                            NetworkMessage::PeerDisconnected(session_id) => {
                                 let _ = self.sync_send.send(SyncEvent::PeerDisconnected(session_id)).await;
                             }
-                            crate::network::NetworkMessage::ReportPeer(session_id, score) => {
+                            NetworkMessage::ReportPeer(session_id, score) => {
                                 let mut pm = self.peer_manager.lock().await;
                                 pm.report_peer(&session_id, score);
                                 if let Some(peer) = pm.get_peer(&session_id) {

@@ -1,6 +1,7 @@
 pub mod net;
 pub mod eth;
 pub mod engine;
+pub mod provider;
 
 pub mod evm_rpc {
     tonic::include_proto!("evm_rpc");
@@ -10,6 +11,7 @@ pub use evm_rpc::transaction_service_server::TransactionService;
 pub use evm_rpc::*;
 use crate::executor::Executor;
 use crate::network::NetworkHandle;
+use crate::rpc::provider::{BlockchainProvider, DefaultBlockchainProvider};
 use std::sync::Arc;
 use alloy_rlp::Decodable;
 use tokio::sync::{Mutex};
@@ -98,10 +100,33 @@ pub struct PendingPayload {
 }
 
 pub struct MyTransactionService {
+    // New decoupled provider for business logic/state access
+    pub provider: Box<dyn BlockchainProvider + Send + Sync>,
+    // Keep existing fields to avoid broad changes; can be removed later when all call sites use provider
     pub storage: Arc<Mutex<InMemoryStorage>>,
     pub executor: Executor,
     pub pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
     pub network_handle: Option<NetworkHandle>,
+}
+
+impl MyTransactionService {
+    pub fn new(
+        storage: Arc<Mutex<InMemoryStorage>>, 
+        executor: Executor,
+        pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
+        network_handle: Option<NetworkHandle>,
+    ) -> Self {
+        let network_send = network_handle.as_ref().map(|h| h.network_send.clone());
+        let tx_broadcast = network_handle.as_ref().map(|h| h.tx_broadcast.clone());
+        let provider: Box<dyn BlockchainProvider + Send + Sync> = Box::new(DefaultBlockchainProvider::new(
+            storage.clone(),
+            executor.clone(),
+            network_send,
+            tx_broadcast,
+            pending_payloads.clone(),
+        ));
+        Self { provider, storage, executor, pending_payloads, network_handle }
+    }
 }
 #[tonic::async_trait]
 impl TransactionService for MyTransactionService {
