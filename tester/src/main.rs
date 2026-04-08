@@ -247,6 +247,8 @@ enum Commands {
     NetPeers,
     NetAddPeer { addr: String },
     NetNodeInfo,
+    /// Connects to a different EVM gRPC server
+    Connect { addr: String },
 }
 
 async fn run_explorer(client: &mut TransactionServiceClient<tonic::transport::Channel>) -> Result<(), Box<dyn std::error::Error>> {
@@ -416,6 +418,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         println!("  ENR: {}", res.enr);
                         println!("  Node ID: {}", res.node_id);
                         println!("  Listen Addresses: {:?}", res.listen_addresses);
+                    }
+                    Commands::Connect { addr } => {
+                        match TransactionServiceClient::connect(addr.clone()).await {
+                            Ok(new_client) => {
+                                client = new_client;
+                                println!("Connected to EVM gRPC server at {}", addr);
+                            }
+                            Err(e) => {
+                                println!("Failed to connect to {}: {}", addr, e);
+                            }
+                        }
                     }
                     Commands::Accounts => {
                         let response = client.eth_accounts(Empty {}).await?;
