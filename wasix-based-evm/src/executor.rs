@@ -1,7 +1,6 @@
 use alloy_primitives::B256;
 use crate::ev::{H160, EvmU256, evm};
 use evm::backend::OverlayedChangeSet;
-use crate::storage::{InMemoryStorage, Transaction, Block, Receipt, Log};
 use crate::{info, debug};
 use evm::{
     transact,
@@ -9,6 +8,8 @@ use evm::{
     standard::{Config, Invoker, ExecutionEtable, GasometerEtable, TransactArgs, TransactArgsCallCreate, TransactGasPrice, EtableResolver, TransactValue},
 };
 use evm_precompile::StandardPrecompileSet;
+use crate::storage::storage::InMemoryStorage;
+use crate::storage::types::{logs_bloom, Block, Log, Receipt, Transaction};
 
 pub struct Executor {
     pub config: Config,
@@ -113,7 +114,7 @@ impl Executor {
                     total_changeset.deletes.extend(changeset.deletes);
 
                     let logs: Vec<Log> = changeset.logs.into_iter().map(Log::from).collect();
-                    let bloom = crate::storage::logs_bloom(&logs);
+                    let bloom = logs_bloom(&logs);
                     let success = match value.call_create {
                         crate::ev::evm::standard::TransactValueCallCreate::Call { .. } => true,
                         crate::ev::evm::standard::TransactValueCallCreate::Create { .. } => true,
@@ -164,7 +165,7 @@ impl Executor {
             block_builder = block_builder.add_receipt(receipt.clone());
         }
 
-        let bloom = crate::storage::logs_bloom(&receipts.iter().flat_map(|r| r.logs.clone()).collect::<Vec<_>>());
+        let bloom = logs_bloom(&receipts.iter().flat_map(|r| r.logs.clone()).collect::<Vec<_>>());
         block_builder = block_builder.logs_bloom(bloom.as_slice().to_vec());
 
         for withdrawal in &block.body.execution_payload.withdrawals {

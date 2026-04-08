@@ -10,11 +10,12 @@ use std::sync::Arc;
 use tokio::sync::Mutex;
 use crate::network::NetworkMessage;
 use tokio::sync::mpsc;
-use crate::storage::{InMemoryStorage, Transaction};
 use crate::{info, debug};
 use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable, BufMut};
 use alloy_primitives::{B256, U256};
 use crate::network::sync::SyncEvent;
+use crate::storage::storage::InMemoryStorage;
+use crate::storage::types::{Block, Transaction};
 
 pub const ETH_PROTOCOL_ID: ProtocolId = ProtocolId::new(1);
 
@@ -55,7 +56,7 @@ pub struct NewPooledTransactionHashes(pub Vec<B256>);
 /// `NewBlock` message
 #[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct NewBlock {
-    pub block: crate::storage::Block,
+    pub block: Block,
     pub total_difficulty: U256,
 }
 
@@ -110,7 +111,7 @@ impl Decodable for BlockHashOrNumber {
 #[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct BlockHeaders {
     pub request_id: u64,
-    pub headers: Vec<crate::storage::Block>,
+    pub headers: Vec<Block>,
 }
 
 #[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
@@ -122,7 +123,7 @@ pub struct GetBlockBodies {
 #[derive(Debug, Clone, RlpEncodable, RlpDecodable)]
 pub struct BlockBodies {
     pub request_id: u64,
-    pub bodies: Vec<crate::storage::Block>,
+    pub bodies: Vec<Block>,
 }
 
 #[derive(Debug, Clone, RlpEncodable, RlpDecodable)]

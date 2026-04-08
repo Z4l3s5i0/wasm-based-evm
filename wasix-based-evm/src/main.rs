@@ -50,13 +50,14 @@ struct Args {
 
 use crate::ev::{alloy_u256_to_evm_u256};
 use crate::executor::Executor;
-use crate::storage::{InMemoryStorage, Genesis};
 use crate::rpc::MyTransactionService;
 use crate::rpc::evm_rpc::transaction_service_server::TransactionServiceServer;
 use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
 use tokio::sync::Mutex;
 use tonic::transport::Server;
+use crate::storage::genesis::Genesis;
+use crate::storage::storage::InMemoryStorage;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
 pub enum LogLevel {

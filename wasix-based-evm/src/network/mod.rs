@@ -2,14 +2,13 @@ pub mod discovery;
 pub mod protocol;
 pub mod service;
 pub mod sync;
-#[cfg(test)]
-mod reputation_test;
+
 
 use crate::{info, debug};
 
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
-use crate::storage::{InMemoryStorage, Transaction, Block};
+use crate::storage::{InMemoryStorage, Block, Transaction};
 use crate::network::protocol::{BlockHeaders, BlockBodies};
 
 #[derive(Debug, Clone)]
