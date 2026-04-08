@@ -22,25 +22,29 @@ alloy-rlp = { version = "0.3.15", default-features = false, features = ["derive"
 
 # gRPC and WASIX dependencies
 
-wasix = { version = "0.13.1" }
 rand = { version = "=0.8.5", default-features = false }
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" , default-features = false}
-tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [
-    "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net"
-] }
 tonic = { version = "0.14.5", default-features = false, features = ["codegen", "router", "server"]}
 prost = "0.14.3"
 mio = { git = "https://github.com/wasix-org/mio", default-features = false }
-socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 h2 = "0.4"
 tonic-prost = "0.14.5"
 serde_json = { version = "1.0.0", default-features = false, features = ["alloc", "std"] }
-tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
-
-
 discv5 = "0.10.4"
 async-trait = "0.1.89"
 clap = { version = "4.5.4", features = ["derive"] }
+
+# When using wasix
+wasix = { version = "0.13.1" }
+tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
+socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
+tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
+
+# When using something different than wasix
+#socket2 = { version="0.4.10" , default-features = false, features = ["all"]}
+#tentacle = { version = "0.7.5", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
+#tokio = { version = "1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
+
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

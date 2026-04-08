@@ -19,11 +19,31 @@ use alloc::vec::Vec;
 ```
 
 ### Build and run
+#### build target different than wasix
+1. Go to [Cargo.toml](./wasix-based-evm/Cargo.toml).
+2. Make sure the lines x-y are commented and the lines x-y are uncommented.
+3. Follow these shell instructions:
 ```shell
 cd wasix-based-evm
+rm .\Cargo.lock   
+cargo clean
+cargo wasix clean
+cargo update
+cargo build --release
+.\target\release\wasix-based-evm.exe --p2p-port <port> --discovery-port <other-port> --rpc-port <other-other-port> --bootnodes <bootnode-address, other-bootnode-address,...> --max_peers <max-connections> --ext_ip <optional-external-ip> --data_dir <path-to-data-dir> --v <none, info, debug>
+```
+#### build target wasix
+1. Go to [Cargo.toml](./wasix-based-evm/Cargo.toml).
+2. Make sure the lines x-y are commented and the lines x-y are uncommented.
+3. Follow these shell instructions:
+```shell
+cd wasix-based-evm
+rm .\Cargo.lock   
+cargo clean
+cargo wasix clean
+cargo update
 cargo wasix build --release
-wasmer run .\target\wasm32-wasmer-wasi\release\wasix-based-evm.wasi.wasm --net --enable-threads --enable-exceptions --volume ./genesis:./genesis -- --p2p-port 9002 --discovery-port 9003 --rpc-port 50052
-
+wasmer run .\target\wasm32-wasmer-wasi\release\wasix-based-evm.wasi.wasm --net --enable-threads --enable-exceptions --volume ./genesis:./genesis -- --p2p-port <port> --discovery-port <other-port> --rpc-port <other-other-port> --bootnodes <bootnode-address, other-bootnode-address,...> --max_peers <max-connections> --ext_ip <optional-external-ip> --data_dir <path-to-data-dir> --v <none, info, debug>
 ```
 
 ### references
