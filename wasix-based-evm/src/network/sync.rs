@@ -63,12 +63,12 @@ impl SyncService {
                                 self.request_headers(session_id).await;
                             }
                             SyncEvent::Headers(session_id, headers) => {
-                                info!("[SyncService] Received {} headers from session {}", headers.headers.len(), session_id);
+                                info!("[SyncService] Received {} headers (id: {}) from session {}", headers.headers.len(), headers.request_id, session_id);
                                 self.pending_requests.remove(&headers.request_id);
                                 self.handle_headers(session_id, headers).await;
                             }
                             SyncEvent::Bodies(session_id, bodies) => {
-                                info!("[SyncService] Received {} bodies from session {}", bodies.bodies.len(), session_id);
+                                info!("[SyncService] Received {} bodies (id: {}) from session {}", bodies.bodies.len(), bodies.request_id, session_id);
                                 self.pending_requests.remove(&bodies.request_id);
                                 self.handle_bodies(session_id, bodies).await;
                             }
@@ -132,6 +132,7 @@ impl SyncService {
         };
 
         self.pending_requests.insert(request_id, (session_id, Instant::now(), RequestType::Headers));
+        debug!("[SyncService] Requesting headers (id: {}) from session {}", request_id, session_id);
 
         if let Err(e) = self.network_send.send(NetworkMessage::RequestHeaders {
             session_id,
@@ -163,6 +164,7 @@ impl SyncService {
         };
 
         self.pending_requests.insert(request_id, (session_id, Instant::now(), RequestType::Bodies));
+        debug!("[SyncService] Requesting bodies (id: {}) from session {}", request_id, session_id);
 
         if let Err(e) = self.network_send.send(NetworkMessage::RequestBodies {
             session_id,

@@ -56,8 +56,8 @@ impl NetworkService {
         debug!("[NetworkService] Building P2P service...");
         let mut yamux_config = tentacle::yamux::config::Config::default();
         yamux_config.enable_keepalive = true;
-        yamux_config.keepalive_interval = std::time::Duration::from_secs(15);
-        yamux_config.connection_write_timeout = std::time::Duration::from_secs(20);
+        yamux_config.keepalive_interval = std::time::Duration::from_secs(30);
+        yamux_config.connection_write_timeout = std::time::Duration::from_secs(60);
 
         let mut service = ServiceBuilder::default()
             .insert_protocol(protocol_meta)
@@ -145,6 +145,7 @@ impl NetworkService {
         loop {
             tokio::select! {
                 event = discv5_events.recv() => {
+                    debug!("[NetworkService] Received Discv5 event");
                     if let Some(event) = event {
                         match event {
                             discv5::Event::Discovered(enr) => {
@@ -188,6 +189,7 @@ impl NetworkService {
                     }
                 }
                 tx = self.rx_broadcast.recv() => {
+                    debug!("[NetworkService] Received Transaction broadcast request");
                     if let Some(tx) = tx {
                         info!("[NetworkService] Broadcasting transaction hash: {:?}", tx.hash);
                         let mut data = BytesMut::new();
@@ -206,6 +208,7 @@ impl NetworkService {
                     }
                 }
                 msg = self.network_recv.recv() => {
+                    debug!("[NetworkService] Received NetworkMessage");
                     if let Some(msg) = msg {
                         match msg {
                             crate::network::NetworkMessage::GetPeerCount(tx) => {
@@ -274,12 +277,14 @@ impl NetworkService {
                                 }
                             }
                             crate::network::NetworkMessage::RequestHeaders { session_id, request } => {
+                                debug!("[NetworkService] Sending GetBlockHeaders (id: {}) to session {}", request.request_id, session_id);
                                 let mut data = BytesMut::new();
                                 data.extend_from_slice(&[MessageId::GetBlockHeaders as u8]);
                                 request.encode(&mut data);
                                 let _ = self.p2p_control.send_message_to(session_id, ETH_PROTOCOL_ID, data.freeze()).await;
                             }
                             crate::network::NetworkMessage::RequestBodies { session_id, request } => {
+                                debug!("[NetworkService] Sending GetBlockBodies (id: {}) to session {}", request.request_id, session_id);
                                 let mut data = BytesMut::new();
                                 data.extend_from_slice(&[MessageId::GetBlockBodies as u8]);
                                 request.encode(&mut data);
@@ -307,9 +312,12 @@ impl NetworkService {
                     }
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => {
+                    debug!("[NetworkService] Discovery tick started");
                     self.discovery.find_peers().await;
+                    debug!("[NetworkService] Discovery tick finished");
                     
                     // Periodic reputation recovery
+                    debug!("[NetworkService] Periodic reputation recovery started");
                     let mut sessions = self.sessions.lock().await;
                     for peer in sessions.values_mut() {
                         if peer.reputation < 0 {
@@ -319,6 +327,7 @@ impl NetworkService {
                             // Usually we want to reward long-term good behavior but not let it grow indefinitely.
                         }
                     }
+                    debug!("[NetworkService] Periodic reputation recovery finished");
                 }
             }
         }

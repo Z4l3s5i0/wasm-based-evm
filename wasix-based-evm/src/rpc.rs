@@ -501,11 +501,15 @@ impl TransactionService for MyTransactionService {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<NetPeersResponse>, Status> {
+        debug!("[RPC] Received net_peers request");
         if let Some(handle) = &self.network_handle {
             let (tx, rx) = oneshot::channel();
+            debug!("[RPC] Sending GetPeers to network service");
             handle.network_send.send(crate::network::NetworkMessage::GetPeers(tx)).await
                 .map_err(|_| Status::internal("Failed to send to network service"))?;
+            debug!("[RPC] Awaiting response for GetPeers from network service");
             let peers = rx.await.map_err(|_| Status::internal("Failed to receive from network service"))?;
+            debug!("[RPC] Received {} peers from network service", peers.len());
             let proto_peers = peers.into_iter().map(|p| ProtoPeerInfo {
                 id: p.id,
                 addr: p.addr,

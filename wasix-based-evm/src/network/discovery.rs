@@ -66,7 +66,6 @@ impl DiscoveryService {
             .query_peer_timeout(std::time::Duration::from_secs(5))
             .query_timeout(std::time::Duration::from_secs(30))
             .request_retries(3)
-            .enr_update_interval(std::time::Duration::from_secs(60))
             .query_parallelism(5)
             .build();
         debug!("[DiscoveryService] Creating Discv5 instance...");
@@ -149,9 +148,13 @@ impl DiscoveryService {
             // Periodically refresh the local ENR to keep its sequence number fresh
             // or if we ever want to update its contents. Discv5 will handle the seq update.
             {
-                let mut discv5 = discv5_clone.lock().await;
-                if let Err(e) = discv5.update_local_enr() {
-                    debug!("[DiscoveryService] Failed to update local ENR: {:?}", e);
+                let discv5 = discv5_clone.lock().await;
+                // Re-inserting an existing field (like "udp") will increment the ENR sequence number.
+                let current_udp = discv5.local_enr().udp4();
+                if let Some(udp_port) = current_udp {
+                    if let Err(e) = discv5.enr_insert("udp", &udp_port) {
+                        debug!("[DiscoveryService] Failed to update local ENR sequence via enr_insert: {:?}", e);
+                    }
                 }
             }
             
