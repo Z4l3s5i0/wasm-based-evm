@@ -61,6 +61,7 @@ impl NetworkService {
             .build(SimpleServiceHandle { 
                 sessions: sessions_clone,
                 p2p_listen_addr: p2p_listen_addr_clone,
+                sync_send: sync_send.clone(),
             });
         debug!("[NetworkService] P2P service built.");
         
@@ -224,7 +225,7 @@ impl NetworkService {
                                 data.extend_from_slice(&[MessageId::NewBlock as u8]);
                                 let msg = NewBlock { 
                                     block,
-                                    total_difficulty: U256::ZERO, // TODO: Use real total difficulty
+                                    total_difficulty: U256::ZERO,
                                 };
                                 msg.encode(&mut data);
                                 let msg_bytes = data.freeze();
@@ -255,11 +256,34 @@ impl NetworkService {
                             crate::network::NetworkMessage::SyncBodies(session_id, bodies) => {
                                 let _ = self.sync_send.send(SyncEvent::Bodies(session_id, bodies)).await;
                             }
+                            crate::network::NetworkMessage::ReportPeer(session_id, score) => {
+                                let mut sessions = self.sessions.lock().await;
+                                if let Some(peer) = sessions.get_mut(&session_id) {
+                                    peer.reputation += score;
+                                    debug!("[NetworkService] Reported peer {}: score changed by {}, new score: {}", session_id, score, peer.reputation);
+                                    if peer.reputation < -100 {
+                                        info!("[NetworkService] Disconnecting peer {} due to low reputation ({})", session_id, peer.reputation);
+                                        let _ = self.p2p_control.disconnect(session_id).await;
+                                        // Sessions is removed on SessionClose event.
+                                    }
+                                }
+                            }
                         }
                     }
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
                     self.discovery.find_peers().await;
+                    
+                    // Periodic reputation recovery
+                    let mut sessions = self.sessions.lock().await;
+                    for peer in sessions.values_mut() {
+                        if peer.reputation < 0 {
+                            peer.reputation += 1;
+                        } else if peer.reputation > 0 {
+                            peer.reputation -= 1; // Decay positive reputation towards 0 too, or keep it?
+                            // Usually we want to reward long-term good behavior but not let it grow indefinitely.
+                        }
+                    }
                 }
             }
         }
@@ -269,6 +293,7 @@ impl NetworkService {
 struct SimpleServiceHandle {
     sessions: Arc<Mutex<HashMap<SessionId, PeerInfo>>>,
     p2p_listen_addr: Arc<Mutex<Multiaddr>>,
+    sync_send: mpsc::Sender<SyncEvent>,
 }
 
 #[async_trait::async_trait]
@@ -287,7 +312,10 @@ impl ServiceHandle for SimpleServiceHandle {
                     id: session_context.id.to_string(),
                     addr: session_context.address.to_string(),
                     enr: None,
+                    reputation: 0,
                 });
+                // Notify sync that a new peer connected
+                let _ = self.sync_send.send(SyncEvent::PeerConnected(session_context.id)).await;
             }
             ServiceEvent::SessionClose { session_context } => {
                 info!("[P2P Service] event: SessionClose {{ id: {} }}", session_context.id);

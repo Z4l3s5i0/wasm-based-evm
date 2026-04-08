@@ -2,6 +2,8 @@ pub mod discovery;
 pub mod protocol;
 pub mod service;
 pub mod sync;
+#[cfg(test)]
+mod reputation_test;
 
 use crate::{info, debug};
 
@@ -35,6 +37,7 @@ pub enum NetworkMessage {
     },
     SyncHeaders(tentacle::SessionId, BlockHeaders),
     SyncBodies(tentacle::SessionId, BlockBodies),
+    ReportPeer(tentacle::SessionId, i32),
 }
 
 #[derive(Debug, Clone)]
@@ -42,6 +45,7 @@ pub struct PeerInfo {
     pub id: String,
     pub addr: String,
     pub enr: Option<String>,
+    pub reputation: i32,
 }
 
 #[derive(Debug, Clone)]
