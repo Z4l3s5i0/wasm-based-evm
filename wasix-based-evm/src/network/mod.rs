@@ -3,6 +3,8 @@ pub mod protocol;
 pub mod service;
 pub mod sync;
 
+use crate::{info, debug};
+
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::storage::{InMemoryStorage, Transaction, Block};

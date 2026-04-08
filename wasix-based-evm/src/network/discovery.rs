@@ -3,6 +3,7 @@ use tokio::sync::Mutex;
 use discv5::{Discv5, ConfigBuilder, Enr, enr::CombinedKey, ListenConfig};
 use std::net::{SocketAddr, IpAddr};
 use std::str::FromStr;
+use crate::{info, debug};
 
 pub struct DiscoveryService {
     discv5: Arc<Mutex<Discv5>>,

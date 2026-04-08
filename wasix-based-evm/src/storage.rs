@@ -786,7 +786,7 @@ impl InMemoryStorage {
             nonce: EvmU256::zero(),
             storage: BTreeMap::<H256, H256>::new(),
             transient_storage: BTreeMap::<H256, H256>::new(),
-        }).code = code;
+        }).code = code.clone();
     }
 
     pub fn set_balance(&mut self, address: Address, balance: U256) {
