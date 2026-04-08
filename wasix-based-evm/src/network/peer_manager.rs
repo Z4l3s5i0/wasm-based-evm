@@ -1,6 +1,7 @@
 use std::collections::HashMap;
 use tentacle::SessionId;
 use crate::network::PeerInfo;
+use crate::info;
 use crate::debug;
 
 pub struct PeerManager {
@@ -59,4 +60,40 @@ impl PeerManager {
         }
         debug!("[PeerManager] Periodic reputation decay finished");
     }
+
+    // Delegated ServiceEvent handlers
+    pub fn on_session_open(&mut self, session_id: SessionId, addr: String) -> PeerManagerEvent {
+        // Best-effort duplicate detection by address
+        if let Some(existing) = self.find_peer_by_addr(&addr) {
+            info!(
+                "[PeerManager] Duplicate session detected: addr {} already connected as SessionId({})",
+                addr,
+                existing.id
+            );
+        }
+
+        self.add_peer(
+            session_id,
+            PeerInfo {
+                id: session_id.to_string(),
+                addr,
+                enr: None,
+                reputation: 0,
+            },
+        );
+
+        PeerManagerEvent::Connected(session_id)
+    }
+
+    pub fn on_session_close(&mut self, session_id: SessionId) -> PeerManagerEvent {
+        let _ = self.remove_peer(&session_id);
+        PeerManagerEvent::Disconnected(session_id)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PeerManagerEvent {
+    Connected(SessionId),
+    Disconnected(SessionId),
+    None,
 }
