@@ -41,6 +41,7 @@ impl NetworkService {
         let mut service = ServiceBuilder::default()
             .insert_protocol(protocol_meta)
             .handshake_type(HandshakeType::Secio(SecioKeyPair::secp256k1_generated()))
+            .max_connection_number(config.max_peers)
             .build(SimpleServiceHandle);
         println!("[NetworkService] P2P service built.");
         

@@ -40,6 +40,7 @@ tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix"
 
 discv5 = "0.10.4"
 async-trait = "0.1.89"
+clap = { version = "4.5.4", features = ["derive"] }
 
 [build-dependencies]
 tonic-prost-build = "0.14.5"

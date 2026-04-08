@@ -22,7 +22,8 @@ use alloc::vec::Vec;
 ```shell
 cd wasix-based-evm
 cargo wasix build --release
-wasmer run .\wasm-based-evm\wasix-based-evm\target\wasm32-wasmer-wasi\debug\wasix-based-evm.wasm --net --enable-threads --enable-exceptions --volume ./genesis:./genesis 
+wasmer run .\target\wasm32-wasmer-wasi\release\wasix-based-evm.wasi.wasm --net --enable-threads --enable-exceptions --volume ./genesis:./genesis -- --p2p-port 9002 --discovery-port 9003 --rpc-port 50052
+
 ```
 
 ### references

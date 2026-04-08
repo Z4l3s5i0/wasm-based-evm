@@ -6,11 +6,12 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc, oneshot};
 use crate::storage::{InMemoryStorage, Transaction};
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct NetworkConfig {
     pub discv5_addr: std::net::SocketAddr,
     pub p2p_addr: std::net::SocketAddr,
     pub bootnodes: Vec<String>,
+    pub max_peers: usize,
 }
 
 pub enum NetworkMessage {
