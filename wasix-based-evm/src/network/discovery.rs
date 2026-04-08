@@ -44,6 +44,7 @@ impl DiscoveryService {
                 enr_builder.tcp6(p2p_port);
             }
         }
+        //3
         debug!("[DiscoveryService] Building local ENR...");
         let enr = enr_builder.build(&enr_key)?;
         info!("[DiscoveryService] Local ENR: {}", enr.to_base64());

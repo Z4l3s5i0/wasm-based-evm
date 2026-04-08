@@ -15,6 +15,7 @@ pub struct SyncService {
     executor: Executor,
     pending_headers: VecDeque<Block>,
     pending_requests: HashMap<u64, (tentacle::SessionId, Instant, RequestType)>,
+    active_sessions: HashMap<tentacle::SessionId, Instant>,
     next_request_id: u64,
 }
 
@@ -27,6 +28,7 @@ pub enum SyncEvent {
     Headers(tentacle::SessionId, crate::network::protocol::BlockHeaders),
     Bodies(tentacle::SessionId, crate::network::protocol::BlockBodies),
     PeerConnected(tentacle::SessionId),
+    PeerDisconnected(tentacle::SessionId),
     NewBlock(Block),
 }
 
@@ -44,6 +46,7 @@ impl SyncService {
                 executor: Executor::new(),
                 pending_headers: VecDeque::new(),
                 pending_requests: HashMap::new(),
+                active_sessions: HashMap::new(),
                 next_request_id: 1,
             },
             sync_send,
@@ -59,8 +62,25 @@ impl SyncService {
                     if let Some(event) = event {
                         match event {
                             SyncEvent::PeerConnected(session_id) => {
-                                debug!("[SyncService] New peer connected: {}. Requesting headers...", session_id);
-                                self.request_headers(session_id).await;
+                                if self.active_sessions.contains_key(&session_id) {
+                                    debug!("[SyncService] Session {} already connected, ignoring.", session_id);
+                                } else {
+                                    debug!("[SyncService] New peer connected: {}. Requesting headers...", session_id);
+                                    self.active_sessions.insert(session_id, Instant::now());
+                                    self.request_headers(session_id).await;
+                                }
+                            }
+                            SyncEvent::PeerDisconnected(session_id) => {
+                                debug!("[SyncService] Peer disconnected: {}. Cleaning up requests.", session_id);
+                                self.active_sessions.remove(&session_id);
+                                // Remove any pending requests for this session
+                                let to_remove: Vec<u64> = self.pending_requests.iter()
+                                    .filter(|(_, (sid, _, _))| *sid == session_id)
+                                    .map(|(rid, _)| *rid)
+                                    .collect();
+                                for rid in to_remove {
+                                    self.pending_requests.remove(&rid);
+                                }
                             }
                             SyncEvent::Headers(session_id, headers) => {
                                 info!("[SyncService] Received {} headers (id: {}) from session {}", headers.headers.len(), headers.request_id, session_id);

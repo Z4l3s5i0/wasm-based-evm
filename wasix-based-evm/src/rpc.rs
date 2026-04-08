@@ -490,7 +490,11 @@ impl TransactionService for MyTransactionService {
             let (tx, rx) = oneshot::channel();
             handle.network_send.send(crate::network::NetworkMessage::GetPeerCount(tx)).await
                 .map_err(|_| Status::internal("Failed to send to network service"))?;
-            let count = rx.await.map_err(|_| Status::internal("Failed to receive from network service"))?;
+            
+            let count = tokio::time::timeout(std::time::Duration::from_secs(5), rx).await
+                .map_err(|_| Status::deadline_exceeded("Network service timed out"))?
+                .map_err(|_| Status::internal("Failed to receive from network service"))?;
+
             Ok(Response::new(NetPeerCountResponse { count: count as u64 }))
         } else {
             Err(Status::unavailable("Network not started"))
@@ -507,8 +511,12 @@ impl TransactionService for MyTransactionService {
             debug!("[RPC] Sending GetPeers to network service");
             handle.network_send.send(crate::network::NetworkMessage::GetPeers(tx)).await
                 .map_err(|_| Status::internal("Failed to send to network service"))?;
+            
             debug!("[RPC] Awaiting response for GetPeers from network service");
-            let peers = rx.await.map_err(|_| Status::internal("Failed to receive from network service"))?;
+            let peers = tokio::time::timeout(std::time::Duration::from_secs(5), rx).await
+                .map_err(|_| Status::deadline_exceeded("Network service timed out"))?
+                .map_err(|_| Status::internal("Failed to receive from network service"))?;
+
             debug!("[RPC] Received {} peers from network service", peers.len());
             let proto_peers = peers.into_iter().map(|p| ProtoPeerInfo {
                 id: p.id,

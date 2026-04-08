@@ -8,12 +8,13 @@ use tentacle::{
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use crate::network::sync::SyncEvent;
+use crate::network::NetworkMessage;
 use tokio::sync::mpsc;
 use crate::storage::{InMemoryStorage, Transaction};
 use crate::{info, debug};
 use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable, BufMut};
 use alloy_primitives::{B256, U256};
+use crate::network::sync::SyncEvent;
 
 pub const ETH_PROTOCOL_ID: ProtocolId = ProtocolId::new(1);
 
@@ -140,6 +141,7 @@ pub struct PooledTransactions {
 struct EthProtocolHandler {
     storage: Arc<Mutex<InMemoryStorage>>,
     sync_send: mpsc::Sender<SyncEvent>,
+    network_send: mpsc::Sender<NetworkMessage>,
 }
 
 #[async_trait::async_trait]
@@ -150,9 +152,6 @@ impl ServiceProtocol for EthProtocolHandler {
 
     async fn connected(&mut self, context: ProtocolContextMutRef<'_>, version: &str) {
         info!("[EthProtocol] connected on session: {}, version: {}", context.session.id, version);
-        
-        // Notify SyncService about new peer
-        let _ = self.sync_send.send(SyncEvent::PeerConnected(context.session.id)).await;
         
         // Send Status message immediately
         let storage = self.storage.lock().await;
@@ -176,6 +175,7 @@ impl ServiceProtocol for EthProtocolHandler {
 
     async fn disconnected(&mut self, context: ProtocolContextMutRef<'_>) {
         info!("[EthProtocol] disconnected on session: {}", context.session.id);
+        let _ = self.network_send.send(NetworkMessage::PeerDisconnected(context.session.id)).await;
     }
 
     async fn received(&mut self, context: ProtocolContextMutRef<'_>, data: Bytes) {
@@ -316,7 +316,7 @@ impl ServiceProtocol for EthProtocolHandler {
                  match BlockHeaders::decode(&mut &payload[..]) {
                     Ok(headers) => {
                         info!("[EthProtocol] Received {} BlockHeaders from {}", headers.headers.len(), context.session.id);
-                        let _ = self.sync_send.send(SyncEvent::Headers(context.session.id, headers)).await;
+                        let _ = self.network_send.send(NetworkMessage::SyncHeaders(context.session.id, headers)).await;
                     }
                     Err(e) => info!("[EthProtocol] Failed to decode BlockHeaders from {}: {:?}", context.session.id, e),
                 }
@@ -325,7 +325,7 @@ impl ServiceProtocol for EthProtocolHandler {
                  match BlockBodies::decode(&mut &payload[..]) {
                     Ok(bodies) => {
                         info!("[EthProtocol] Received {} BlockBodies from {}", bodies.bodies.len(), context.session.id);
-                        let _ = self.sync_send.send(SyncEvent::Bodies(context.session.id, bodies)).await;
+                        let _ = self.network_send.send(NetworkMessage::SyncBodies(context.session.id, bodies)).await;
                     }
                     Err(e) => info!("[EthProtocol] Failed to decode BlockBodies from {}: {:?}", context.session.id, e),
                 }
@@ -347,13 +347,18 @@ impl ServiceProtocol for EthProtocolHandler {
     }
 }
 
-pub fn create_meta(storage: Arc<Mutex<InMemoryStorage>>, sync_send: mpsc::Sender<SyncEvent>) -> ProtocolMeta {
+pub fn create_meta(
+    storage: Arc<Mutex<InMemoryStorage>>, 
+    sync_send: mpsc::Sender<SyncEvent>,
+    network_send: mpsc::Sender<NetworkMessage>,
+) -> ProtocolMeta {
     MetaBuilder::new()
         .id(ETH_PROTOCOL_ID)
         .name(|id| format!("/eth/{}", id.value()))
         .service_handle(move || ProtocolHandle::Callback(Box::new(EthProtocolHandler { 
             storage: storage.clone(),
             sync_send: sync_send.clone(),
+            network_send: network_send.clone(),
         })))
         .build()
 }

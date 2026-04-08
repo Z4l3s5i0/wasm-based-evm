@@ -37,6 +37,7 @@ pub enum NetworkMessage {
     },
     SyncHeaders(tentacle::SessionId, BlockHeaders),
     SyncBodies(tentacle::SessionId, BlockBodies),
+    PeerDisconnected(tentacle::SessionId),
     ReportPeer(tentacle::SessionId, i32),
 }
 
@@ -68,9 +69,9 @@ pub async fn start_network(
     let (network_send, network_recv) = mpsc::channel(100);
     
     let (sync_service, sync_send) = sync::SyncService::new(storage.clone(), network_send.clone());
-    
+    //1
     info!("[network::mod] Starting network with config: {:?}", config.discv5_addr);
-    let service = match service::NetworkService::new(config, storage, rx_broadcast, network_recv, sync_send).await {
+    let service = match service::NetworkService::new(config, storage, rx_broadcast, network_recv, sync_send, network_send.clone()).await {
         Ok(s) => {
             info!("[network::mod] NetworkService instance created successfully.");
             s

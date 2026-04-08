@@ -37,13 +37,15 @@ impl NetworkService {
         rx_broadcast: mpsc::Receiver<Transaction>,
         network_recv: mpsc::Receiver<crate::network::NetworkMessage>,
         sync_send: mpsc::Sender<SyncEvent>,
+        network_send: mpsc::Sender<crate::network::NetworkMessage>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         debug!("[NetworkService] Initializing NetworkService...");
         debug!("[NetworkService] Creating DiscoveryService with discv5_addr: {}, p2p_port: {}, ext_ip: {:?}", config.discv5_addr, config.p2p_addr.port(), config.ext_ip);
+        //2
         let discovery = DiscoveryService::new(config.discv5_addr, config.p2p_addr.port(), config.ext_ip, config.bootnodes)?;
         debug!("[NetworkService] DiscoveryService created.");
         
-        let protocol_meta = protocol::create_meta(storage, sync_send.clone());
+        let protocol_meta = protocol::create_meta(storage, sync_send.clone(), network_send);
         
         let sessions = Arc::new(Mutex::new(HashMap::new()));
         let sessions_clone = sessions.clone();
@@ -157,30 +159,15 @@ impl NetworkService {
                                 info!("[NetworkService] Node inserted into DHT: {}", node_id);
                                 // NodeInserted only gives node_id, not ENR.
                                 // We might want to look up the ENR if we want to dial it.
-                                let discovery = self.discovery.discv5_clone();
-                                let p2p_control = self.p2p_control.clone();
-                                tokio::spawn(async move {
-                                    let enr = {
-                                        let discv5 = discovery.lock().await;
-                                        discv5.find_enr(&node_id)
-                                    };
-                                    
-                                    if let Some(enr) = enr {
-                                        if let Some(tcp_port) = enr.tcp4() {
-                                            if let Some(ip) = enr.ip4() {
-                                                let ip_str = if ip.is_unspecified() {
-                                                    "127.0.0.1".to_string()
-                                                } else {
-                                                    ip.to_string()
-                                                };
-                                                if let Ok(addr) = format!("/ip4/{}/tcp/{}", ip_str, tcp_port).parse::<Multiaddr>() {
-                                                    debug!("[NetworkService] Attempting to dial inserted node: {}", addr);
-                                                    let _ = p2p_control.dial(addr, TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
-                                                }
-                                            }
-                                        }
-                                    }
-                                });
+                                let enr = {
+                                    let discv5 = self.discovery.discv5_clone();
+                                    let lock = discv5.lock().await;
+                                    lock.find_enr(&node_id)
+                                };
+                                
+                                if let Some(enr) = enr {
+                                    self.dial_enr(enr).await;
+                                }
                             }
                             _ => {
                                 debug!("[NetworkService] Other Discv5 event: {:?}", event);
@@ -212,28 +199,23 @@ impl NetworkService {
                     if let Some(msg) = msg {
                         match msg {
                             crate::network::NetworkMessage::GetPeerCount(tx) => {
-                                let sessions = self.sessions.clone();
-                                tokio::spawn(async move {
-                                    let sessions_map = sessions.lock().await;
-                                    let _ = tx.send(sessions_map.len());
-                                });
+                                let len = {
+                                    let sessions_map = self.sessions.lock().await;
+                                    sessions_map.len()
+                                };
+                                let _ = tx.send(len);
                             }
                             crate::network::NetworkMessage::GetPeers(tx) => {
-                                let sessions = self.sessions.clone();
-                                tokio::spawn(async move {
-                                    let sessions_map = sessions.lock().await;
-                                    let peer_infos: Vec<PeerInfo> = sessions_map.values().cloned().collect();
-                                    let _ = tx.send(peer_infos);
-                                });
+                                let peer_infos = {
+                                    let sessions_map = self.sessions.lock().await;
+                                    sessions_map.values().cloned().collect::<Vec<PeerInfo>>()
+                                };
+                                let _ = tx.send(peer_infos);
                             }
                             crate::network::NetworkMessage::AddPeer(addr, tx) => {
                                 if let Ok(enr) = Enr::from_str(&addr) {
-                                     let discovery = self.discovery.discv5_clone();
-                                     tokio::spawn(async move {
-                                         let discv5 = discovery.lock().await;
-                                         let _ = discv5.add_enr(enr);
-                                         let _ = tx.send(Ok(()));
-                                     });
+                                     let _ = self.discovery.add_enr(enr).await;
+                                     let _ = tx.send(Ok(()));
                                 } else if let Ok(maddr) = addr.parse::<Multiaddr>() {
                                     let _ = self.p2p_control.dial(maddr, TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
                                     let _ = tx.send(Ok(()));
@@ -242,20 +224,18 @@ impl NetworkService {
                                 }
                             }
                             crate::network::NetworkMessage::GetNodeInfo(tx) => {
-                                let discovery = self.discovery.discv5_clone();
+                                let local_enr = self.discovery.discv5_local_enr().await;
                                 let p2p_listen_addr = self.p2p_listen_addr.clone();
-                                tokio::spawn(async move {
-                                    let addr = p2p_listen_addr.lock().await;
-                                    let node_info = {
-                                        let discv5 = discovery.lock().await;
-                                        crate::network::NodeInfo {
-                                            enr: discv5.local_enr().to_base64(),
-                                            node_id: discv5.local_enr().node_id().to_string(),
-                                            listen_addresses: vec![addr.to_string()],
-                                        }
-                                    };
-                                    let _ = tx.send(node_info);
-                                });
+                                let addr = {
+                                    let lock = p2p_listen_addr.lock().await;
+                                    lock.to_string()
+                                };
+                                let node_info = crate::network::NodeInfo {
+                                    enr: local_enr.to_base64(),
+                                    node_id: local_enr.node_id().to_string(),
+                                    listen_addresses: vec![addr],
+                                };
+                                let _ = tx.send(node_info);
                             }
                             crate::network::NetworkMessage::BroadcastBlock(block) => {
                                 info!("[NetworkService] Broadcasting block: {}", block.body.execution_payload.block_hash);
@@ -295,6 +275,9 @@ impl NetworkService {
                             }
                             crate::network::NetworkMessage::SyncBodies(session_id, bodies) => {
                                 let _ = self.sync_send.send(SyncEvent::Bodies(session_id, bodies)).await;
+                            }
+                            crate::network::NetworkMessage::PeerDisconnected(session_id) => {
+                                let _ = self.sync_send.send(SyncEvent::PeerDisconnected(session_id)).await;
                             }
                             crate::network::NetworkMessage::ReportPeer(session_id, score) => {
                                 let mut sessions = self.sessions.lock().await;
@@ -351,10 +334,17 @@ impl ServiceHandle for SimpleServiceHandle {
             ServiceEvent::SessionOpen { session_context } => {
                 info!("[P2P Service] event: SessionOpen {{ id: {}, address: {}, ty: {:?} }}", 
                     session_context.id, session_context.address, session_context.ty);
+                
+                let addr_str = session_context.address.to_string();
                 let mut sessions = self.sessions.lock().await;
+                // Check if we are already connected to this address (best effort)
+                if let Some(existing_peer) = sessions.values().find(|p| p.addr == addr_str) {
+                    info!("[P2P Service] Already connected to {} as SessionId({}), potential duplicate session", addr_str, existing_peer.id);
+                }
+
                 sessions.insert(session_context.id, PeerInfo {
                     id: session_context.id.to_string(),
-                    addr: session_context.address.to_string(),
+                    addr: addr_str,
                     enr: None,
                     reputation: 0,
                 });
@@ -365,6 +355,8 @@ impl ServiceHandle for SimpleServiceHandle {
                 info!("[P2P Service] event: SessionClose {{ id: {} }}", session_context.id);
                 let mut sessions = self.sessions.lock().await;
                 sessions.remove(&session_context.id);
+                // Notify sync that a peer disconnected
+                let _ = self.sync_send.send(SyncEvent::PeerDisconnected(session_context.id)).await;
             }
             ServiceEvent::ListenStarted { address } => {
                 info!("[P2P Service] event: ListenStarted {{ address: {} }}", address);
