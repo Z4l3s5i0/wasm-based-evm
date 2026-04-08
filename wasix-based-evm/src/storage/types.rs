@@ -18,6 +18,7 @@ pub struct Receipt {
     pub cumulative_gas_used: u64,
     pub logs_bloom: Bloom,
     pub logs: Vec<Log>,
+    pub block_number: u64,
 }
 
 impl Receipt {
@@ -288,6 +289,12 @@ pub struct Block {
     pub parent_root: B256,
     pub state_root: B256,
     pub body: BlockBody,
+}
+
+pub struct PendingPayload {
+    pub block: Block,
+    pub receipts: Vec<Receipt>,
+    pub total_changeset: evm::backend::OverlayedChangeSet,
 }
 
 impl Block {

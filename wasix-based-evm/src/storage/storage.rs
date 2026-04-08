@@ -223,4 +223,16 @@ impl InMemoryStorage {
             (Address::from(addr.0), trie_acc)
         }))
     }
+
+    pub fn get_block_hash(&self, number: u64) -> Option<B256> {
+        self.get_block_by_number(number).map(|b| b.body.execution_payload.block_hash)
+    }
+
+    pub fn get_mempool(&self) -> impl Iterator<Item = &Transaction> {
+        self.transactions.values().filter(|tx| !self.receipts.contains_key(&tx.hash))
+    }
+
+    pub fn update_forkchoice(&mut self, hash: B256) {
+        self.head_block_hash = hash;
+    }
 }

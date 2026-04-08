@@ -30,6 +30,7 @@ impl OverlayedChangeSetExt for OverlayedChangeSet {
     }
 }
 
+#[derive(Clone)]
 pub struct Executor {
     pub config: Config,
 }
@@ -133,6 +134,7 @@ impl Executor {
                         cumulative_gas_used,
                         logs_bloom: bloom,
                         logs,
+                        block_number: block.body.execution_payload.block_number,
                     };
                     receipts.push(receipt);
                     results.push(value);

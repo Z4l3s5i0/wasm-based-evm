@@ -40,6 +40,7 @@ tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
 log = "0.4.29"
+thiserror = "2.0.18"
 
 # When using something different than wasix
 #socket2 = { version="0.4.10" , default-features = false, features = ["all"]}

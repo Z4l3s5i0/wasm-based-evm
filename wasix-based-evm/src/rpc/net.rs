@@ -1,4 +1,5 @@
 use crate::rpc::{MyTransactionService, NetPeerCountResponse, NetPeersResponse, NetAddPeerRequest, NetAddPeerResponse, NetNodeInfoResponse, Empty};
+use crate::rpc::mappers::status_from;
 use crate::{info, debug};
 use tonic::{Request, Response, Status};
 
@@ -7,7 +8,8 @@ impl MyTransactionService {
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<NetPeerCountResponse>, Status> {
-        self.provider.net_peer_count().await
+        let count = self.provider.peer_count().await.map_err(status_from)?;
+        Ok(Response::new(NetPeerCountResponse { count }))
     }
 
     pub async fn net_peers_impl(
@@ -15,9 +17,9 @@ impl MyTransactionService {
         _request: Request<Empty>,
     ) -> Result<Response<NetPeersResponse>, Status> {
         debug!("[RPC] Received net_peers request");
-        let res = self.provider.net_peers().await;
-        if let Ok(ref r) = res { debug!("[RPC] net_peers responded with {} peers", r.get_ref().peers.len()); }
-        res
+        let peers = self.provider.peers().await.map_err(status_from)?;
+        debug!("[RPC] net_peers responded with {} peers", peers.len());
+        Ok(Response::new(NetPeersResponse { peers }))
     }
 
     pub async fn net_add_peer_impl(
@@ -25,13 +27,15 @@ impl MyTransactionService {
         request: Request<NetAddPeerRequest>,
     ) -> Result<Response<NetAddPeerResponse>, Status> {
         let req = request.into_inner();
-        self.provider.net_add_peer(req).await
+        self.provider.add_peer(req).await.map_err(status_from)?;
+        Ok(Response::new(NetAddPeerResponse { success: true, message: "Peer added".to_string() }))
     }
 
     pub async fn net_node_info_impl(
         &self,
         _request: Request<Empty>,
     ) -> Result<Response<NetNodeInfoResponse>, Status> {
-        self.provider.net_node_info().await
+        let info = self.provider.node_info().await.map_err(status_from)?;
+        Ok(Response::new(info))
     }
 }

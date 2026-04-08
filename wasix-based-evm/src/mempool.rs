@@ -71,16 +71,12 @@ impl Mempool {
     pub fn pop_transactions(&mut self, n: usize) -> Vec<Transaction> {
         let mut result = Vec::with_capacity(n);
         
-        // We will keep track of which transaction is "next" for each sender.
-        // For each sender, the "next" transaction is at the front of their VecDeque.
-        
         while result.len() < n {
             let mut best_sender: Option<Address> = None;
             let mut best_gas_price: U256 = U256::ZERO;
 
             for (address, queue) in &self.pending_transactions {
                 if let Some(tx) = queue.front() {
-                    // Check if it's better than current best
                     if tx.gas_price > best_gas_price {
                         best_gas_price = tx.gas_price;
                         best_sender = Some(*address);
@@ -89,7 +85,6 @@ impl Mempool {
             }
 
             if let Some(sender) = best_sender {
-                // Remove from queue and add to result
                 if let Some(queue) = self.pending_transactions.get_mut(&sender) {
                     if let Some(tx) = queue.pop_front() {
                         result.push(tx);
@@ -99,7 +94,6 @@ impl Mempool {
                     }
                 }
             } else {
-                // No more transactions in mempool
                 break;
             }
         }

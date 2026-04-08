@@ -3921,6 +3921,7 @@ dependencies = [
  "serde_json",
  "socket2 0.4.5",
  "tentacle",
+ "thiserror 2.0.18",
  "tokio",
  "tonic",
  "tonic-prost",

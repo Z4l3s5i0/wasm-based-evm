@@ -2,6 +2,9 @@ pub mod net;
 pub mod eth;
 pub mod engine;
 pub mod provider;
+mod mappers;
+mod provider_error;
+mod provider_api;
 
 pub mod evm_rpc {
     tonic::include_proto!("evm_rpc");
@@ -11,9 +14,9 @@ pub use evm_rpc::transaction_service_server::TransactionService;
 pub use evm_rpc::*;
 use crate::executor::Executor;
 use crate::network::NetworkHandle;
-use crate::rpc::provider::{BlockchainProvider, DefaultBlockchainProvider};
+use crate::rpc::provider_api::DomainBlockchainProvider;
+use crate::rpc::provider::DefaultBlockchainProvider;
 use std::sync::Arc;
-use alloy_rlp::Decodable;
 use tokio::sync::{Mutex};
 use tonic::{Request, Response, Status};
 
@@ -23,20 +26,20 @@ use crate::storage::types::{Block, Receipt, Transaction};
 use alloy_primitives::{Address, U256};
 
 impl TryFrom<TransactionRequest> for Transaction {
-    type Error = Status;
+    type Error = String;
 
     fn try_from(req: TransactionRequest) -> Result<Self, Self::Error> {
-        let from_addr: Address = req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
+        let from_addr: Address = req.from.parse().map_err(|_| "Invalid from address".to_string())?;
         let to_addr: Option<Address> = if req.to.is_empty() {
             None
         } else {
-            Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
+            Some(req.to.parse().map_err(|_| "Invalid to address".to_string())?)
         };
 
         let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
             // Try hex if decimal fails
             U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
-        }).map_err(|_| Status::invalid_argument("Invalid value"))?;
+        }).map_err(|_| "Invalid value".to_string())?;
 
         Ok(Transaction::builder(from_addr)
             .nonce(req.nonce)
@@ -93,39 +96,15 @@ impl MyTransactionService {
     }
 }
 
-pub struct PendingPayload {
-    pub block: Block,
-    pub receipts: Vec<Receipt>,
-    pub total_changeset: evm::backend::OverlayedChangeSet,
-}
 
 pub struct MyTransactionService {
     // New decoupled provider for business logic/state access
-    pub provider: Box<dyn BlockchainProvider + Send + Sync>,
-    // Keep existing fields to avoid broad changes; can be removed later when all call sites use provider
-    pub storage: Arc<Mutex<InMemoryStorage>>,
-    pub executor: Executor,
-    pub pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
-    pub network_handle: Option<NetworkHandle>,
+    pub provider: Box<dyn DomainBlockchainProvider + Send + Sync>,
 }
 
 impl MyTransactionService {
-    pub fn new(
-        storage: Arc<Mutex<InMemoryStorage>>, 
-        executor: Executor,
-        pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
-        network_handle: Option<NetworkHandle>,
-    ) -> Self {
-        let network_send = network_handle.as_ref().map(|h| h.network_send.clone());
-        let tx_broadcast = network_handle.as_ref().map(|h| h.tx_broadcast.clone());
-        let provider: Box<dyn BlockchainProvider + Send + Sync> = Box::new(DefaultBlockchainProvider::new(
-            storage.clone(),
-            executor.clone(),
-            network_send,
-            tx_broadcast,
-            pending_payloads.clone(),
-        ));
-        Self { provider, storage, executor, pending_payloads, network_handle }
+    pub fn new(provider: Box<dyn DomainBlockchainProvider + Send + Sync>) -> Self {
+        Self { provider }
     }
 }
 #[tonic::async_trait]

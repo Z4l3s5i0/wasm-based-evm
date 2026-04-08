@@ -71,12 +71,16 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     let network_handle = network::start_network(network_config, storage.clone()).await?;
 
-    let transaction_service = MyTransactionService {
+    let pending_payloads = Arc::new(Mutex::new(std::collections::HashMap::new()));
+    let provider = Box::new(crate::rpc::provider::DefaultBlockchainProvider::new(
         storage,
         executor,
-        pending_payloads: Arc::new(Mutex::new(std::collections::HashMap::new())),
-        network_handle: Some(network_handle),
-    };
+        Some(network_handle.network_send.clone()),
+        Some(network_handle.tx_broadcast.clone()),
+        pending_payloads,
+    ));
+
+    let transaction_service = MyTransactionService::new(provider);
 
     info!("[Main] EVM gRPC Server listening on {}", rpc_addr);
 
