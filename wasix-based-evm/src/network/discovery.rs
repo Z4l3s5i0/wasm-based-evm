@@ -1,5 +1,5 @@
 use discv5::{Discv5, ConfigBuilder, Enr, enr::CombinedKey, ListenConfig};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, IpAddr};
 use std::str::FromStr;
 
 pub struct DiscoveryService {
@@ -15,18 +15,37 @@ impl DiscoveryService {
         let enr_key = CombinedKey::generate_secp256k1();
         
         // Build the local ENR
-        let enr = Enr::builder()
-            .ip(listen_addr.ip())
-            .udp4(listen_addr.port())
-            .build(&enr_key)?;
-
-        println!("Local ENR: {}", enr.to_base64());
-        println!("Node ID: {}", enr.node_id());
+        let mut enr_builder = Enr::builder();
+        match listen_addr.ip() {
+            IpAddr::V4(ip) => {
+                enr_builder.ip4(ip);
+                enr_builder.udp4(listen_addr.port());
+            }
+            IpAddr::V6(ip) => {
+                enr_builder.ip6(ip);
+                enr_builder.udp6(listen_addr.port());
+            }
+        }
+        println!("[DiscoveryService] Building local ENR...");
+        let enr = enr_builder.build(&enr_key)?;
+        println!("[DiscoveryService] Local ENR: {}", enr.to_base64());
+        println!("[DiscoveryService] Node ID: {}", enr.node_id());
 
         // Configure discv5
-        let listen_config = ListenConfig::from(listen_addr);
+        println!("[DiscoveryService] Configuring discv5...");
+        let listen_config = match listen_addr.ip() {
+            IpAddr::V4(ip) => {
+                ListenConfig::default().with_ipv4(ip, listen_addr.port())
+            }
+            IpAddr::V6(ip) => {
+                ListenConfig::default().with_ipv6(ip, listen_addr.port())
+            }
+        };
+        
         let config = ConfigBuilder::new(listen_config).build();
+        println!("[DiscoveryService] Creating Discv5 instance...");
         let discv5 = Discv5::new(enr, enr_key, config)?;
+        println!("[DiscoveryService] Discv5 instance created.");
 
         // Add bootnodes
         for bootnode in bootnodes {
@@ -44,7 +63,18 @@ impl DiscoveryService {
     }
 
     pub async fn start(&mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.discv5.start().await.map_err(|e| format!("{:?}", e).into())
+        println!("[DiscoveryService] Starting discv5...");
+        println!("[DiscoveryService] Local ENR for start: {}", self.discv5.local_enr().to_base64());
+        match self.discv5.start().await {
+            Ok(_) => {
+                println!("[DiscoveryService] Discv5 started successfully.");
+                Ok(())
+            }
+            Err(e) => {
+                println!("[DiscoveryService] Failed to start discv5: {:?}", e);
+                Err(format!("{:?}", e).into())
+            }
+        }
     }
 
     pub fn discv5(&self) -> &Discv5 {

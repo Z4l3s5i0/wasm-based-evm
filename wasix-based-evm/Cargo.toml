@@ -35,10 +35,8 @@ socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", 
 h2 = "0.4"
 tonic-prost = "0.14.5"
 serde_json = { version = "1.0.0", default-features = false, features = ["alloc", "std"] }
-#wasmtime-debug = { version = "0.29.0",default-features = false }
-tentacle = { path = "../tentacle-wasmer/tentacle", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
+tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
 
-#tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", default-features = false, features =["generic-timer"] }
 
 discv5 = "0.10.4"
 async-trait = "0.1.89"
@@ -47,7 +45,7 @@ async-trait = "0.1.89"
 tonic-prost-build = "0.14.5"
 
 [patch.crates-io]
-tentacle = { path = "../tentacle-wasmer/tentacle"}
+tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix"}
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
 mio = { git = "https://github.com/wasix-org/mio" }
 

@@ -6,6 +6,7 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use crate::storage::{InMemoryStorage, Transaction};
 
+#[derive(Debug)]
 pub struct NetworkConfig {
     pub discv5_addr: std::net::SocketAddr,
     pub p2p_addr: std::net::SocketAddr,
@@ -22,11 +23,24 @@ pub async fn start_network(
 ) -> Result<NetworkHandle, Box<dyn std::error::Error>> {
     let (tx_broadcast, rx_broadcast) = mpsc::channel(100);
     
-    let service = service::NetworkService::new(config, storage, rx_broadcast).await?;
-    tokio::spawn(async move {
-        if let Err(e) = service.run().await {
-            println!("Network service error: {:?}", e);
+    println!("[network::mod] Starting network with config: {:?}", config.discv5_addr);
+    let service = match service::NetworkService::new(config, storage, rx_broadcast).await {
+        Ok(s) => {
+            println!("[network::mod] NetworkService instance created successfully.");
+            s
         }
+        Err(e) => {
+            println!("[network::mod] Error creating NetworkService: {:?}", e);
+            return Err(e);
+        }
+    };
+
+    tokio::spawn(async move {
+        println!("[network::mod] Spawning network service loop...");
+        if let Err(e) = service.run().await {
+            println!("[network::mod] Network service error during run: {:?}", e);
+        }
+        println!("[network::mod] Network service loop terminated.");
     });
 
     Ok(NetworkHandle { tx_broadcast })

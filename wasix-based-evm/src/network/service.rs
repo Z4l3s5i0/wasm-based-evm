@@ -25,23 +25,32 @@ impl NetworkService {
         storage: Arc<Mutex<InMemoryStorage>>,
         rx_broadcast: mpsc::Receiver<Transaction>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
+        println!("[NetworkService] Initializing NetworkService...");
+        println!("[NetworkService] Creating DiscoveryService with discv5_addr: {}", config.discv5_addr);
         let discovery = DiscoveryService::new(config.discv5_addr, config.bootnodes)?;
+        println!("[NetworkService] DiscoveryService created.");
         
         let protocol_meta = protocol::create_meta(storage);
         
+        println!("[NetworkService] Building P2P service...");
         let mut service = ServiceBuilder::default()
             .insert_protocol(protocol_meta)
             .handshake_type(HandshakeType::Secio(SecioKeyPair::secp256k1_generated()))
             .build(SimpleServiceHandle);
+        println!("[NetworkService] P2P service built.");
         
         let p2p_control = service.control().clone();
         
         // Listen on P2P address
         let listen_addr: Multiaddr = format!("/ip4/{}/tcp/{}", config.p2p_addr.ip(), config.p2p_addr.port()).parse()?;
+        println!("[NetworkService] Binding P2P service to {}...", listen_addr);
         service.listen(listen_addr).await?;
+        println!("[NetworkService] P2P service bound and listening.");
 
         tokio::spawn(async move {
+            println!("[NetworkService] P2P service background task starting...");
             service.run().await;
+            println!("[NetworkService] P2P service background task finished.");
         });
 
         Ok(Self {
@@ -52,12 +61,17 @@ impl NetworkService {
     }
 
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        self.discovery.start().await?;
+        println!("[NetworkService] Starting NetworkService loop...");
+        if let Err(e) = self.discovery.start().await {
+            println!("[NetworkService] Error starting DiscoveryService: {:?}", e);
+            return Err(e);
+        }
         
+        println!("[NetworkService] Subscribing to Discv5 events...");
         let mut discv5_events = self.discovery.discv5().event_stream().await
             .map_err(|e| format!("{:?}", e))?;
         
-        println!("Network service running");
+        println!("[NetworkService] Network service running and listening for events.");
 
         loop {
             tokio::select! {
