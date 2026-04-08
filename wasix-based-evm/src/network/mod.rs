@@ -2,7 +2,7 @@ pub mod discovery;
 pub mod protocol;
 pub mod service;
 pub mod sync;
-
+pub mod peer_manager;
 
 use crate::{info, debug};
 

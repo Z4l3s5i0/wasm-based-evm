@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::collections::HashMap;
 use tentacle::SessionId;
-use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, NewPooledTransactionHashes, NewBlock}, NetworkConfig, PeerInfo};
+use crate::network::{discovery::DiscoveryService, NetworkConfig, PeerInfo, peer_manager::PeerManager, protocol::{self, ETH_PROTOCOL_ID, MessageId, NewPooledTransactionHashes, NewBlock, Status, Transactions, GetBlockHeaders, BlockHashOrNumber, BlockHeaders, GetBlockBodies, BlockBodies, GetPooledTransactions, PooledTransactions}};
 use crate::storage::{InMemoryStorage, Transaction};
 use crate::network::sync::SyncEvent;
 use std::sync::Arc;
@@ -9,15 +9,16 @@ use tokio::sync::{Mutex, mpsc};
 use discv5::{enr, Enr};
 use alloy_primitives::U256;
 use tentacle::{
-    builder::ServiceBuilder,
-    service::{HandshakeType, ServiceAsyncControl, ServiceError, ServiceEvent, TargetProtocol},
-    traits::ServiceHandle,
-    context::ServiceContext,
+    builder::{ServiceBuilder, MetaBuilder},
+    service::{HandshakeType, ServiceAsyncControl, ServiceError, ServiceEvent, TargetProtocol, ProtocolHandle, ProtocolMeta},
+    traits::{ServiceHandle, ServiceProtocol},
+    context::{ServiceContext, ProtocolContext, ProtocolContextMutRef},
     multiaddr::Multiaddr,
     secio::SecioKeyPair,
-    bytes::BytesMut,
+    bytes::{Bytes, BytesMut},
 };
-use alloy_rlp::Encodable;
+use alloy_rlp::{Encodable, Decodable};
+use crate::network::NetworkMessage;
 use crate::{info, debug};
 
 pub struct NetworkService {
@@ -26,7 +27,7 @@ pub struct NetworkService {
     rx_broadcast: mpsc::Receiver<Transaction>,
     network_recv: mpsc::Receiver<crate::network::NetworkMessage>,
     p2p_listen_addr: Arc<Mutex<Multiaddr>>,
-    sessions: Arc<Mutex<HashMap<SessionId, PeerInfo>>>,
+    peer_manager: Arc<Mutex<PeerManager>>,
     sync_send: mpsc::Sender<SyncEvent>,
 }
 
@@ -45,10 +46,10 @@ impl NetworkService {
         let discovery = DiscoveryService::new(config.discv5_addr, config.p2p_addr.port(), config.ext_ip, config.bootnodes)?;
         debug!("[NetworkService] DiscoveryService created.");
         
-        let protocol_meta = protocol::create_meta(storage, sync_send.clone(), network_send);
+        let protocol_meta = create_meta(storage, sync_send.clone(), network_send);
         
-        let sessions = Arc::new(Mutex::new(HashMap::new()));
-        let sessions_clone = sessions.clone();
+        let peer_manager = Arc::new(Mutex::new(PeerManager::new()));
+        let peer_manager_clone = peer_manager.clone();
 
         // Listen on P2P address
         let listen_addr: Multiaddr = format!("/ip4/{}/tcp/{}", config.p2p_addr.ip(), config.p2p_addr.port()).parse()?;
@@ -67,7 +68,7 @@ impl NetworkService {
             .max_connection_number(config.max_peers)
             .yamux_config(yamux_config)
             .build(SimpleServiceHandle { 
-                sessions: sessions_clone,
+                peer_manager: peer_manager_clone,
                 p2p_listen_addr: p2p_listen_addr_clone,
                 sync_send: sync_send.clone(),
             });
@@ -91,7 +92,7 @@ impl NetworkService {
             rx_broadcast,
             network_recv,
             p2p_listen_addr,
-            sessions,
+            peer_manager,
             sync_send,
         })
     }
@@ -200,15 +201,15 @@ impl NetworkService {
                         match msg {
                             crate::network::NetworkMessage::GetPeerCount(tx) => {
                                 let len = {
-                                    let sessions_map = self.sessions.lock().await;
-                                    sessions_map.len()
+                                    let pm = self.peer_manager.lock().await;
+                                    pm.peer_count()
                                 };
                                 let _ = tx.send(len);
                             }
                             crate::network::NetworkMessage::GetPeers(tx) => {
                                 let peer_infos = {
-                                    let sessions_map = self.sessions.lock().await;
-                                    sessions_map.values().cloned().collect::<Vec<PeerInfo>>()
+                                    let pm = self.peer_manager.lock().await;
+                                    pm.get_all_peers()
                                 };
                                 let _ = tx.send(peer_infos);
                             }
@@ -280,14 +281,12 @@ impl NetworkService {
                                 let _ = self.sync_send.send(SyncEvent::PeerDisconnected(session_id)).await;
                             }
                             crate::network::NetworkMessage::ReportPeer(session_id, score) => {
-                                let mut sessions = self.sessions.lock().await;
-                                if let Some(peer) = sessions.get_mut(&session_id) {
-                                    peer.reputation += score;
-                                    debug!("[NetworkService] Reported peer {}: score changed by {}, new score: {}", session_id, score, peer.reputation);
+                                let mut pm = self.peer_manager.lock().await;
+                                pm.report_peer(&session_id, score);
+                                if let Some(peer) = pm.get_peer(&session_id) {
                                     if peer.reputation < -100 {
                                         info!("[NetworkService] Disconnecting peer {} due to low reputation ({})", session_id, peer.reputation);
                                         let _ = self.p2p_control.disconnect(session_id).await;
-                                        // Sessions is removed on SessionClose event.
                                     }
                                 }
                             }
@@ -301,14 +300,9 @@ impl NetworkService {
                     
                     // Periodic reputation recovery
                     debug!("[NetworkService] Periodic reputation recovery started");
-                    let mut sessions = self.sessions.lock().await;
-                    for peer in sessions.values_mut() {
-                        if peer.reputation < 0 {
-                            peer.reputation += 1;
-                        } else if peer.reputation > 0 {
-                            peer.reputation -= 1; // Decay positive reputation towards 0 too, or keep it?
-                            // Usually we want to reward long-term good behavior but not let it grow indefinitely.
-                        }
+                    {
+                        let mut pm = self.peer_manager.lock().await;
+                        pm.decay_reputation();
                     }
                     debug!("[NetworkService] Periodic reputation recovery finished");
                 }
@@ -317,8 +311,233 @@ impl NetworkService {
     }
 }
 
+struct EthProtocolHandler {
+    storage: Arc<Mutex<InMemoryStorage>>,
+    sync_send: mpsc::Sender<SyncEvent>,
+    network_send: mpsc::Sender<NetworkMessage>,
+}
+
+#[async_trait::async_trait]
+impl ServiceProtocol for EthProtocolHandler {
+    async fn init(&mut self, context: &mut ProtocolContext) {
+        debug!("[EthProtocol] initiated on protocol: {}", context.proto_id);
+    }
+
+    async fn connected(&mut self, context: ProtocolContextMutRef<'_>, version: &str) {
+        info!("[EthProtocol] connected on session: {}, version: {}", context.session.id, version);
+        
+        // Send Status message immediately
+        let storage = self.storage.lock().await;
+        let latest_block = storage.get_latest_block();
+        let status = Status {
+            protocol_version: 66, // Example version
+            network_id: 1,      // Mainnet for example
+            total_difficulty: U256::ZERO, // Simplified
+            best_hash: latest_block.map(|b| b.body.execution_payload.block_hash).unwrap_or_default(),
+            genesis_hash: alloy_primitives::B256::ZERO, // Should be from storage
+        };
+
+        let mut data = BytesMut::new();
+        data.extend_from_slice(&[MessageId::Status as u8]);
+        status.encode(&mut data);
+        
+        if let Err(e) = context.send_message(data.freeze()).await {
+            info!("[EthProtocol] Failed to send Status message: {:?}", e);
+        }
+    }
+
+    async fn disconnected(&mut self, context: ProtocolContextMutRef<'_>) {
+        info!("[EthProtocol] disconnected on session: {}", context.session.id);
+        let _ = self.network_send.send(NetworkMessage::PeerDisconnected(context.session.id)).await;
+    }
+
+    async fn received(&mut self, context: ProtocolContextMutRef<'_>, data: Bytes) {
+        if data.is_empty() {
+            return;
+        }
+
+        let msg_id = data[0];
+        let payload = &data[1..];
+
+        match msg_id {
+            id if id == MessageId::Status as u8 => {
+                match Status::decode(&mut &payload[..]) {
+                    Ok(status) => info!("[EthProtocol] Received Status from {}: {:?}", context.session.id, status),
+                    Err(e) => info!("[EthProtocol] Failed to decode Status from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::Transactions as u8 => {
+                match Transactions::decode(&mut &payload[..]) {
+                    Ok(txs) => {
+                        info!("[EthProtocol] Received {} transactions from {}", txs.0.len(), context.session.id);
+                        let mut storage = self.storage.lock().await;
+                        for tx in txs.0 {
+                            storage.add_transaction(tx);
+                        }
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode Transactions from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::NewBlock as u8 => {
+                match NewBlock::decode(&mut &payload[..]) {
+                    Ok(new_block) => {
+                        info!("[EthProtocol] Received new block {} from {}", new_block.block.body.execution_payload.block_hash, context.session.id);
+                        let mut storage = self.storage.lock().await;
+                        if storage.get_block_by_hash(new_block.block.body.execution_payload.block_hash).is_none() {
+                            storage.add_block(new_block.block.clone());
+                            
+                            // Gossip to other peers
+                            let sync_send = self.sync_send.clone();
+                            let block = new_block.block;
+                            tokio::spawn(async move {
+                                let _ = sync_send.send(SyncEvent::NewBlock(block)).await;
+                            });
+                        }
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode NewBlock from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::GetBlockHeaders as u8 => {
+                match GetBlockHeaders::decode(&mut &payload[..]) {
+                    Ok(req) => {
+                        debug!("[EthProtocol] Received GetBlockHeaders from {}: {:?}", context.session.id, req);
+                        let storage = self.storage.lock().await;
+                        let mut headers = Vec::new();
+                        let start_block = match req.block {
+                            BlockHashOrNumber::Hash(h) => storage.get_block_by_hash(h).map(|b| b.body.execution_payload.block_number),
+                            BlockHashOrNumber::Number(n) => Some(n),
+                        };
+
+                        if let Some(start_num) = start_block {
+                            for i in 0..req.amount {
+                                let num = if req.reverse {
+                                    if start_num < i * (req.skip + 1) { break; }
+                                    start_num - i * (req.skip + 1)
+                                } else {
+                                    start_num + i * (req.skip + 1)
+                                };
+                                if let Some(block) = storage.get_block_by_number(num) {
+                                    headers.push(block.clone());
+                                } else {
+                                    break;
+                                }
+                            }
+                        }
+
+                        let resp = BlockHeaders { request_id: req.request_id, headers };
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&[MessageId::BlockHeaders as u8]);
+                        resp.encode(&mut data);
+                        let _ = context.send_message(data.freeze()).await;
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode GetBlockHeaders from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::GetBlockBodies as u8 => {
+                match GetBlockBodies::decode(&mut &payload[..]) {
+                    Ok(req) => {
+                        debug!("[EthProtocol] Received GetBlockBodies from {}: {:?}", context.session.id, req);
+                        let storage = self.storage.lock().await;
+                        let mut bodies = Vec::new();
+                        for hash in req.hashes {
+                            if let Some(block) = storage.get_block_by_hash(hash) {
+                                bodies.push(block.clone());
+                            }
+                        }
+                        let resp = BlockBodies { request_id: req.request_id, bodies };
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&[MessageId::BlockBodies as u8]);
+                        resp.encode(&mut data);
+                        let _ = context.send_message(data.freeze()).await;
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode GetBlockBodies from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::GetPooledTransactions as u8 => {
+                match GetPooledTransactions::decode(&mut &payload[..]) {
+                    Ok(req) => {
+                        debug!("[EthProtocol] Received GetPooledTransactions from {}: {:?}", context.session.id, req);
+                        let storage = self.storage.lock().await;
+                        let mut transactions = Vec::new();
+                        for hash in req.hashes {
+                            if let Some(tx) = storage.get_transaction_by_hash(hash) {
+                                transactions.push(tx.clone());
+                            }
+                        }
+                        let resp = PooledTransactions { request_id: req.request_id, transactions };
+                        let mut data = BytesMut::new();
+                        data.extend_from_slice(&[MessageId::PooledTransactions as u8]);
+                        resp.encode(&mut data);
+                        let _ = context.send_message(data.freeze()).await;
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode GetPooledTransactions from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::PooledTransactions as u8 => {
+                match PooledTransactions::decode(&mut &payload[..]) {
+                    Ok(txs) => {
+                        info!("[EthProtocol] Received {} pooled transactions from {}", txs.transactions.len(), context.session.id);
+                        let mut storage = self.storage.lock().await;
+                        for tx in txs.transactions {
+                            storage.add_transaction(tx);
+                        }
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode PooledTransactions from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::BlockHeaders as u8 => {
+                 match BlockHeaders::decode(&mut &payload[..]) {
+                    Ok(headers) => {
+                        info!("[EthProtocol] Received {} BlockHeaders from {}", headers.headers.len(), context.session.id);
+                        let _ = self.network_send.send(NetworkMessage::SyncHeaders(context.session.id, headers)).await;
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode BlockHeaders from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::BlockBodies as u8 => {
+                 match BlockBodies::decode(&mut &payload[..]) {
+                    Ok(bodies) => {
+                        info!("[EthProtocol] Received {} BlockBodies from {}", bodies.bodies.len(), context.session.id);
+                        let _ = self.network_send.send(NetworkMessage::SyncBodies(context.session.id, bodies)).await;
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode BlockBodies from {}: {:?}", context.session.id, e),
+                }
+            }
+            id if id == MessageId::NewPooledTransactionHashes as u8 => {
+                 match NewPooledTransactionHashes::decode(&mut &payload[..]) {
+                    Ok(hashes) => {
+                        debug!("[EthProtocol] Received {} new pooled transaction hashes from {}", hashes.0.len(), context.session.id);
+                        // In a real implementation, we would check which ones we are missing and request them
+                    }
+                    Err(e) => info!("[EthProtocol] Failed to decode NewPooledTransactionHashes from {}: {:?}", context.session.id, e),
+                }
+            }
+            _ => {
+                debug!("[EthProtocol] received unknown message ID {} ({} bytes) from session: {}", 
+                    msg_id, data.len(), context.session.id);
+            }
+        }
+    }
+}
+
+pub fn create_meta(
+    storage: Arc<Mutex<InMemoryStorage>>, 
+    sync_send: mpsc::Sender<SyncEvent>,
+    network_send: mpsc::Sender<NetworkMessage>,
+) -> ProtocolMeta {
+    MetaBuilder::new()
+        .id(ETH_PROTOCOL_ID)
+        .name(|id| format!("/eth/{}", id.value()))
+        .service_handle(move || ProtocolHandle::Callback(Box::new(EthProtocolHandler { 
+            storage: storage.clone(),
+            sync_send: sync_send.clone(),
+            network_send: network_send.clone(),
+        })))
+        .build()
+}
+
 struct SimpleServiceHandle {
-    sessions: Arc<Mutex<HashMap<SessionId, PeerInfo>>>,
+    peer_manager: Arc<Mutex<PeerManager>>,
     p2p_listen_addr: Arc<Mutex<Multiaddr>>,
     sync_send: mpsc::Sender<SyncEvent>,
 }
@@ -336,13 +555,13 @@ impl ServiceHandle for SimpleServiceHandle {
                     session_context.id, session_context.address, session_context.ty);
                 
                 let addr_str = session_context.address.to_string();
-                let mut sessions = self.sessions.lock().await;
+                let mut pm = self.peer_manager.lock().await;
                 // Check if we are already connected to this address (best effort)
-                if let Some(existing_peer) = sessions.values().find(|p| p.addr == addr_str) {
+                if let Some(existing_peer) = pm.find_peer_by_addr(&addr_str) {
                     info!("[P2P Service] Already connected to {} as SessionId({}), potential duplicate session", addr_str, existing_peer.id);
                 }
 
-                sessions.insert(session_context.id, PeerInfo {
+                pm.add_peer(session_context.id, PeerInfo {
                     id: session_context.id.to_string(),
                     addr: addr_str,
                     enr: None,
@@ -353,8 +572,8 @@ impl ServiceHandle for SimpleServiceHandle {
             }
             ServiceEvent::SessionClose { session_context } => {
                 info!("[P2P Service] event: SessionClose {{ id: {} }}", session_context.id);
-                let mut sessions = self.sessions.lock().await;
-                sessions.remove(&session_context.id);
+                let mut pm = self.peer_manager.lock().await;
+                pm.remove_peer(&session_context.id);
                 // Notify sync that a peer disconnected
                 let _ = self.sync_send.send(SyncEvent::PeerDisconnected(session_context.id)).await;
             }

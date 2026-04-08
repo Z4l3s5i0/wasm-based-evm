@@ -101,7 +101,6 @@ impl SyncService {
                 }
                 _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
                     self.check_timeouts().await;
-                    self.periodic_reputation_adjustment().await;
                 }
             }
         }
