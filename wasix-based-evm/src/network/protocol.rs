@@ -8,6 +8,8 @@ use tentacle::{
 };
 use std::sync::Arc;
 use tokio::sync::Mutex;
+use crate::network::sync::SyncEvent;
+use tokio::sync::mpsc;
 use crate::storage::{InMemoryStorage, Transaction};
 use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable, BufMut};
 use alloy_primitives::{B256, U256};
@@ -133,8 +135,10 @@ pub struct PooledTransactions {
     pub transactions: Vec<Transaction>,
 }
 
+
 struct EthProtocolHandler {
     storage: Arc<Mutex<InMemoryStorage>>,
+    sync_send: mpsc::Sender<SyncEvent>,
 }
 
 #[async_trait::async_trait]
@@ -145,6 +149,9 @@ impl ServiceProtocol for EthProtocolHandler {
 
     async fn connected(&mut self, context: ProtocolContextMutRef<'_>, version: &str) {
         println!("EthProtocol connected on session: {}, version: {}", context.session.id, version);
+        
+        // Notify SyncService about new peer
+        let _ = self.sync_send.send(SyncEvent::PeerConnected(context.session.id)).await;
         
         // Send Status message immediately
         let storage = self.storage.lock().await;
@@ -202,7 +209,16 @@ impl ServiceProtocol for EthProtocolHandler {
                     Ok(new_block) => {
                         println!("Received new block {} from {}", new_block.block.body.execution_payload.block_hash, context.session.id);
                         let mut storage = self.storage.lock().await;
-                        storage.add_block(new_block.block);
+                        if storage.get_block_by_hash(new_block.block.body.execution_payload.block_hash).is_none() {
+                            storage.add_block(new_block.block.clone());
+                            
+                            // Gossip to other peers
+                            let sync_send = self.sync_send.clone();
+                            let block = new_block.block;
+                            tokio::spawn(async move {
+                                let _ = sync_send.send(SyncEvent::NewBlock(block)).await;
+                            });
+                        }
                     }
                     Err(e) => println!("Failed to decode NewBlock from {}: {:?}", context.session.id, e),
                 }
@@ -296,10 +312,22 @@ impl ServiceProtocol for EthProtocolHandler {
                 }
             }
             id if id == MessageId::BlockHeaders as u8 => {
-                 println!("Received BlockHeaders from {}", context.session.id);
+                 match BlockHeaders::decode(&mut &payload[..]) {
+                    Ok(headers) => {
+                        println!("Received {} BlockHeaders from {}", headers.headers.len(), context.session.id);
+                        let _ = self.sync_send.send(SyncEvent::Headers(context.session.id, headers)).await;
+                    }
+                    Err(e) => println!("Failed to decode BlockHeaders from {}: {:?}", context.session.id, e),
+                }
             }
             id if id == MessageId::BlockBodies as u8 => {
-                 println!("Received BlockBodies from {}", context.session.id);
+                 match BlockBodies::decode(&mut &payload[..]) {
+                    Ok(bodies) => {
+                        println!("Received {} BlockBodies from {}", bodies.bodies.len(), context.session.id);
+                        let _ = self.sync_send.send(SyncEvent::Bodies(context.session.id, bodies)).await;
+                    }
+                    Err(e) => println!("Failed to decode BlockBodies from {}: {:?}", context.session.id, e),
+                }
             }
             id if id == MessageId::NewPooledTransactionHashes as u8 => {
                  match NewPooledTransactionHashes::decode(&mut &payload[..]) {
@@ -318,10 +346,13 @@ impl ServiceProtocol for EthProtocolHandler {
     }
 }
 
-pub fn create_meta(storage: Arc<Mutex<InMemoryStorage>>) -> ProtocolMeta {
+pub fn create_meta(storage: Arc<Mutex<InMemoryStorage>>, sync_send: mpsc::Sender<SyncEvent>) -> ProtocolMeta {
     MetaBuilder::new()
         .id(ETH_PROTOCOL_ID)
         .name(|id| format!("/eth/{}", id.value()))
-        .service_handle(move || ProtocolHandle::Callback(Box::new(EthProtocolHandler { storage: storage.clone() })))
+        .service_handle(move || ProtocolHandle::Callback(Box::new(EthProtocolHandler { 
+            storage: storage.clone(),
+            sync_send: sync_send.clone(),
+        })))
         .build()
 }

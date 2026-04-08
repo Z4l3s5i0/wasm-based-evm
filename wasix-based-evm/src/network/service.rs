@@ -1,11 +1,13 @@
 use std::str::FromStr;
 use std::collections::HashMap;
 use tentacle::SessionId;
-use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, NewPooledTransactionHashes}, NetworkConfig, PeerInfo};
+use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, NewPooledTransactionHashes, NewBlock, GetBlockHeaders, GetBlockBodies, BlockHashOrNumber}, NetworkConfig, PeerInfo};
 use crate::storage::{InMemoryStorage, Transaction};
+use crate::network::sync::SyncEvent;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use discv5::enr::{self, Enr};
+use alloy_primitives::U256;
 use tentacle::{
     builder::ServiceBuilder,
     service::{HandshakeType, ServiceAsyncControl, ServiceError, ServiceEvent, TargetProtocol},
@@ -24,6 +26,7 @@ pub struct NetworkService {
     network_recv: mpsc::Receiver<crate::network::NetworkMessage>,
     p2p_listen_addr: Arc<Mutex<Multiaddr>>,
     sessions: Arc<Mutex<HashMap<SessionId, PeerInfo>>>,
+    sync_send: mpsc::Sender<SyncEvent>,
 }
 
 impl NetworkService {
@@ -32,13 +35,14 @@ impl NetworkService {
         storage: Arc<Mutex<InMemoryStorage>>,
         rx_broadcast: mpsc::Receiver<Transaction>,
         network_recv: mpsc::Receiver<crate::network::NetworkMessage>,
+        sync_send: mpsc::Sender<SyncEvent>,
     ) -> Result<Self, Box<dyn std::error::Error>> {
         println!("[NetworkService] Initializing NetworkService...");
         println!("[NetworkService] Creating DiscoveryService with discv5_addr: {}, p2p_port: {}, ext_ip: {:?}", config.discv5_addr, config.p2p_addr.port(), config.ext_ip);
         let discovery = DiscoveryService::new(config.discv5_addr, config.p2p_addr.port(), config.ext_ip, config.bootnodes)?;
         println!("[NetworkService] DiscoveryService created.");
         
-        let protocol_meta = protocol::create_meta(storage);
+        let protocol_meta = protocol::create_meta(storage, sync_send.clone());
         
         let sessions = Arc::new(Mutex::new(HashMap::new()));
         let sessions_clone = sessions.clone();
@@ -78,6 +82,7 @@ impl NetworkService {
             network_recv,
             p2p_listen_addr,
             sessions,
+            sync_send,
         })
     }
 
@@ -211,6 +216,43 @@ impl NetworkService {
                                     };
                                     let _ = tx.send(node_info);
                                 });
+                            }
+                            crate::network::NetworkMessage::BroadcastBlock(block) => {
+                                println!("Broadcasting block: {}", block.body.execution_payload.block_hash);
+                                let mut data = BytesMut::new();
+                                data.extend_from_slice(&[MessageId::NewBlock as u8]);
+                                let msg = NewBlock { 
+                                    block,
+                                    total_difficulty: U256::ZERO, // TODO: Use real total difficulty
+                                };
+                                msg.encode(&mut data);
+                                let msg_bytes = data.freeze();
+                                
+                                if let Err(e) = self.p2p_control.filter_broadcast(
+                                    tentacle::service::TargetSession::All,
+                                    ETH_PROTOCOL_ID,
+                                    msg_bytes
+                                ).await {
+                                    println!("Failed to broadcast block: {:?}", e);
+                                }
+                            }
+                            crate::network::NetworkMessage::RequestHeaders { session_id, request } => {
+                                let mut data = BytesMut::new();
+                                data.extend_from_slice(&[MessageId::GetBlockHeaders as u8]);
+                                request.encode(&mut data);
+                                let _ = self.p2p_control.send_message_to(session_id, ETH_PROTOCOL_ID, data.freeze()).await;
+                            }
+                            crate::network::NetworkMessage::RequestBodies { session_id, request } => {
+                                let mut data = BytesMut::new();
+                                data.extend_from_slice(&[MessageId::GetBlockBodies as u8]);
+                                request.encode(&mut data);
+                                let _ = self.p2p_control.send_message_to(session_id, ETH_PROTOCOL_ID, data.freeze()).await;
+                            }
+                            crate::network::NetworkMessage::SyncHeaders(session_id, headers) => {
+                                let _ = self.sync_send.send(SyncEvent::Headers(session_id, headers)).await;
+                            }
+                            crate::network::NetworkMessage::SyncBodies(session_id, bodies) => {
+                                let _ = self.sync_send.send(SyncEvent::Bodies(session_id, bodies)).await;
                             }
                         }
                     }

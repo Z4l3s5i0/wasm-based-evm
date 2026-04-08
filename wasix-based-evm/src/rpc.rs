@@ -643,6 +643,11 @@ impl TransactionService for MyTransactionService {
                 
                 let latest_block = storage.get_latest_block().cloned().expect("Finalized block should exist");
 
+                // Broadcast the new block to the network
+                if let Some(handle) = &self.network_handle {
+                    let _ = handle.network_send.send(crate::network::NetworkMessage::BroadcastBlock(latest_block.clone())).await;
+                }
+
                 Ok(Response::new(ProposeBlockResponse {
                     success: true,
                     block_hash: format!("{:?}", latest_block.body.execution_payload.block_hash),
@@ -753,7 +758,13 @@ impl TransactionService for MyTransactionService {
         let executor = crate::executor::Executor::new();
         match executor.execute_block(&mut storage, transactions, block.clone()) {
             Ok(_) => {
-                storage.add_block(block);
+                storage.add_block(block.clone());
+                
+                // Broadcast the new block to the network
+                if let Some(handle) = &self.network_handle {
+                    let _ = handle.network_send.send(crate::network::NetworkMessage::BroadcastBlock(block)).await;
+                }
+
                 Ok(Response::new(PayloadStatus {
                     status: "VALID".to_string(),
                     latest_valid_hash: format!("{:?}", block_hash),
