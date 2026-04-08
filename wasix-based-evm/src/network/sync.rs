@@ -79,7 +79,7 @@ impl SyncService {
                         }
                     }
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_secs(5)) => {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(10)) => {
                     self.check_timeouts().await;
                     self.periodic_reputation_adjustment().await;
                 }
@@ -89,7 +89,7 @@ impl SyncService {
 
     async fn check_timeouts(&mut self) {
         let now = Instant::now();
-        let timeout_duration = Duration::from_secs(15);
+        let timeout_duration = Duration::from_secs(30);
         let mut timed_out = Vec::new();
 
         for (id, (session_id, start_time, _req_type)) in &self.pending_requests {
@@ -101,7 +101,8 @@ impl SyncService {
         for (id, session_id) in timed_out {
             info!("[SyncService] Request {} to session {} timed out. Penalizing peer.", id, session_id);
             self.pending_requests.remove(&id);
-            let _ = self.network_send.send(NetworkMessage::ReportPeer(session_id, -10)).await;
+            // Relaxed penalty for timeout
+            let _ = self.network_send.send(NetworkMessage::ReportPeer(session_id, -5)).await;
         }
     }
 
@@ -143,6 +144,7 @@ impl SyncService {
 
     async fn handle_headers(&mut self, session_id: tentacle::SessionId, headers: crate::network::protocol::BlockHeaders) {
         if headers.headers.is_empty() {
+            debug!("[SyncService] Received 0 headers from session {}", session_id);
             return;
         }
 

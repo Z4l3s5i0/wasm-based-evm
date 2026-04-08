@@ -53,6 +53,7 @@ tonic-prost-build = "0.14.5"
 tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix"}
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
 mio = { git = "https://github.com/wasix-org/mio" }
+parking_lot = { git = "https://github.com/wasix-org/parking_lot", branch = "master" }
 
 h2 = { git = "https://github.com/wasix-org/h2", branch = "wasix-0.4.12" }
 hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.28" }

@@ -1,12 +1,12 @@
 use std::str::FromStr;
 use std::collections::HashMap;
 use tentacle::SessionId;
-use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, NewPooledTransactionHashes, NewBlock, GetBlockHeaders, GetBlockBodies, BlockHashOrNumber}, NetworkConfig, PeerInfo};
+use crate::network::{discovery::DiscoveryService, protocol::{self, ETH_PROTOCOL_ID, MessageId, NewPooledTransactionHashes, NewBlock}, NetworkConfig, PeerInfo};
 use crate::storage::{InMemoryStorage, Transaction};
 use crate::network::sync::SyncEvent;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
-use discv5::enr::{self, Enr};
+use discv5::{enr, Enr};
 use alloy_primitives::U256;
 use tentacle::{
     builder::ServiceBuilder,
@@ -54,10 +54,16 @@ impl NetworkService {
         let p2p_listen_addr_clone = p2p_listen_addr.clone();
 
         debug!("[NetworkService] Building P2P service...");
+        let mut yamux_config = tentacle::yamux::config::Config::default();
+        yamux_config.enable_keepalive = true;
+        yamux_config.keepalive_interval = std::time::Duration::from_secs(15);
+        yamux_config.connection_write_timeout = std::time::Duration::from_secs(20);
+
         let mut service = ServiceBuilder::default()
             .insert_protocol(protocol_meta)
             .handshake_type(HandshakeType::Secio(SecioKeyPair::secp256k1_generated()))
             .max_connection_number(config.max_peers)
+            .yamux_config(yamux_config)
             .build(SimpleServiceHandle { 
                 sessions: sessions_clone,
                 p2p_listen_addr: p2p_listen_addr_clone,
@@ -86,6 +92,22 @@ impl NetworkService {
             sessions,
             sync_send,
         })
+    }
+
+    async fn dial_enr(&self, enr: Enr) {
+        if let Some(tcp_port) = enr.tcp4() {
+            if let Some(ip) = enr.ip4() {
+                let ip_str = if ip.is_unspecified() {
+                    "127.0.0.1".to_string()
+                } else {
+                    ip.to_string()
+                };
+                if let Ok(addr) = format!("/ip4/{}/tcp/{}", ip_str, tcp_port).parse::<Multiaddr>() {
+                    debug!("[NetworkService] Attempting to dial ENR: {}", addr);
+                    let _ = self.p2p_control.dial(addr, TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
+                }
+            }
+        }
     }
 
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
@@ -128,23 +150,36 @@ impl NetworkService {
                             discv5::Event::Discovered(enr) => {
                                 info!("[NetworkService] Peer discovered via Discv5: {}", enr.node_id());
                                 // Try to connect via P2P
-                                if let Some(tcp_port) = enr.tcp4() {
-                                    if let Some(ip) = enr.ip4() {
-                                        let ip_str = if ip.is_unspecified() {
-                                            "127.0.0.1".to_string()
-                                        } else {
-                                            ip.to_string()
-                                        };
-                                        let addr: Multiaddr = format!("/ip4/{}/tcp/{}", ip_str, tcp_port).parse().unwrap();
-                                        debug!("[NetworkService] Attempting to dial discovered peer: {}", addr);
-                                        let res = self.p2p_control.dial(addr.clone(), TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
-                                        debug!("[NetworkService] Dial result for {}: {:?}", addr, res);
-                                    } else {
-                                        debug!("[NetworkService] Discovered peer {} has no IPv4", enr.node_id());
+                                self.dial_enr(enr).await;
+                            }
+                            discv5::Event::NodeInserted { node_id, .. } => {
+                                info!("[NetworkService] Node inserted into DHT: {}", node_id);
+                                // NodeInserted only gives node_id, not ENR.
+                                // We might want to look up the ENR if we want to dial it.
+                                let discovery = self.discovery.discv5_clone();
+                                let p2p_control = self.p2p_control.clone();
+                                tokio::spawn(async move {
+                                    let enr = {
+                                        let discv5 = discovery.lock().await;
+                                        discv5.find_enr(&node_id)
+                                    };
+                                    
+                                    if let Some(enr) = enr {
+                                        if let Some(tcp_port) = enr.tcp4() {
+                                            if let Some(ip) = enr.ip4() {
+                                                let ip_str = if ip.is_unspecified() {
+                                                    "127.0.0.1".to_string()
+                                                } else {
+                                                    ip.to_string()
+                                                };
+                                                if let Ok(addr) = format!("/ip4/{}/tcp/{}", ip_str, tcp_port).parse::<Multiaddr>() {
+                                                    debug!("[NetworkService] Attempting to dial inserted node: {}", addr);
+                                                    let _ = p2p_control.dial(addr, TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
+                                                }
+                                            }
+                                        }
                                     }
-                                } else {
-                                    debug!("[NetworkService] Discovered peer {} has no TCP4 port", enr.node_id());
-                                }
+                                });
                             }
                             _ => {
                                 debug!("[NetworkService] Other Discv5 event: {:?}", event);
@@ -189,7 +224,7 @@ impl NetworkService {
                                 });
                             }
                             crate::network::NetworkMessage::AddPeer(addr, tx) => {
-                                if let Ok(enr) = Enr::<enr::CombinedKey>::from_str(&addr) {
+                                if let Ok(enr) = Enr::from_str(&addr) {
                                      let discovery = self.discovery.discv5_clone();
                                      tokio::spawn(async move {
                                          let discv5 = discovery.lock().await;
@@ -271,7 +306,7 @@ impl NetworkService {
                         }
                     }
                 }
-                _ = tokio::time::sleep(std::time::Duration::from_secs(30)) => {
+                _ = tokio::time::sleep(std::time::Duration::from_secs(15)) => {
                     self.discovery.find_peers().await;
                     
                     // Periodic reputation recovery

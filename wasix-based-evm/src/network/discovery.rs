@@ -1,12 +1,13 @@
 use std::sync::Arc;
 use tokio::sync::Mutex;
-use discv5::{Discv5, ConfigBuilder, Enr, enr::CombinedKey, ListenConfig};
+use discv5::{Discv5, ConfigBuilder, Enr, enr::CombinedKey, ListenConfig, enr::NodeId};
 use std::net::{SocketAddr, IpAddr};
 use std::str::FromStr;
 use crate::{info, debug};
 
 pub struct DiscoveryService {
     discv5: Arc<Mutex<Discv5>>,
+    bootnodes: Vec<String>,
 }
 
 impl DiscoveryService {
@@ -23,7 +24,13 @@ impl DiscoveryService {
         let mut enr_builder = Enr::builder();
         
         // Use external IP if provided, otherwise fallback to listen IP
-        let public_ip = ext_ip.unwrap_or(listen_addr.ip());
+        let mut public_ip = ext_ip.unwrap_or(listen_addr.ip());
+        
+        // If the public IP is unspecified (0.0.0.0 or ::), fallback to 127.0.0.1
+        // to ensure it's at least reachable locally.
+        if public_ip.is_unspecified() {
+            public_ip = IpAddr::V4(std::net::Ipv4Addr::LOCALHOST);
+        }
         
         match public_ip {
             IpAddr::V4(ip) => {
@@ -45,22 +52,30 @@ impl DiscoveryService {
         // Configure discv5
         debug!("[DiscoveryService] Configuring discv5...");
         let listen_config = match listen_addr.ip() {
-            IpAddr::V4(ip) => {
-                ListenConfig::default().with_ipv4(ip, listen_addr.port())
+            IpAddr::V4(_ip) => {
+                // For small local networks/tests, bind explicitly to localhost to avoid firewall issues
+                ListenConfig::default().with_ipv4(std::net::Ipv4Addr::LOCALHOST, listen_addr.port())
             }
-            IpAddr::V6(ip) => {
-                ListenConfig::default().with_ipv6(ip, listen_addr.port())
+            IpAddr::V6(_ip) => {
+                ListenConfig::default().with_ipv6(std::net::Ipv6Addr::LOCALHOST, listen_addr.port())
             }
         };
         
-        let config = ConfigBuilder::new(listen_config).build();
+        let config = ConfigBuilder::new(listen_config)
+            .request_timeout(std::time::Duration::from_secs(10))
+            .query_peer_timeout(std::time::Duration::from_secs(5))
+            .query_timeout(std::time::Duration::from_secs(30))
+            .request_retries(3)
+            .enr_update_interval(std::time::Duration::from_secs(60))
+            .query_parallelism(5)
+            .build();
         debug!("[DiscoveryService] Creating Discv5 instance...");
         let discv5_raw = Discv5::new(enr, enr_key, config)?;
         debug!("[DiscoveryService] Discv5 instance created.");
 
         // Add bootnodes
-        for bootnode in bootnodes {
-            match Enr::from_str(&bootnode) {
+        for bootnode in &bootnodes {
+            match Enr::from_str(bootnode) {
                 Ok(enr) => {
                     if let Err(e) = discv5_raw.add_enr(enr.clone()) {
                         info!("[DiscoveryService] Failed to add bootnode ENR: {:?}", e);
@@ -73,7 +88,7 @@ impl DiscoveryService {
 
         let discv5 = Arc::new(Mutex::new(discv5_raw));
         
-        Ok(Self { discv5 })
+        Ok(Self { discv5, bootnodes })
     }
 
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -121,6 +136,85 @@ impl DiscoveryService {
     }
 
     pub async fn find_peers(&self) {
-        // Simple periodic peer discovery could be implemented here
+        debug!("[DiscoveryService] Triggering peer discovery...");
+        
+        let discv5_clone = self.discv5_clone();
+        let bootnodes = self.bootnodes.clone();
+        tokio::spawn(async move {
+            let (nodes, local_id) = {
+                let discv5 = discv5_clone.lock().await;
+                (discv5.table_entries_enr(), discv5.local_enr().node_id())
+            };
+            
+            // Periodically refresh the local ENR to keep its sequence number fresh
+            // or if we ever want to update its contents. Discv5 will handle the seq update.
+            {
+                let mut discv5 = discv5_clone.lock().await;
+                if let Err(e) = discv5.update_local_enr() {
+                    debug!("[DiscoveryService] Failed to update local ENR: {:?}", e);
+                }
+            }
+            
+            // If table is empty, try to re-add bootnodes
+            if nodes.is_empty() {
+                debug!("[DiscoveryService] Routing table is empty, re-adding bootnodes...");
+                let discv5 = discv5_clone.lock().await;
+                for bootnode in &bootnodes {
+                    if let Ok(enr) = Enr::from_str(bootnode) {
+                        let _ = discv5.add_enr(enr);
+                    }
+                }
+            }
+
+            debug!("[DiscoveryService] Pinging {} known nodes...", nodes.len());
+            for enr in nodes {
+                let discv5 = discv5_clone.lock().await;
+                let _ = discv5.send_ping(enr).await;
+            }
+
+            // Query for our own ID to refresh our bucket
+            debug!("[DiscoveryService] Refreshing local bucket...");
+            let find_self_future = {
+                let discv5 = discv5_clone.lock().await;
+                discv5.find_node(local_id)
+            };
+            let _ = find_self_future.await;
+
+            // Also query for bootnode IDs if available to help small network convergence
+            let bootnode_ids: Vec<NodeId> = {
+                let mut ids = Vec::new();
+                for bn in &bootnodes {
+                    if let Ok(enr) = Enr::from_str(bn) {
+                        ids.push(enr.node_id());
+                    }
+                }
+                ids
+            };
+            
+            for bn_id in bootnode_ids {
+                debug!("[DiscoveryService] Querying for bootnode {}...", bn_id);
+                let find_bn_future = {
+                    let discv5 = discv5_clone.lock().await;
+                    discv5.find_node(bn_id)
+                };
+                let _ = find_bn_future.await;
+            }
+
+            // Also query for a random target
+            let target_node = NodeId::random();
+            let find_node_future = {
+                let discv5 = discv5_clone.lock().await;
+                discv5.find_node(target_node)
+            };
+
+            match find_node_future.await {
+                Ok(nodes) => {
+                    debug!("[DiscoveryService] find_node query finished. Found {} nodes.", nodes.len());
+                }
+                Err(e) => {
+                    debug!("[DiscoveryService] find_node query failed: {:?}", e);
+                }
+            }
+        });
     }
 }
