@@ -4,6 +4,7 @@ pub mod service;
 pub mod sync;
 pub mod peer_manager;
 pub mod sync_strategy;
+pub mod protocol_handler;
 
 use crate::{info, debug};
 
