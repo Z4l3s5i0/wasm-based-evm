@@ -1,13 +1,19 @@
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use tokio::sync::{Mutex, mpsc};
 use discv5::{Discv5, ConfigBuilder, Enr, enr::CombinedKey, ListenConfig, enr::NodeId};
 use std::net::{SocketAddr, IpAddr};
 use std::str::FromStr;
 use crate::{info, debug};
 
+#[derive(Debug)]
+pub enum DiscoveryEvent {
+    PeerFound(Enr),
+}
+
 pub struct DiscoveryService {
     discv5: Arc<Mutex<Discv5>>,
     bootnodes: Vec<String>,
+    tx: mpsc::Sender<DiscoveryEvent>,
 }
 
 impl DiscoveryService {
@@ -16,7 +22,7 @@ impl DiscoveryService {
         p2p_port: u16,
         ext_ip: Option<IpAddr>,
         bootnodes: Vec<String>,
-    ) -> Result<Self, Box<dyn std::error::Error>> {
+    ) -> Result<(Self, mpsc::Receiver<DiscoveryEvent>), Box<dyn std::error::Error>> {
         // Generate a random key for the local ENR
         let enr_key = CombinedKey::generate_secp256k1();
         
@@ -87,8 +93,11 @@ impl DiscoveryService {
         }
 
         let discv5 = Arc::new(Mutex::new(discv5_raw));
+
+        // Event channel (single consumer for NetworkService)
+        let (tx, rx) = mpsc::channel(128);
         
-        Ok(Self { discv5, bootnodes })
+        Ok((Self { discv5, bootnodes, tx }, rx))
     }
 
     pub async fn start(&self) -> Result<(), Box<dyn std::error::Error>> {
@@ -102,6 +111,8 @@ impl DiscoveryService {
         match discv5.start().await {
             Ok(_) => {
                 info!("[DiscoveryService] Discv5 started successfully.");
+                // Spawn independent task to watch discovery and emit events
+                self.spawn_event_task();
                 Ok(())
             }
             Err(e) => {
@@ -130,9 +141,33 @@ impl DiscoveryService {
         discv5.add_enr(enr).map_err(|e| format!("{:?}", e))
     }
 
-    pub async fn event_stream(&self) -> Result<tokio::sync::mpsc::Receiver<discv5::Event>, String> {
-        let discv5 = self.discv5.lock().await;
-        discv5.event_stream().await.map_err(|e| format!("{:?}", e))
+    // Internal: Run discovery loop and publish DiscoveryEvents
+    fn spawn_event_task(&self) {
+        let discv5 = self.discv5_clone();
+        let tx = self.tx.clone();
+        tokio::spawn(async move {
+            // We keep a simple snapshot of known node ids to avoid spamming duplicates
+            use std::collections::HashSet;
+            let mut known: HashSet<String> = HashSet::new();
+
+            loop {
+                // Snapshot current ENRs from routing table
+                let entries = {
+                    let d = discv5.lock().await;
+                    d.table_entries_enr()
+                };
+
+                for enr in entries {
+                    let id = enr.node_id().to_string();
+                    if known.insert(id) {
+                        let _ = tx.send(DiscoveryEvent::PeerFound(enr)).await;
+                    }
+                }
+
+                // Sleep a bit before next scan
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        });
     }
 
     pub async fn find_peers(&self) {

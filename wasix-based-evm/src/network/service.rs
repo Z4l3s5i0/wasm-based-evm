@@ -1,7 +1,7 @@
 use std::str::FromStr;
 use std::collections::HashMap;
 use tentacle::SessionId;
-use crate::network::{discovery::DiscoveryService, NetworkConfig, PeerInfo, peer_manager::{PeerManager, PeerManagerEvent}, protocol_handler};
+use crate::network::{discovery::{DiscoveryService, DiscoveryEvent}, NetworkConfig, PeerInfo, peer_manager::{PeerManager, PeerManagerEvent}, protocol_handler};
 use crate::storage::{InMemoryStorage, Transaction};
 use crate::network::sync::SyncEvent;
 use std::sync::Arc;
@@ -30,6 +30,7 @@ pub struct NetworkService {
     p2p_listen_addr: Arc<Mutex<Multiaddr>>,
     peer_manager: Arc<Mutex<PeerManager>>,
     sync_send: mpsc::Sender<SyncEvent>,
+    discovery_recv: mpsc::Receiver<DiscoveryEvent>,
 }
 
 impl NetworkService {
@@ -43,8 +44,8 @@ impl NetworkService {
     ) -> Result<Self, Box<dyn std::error::Error>> {
         debug!("[NetworkService] Initializing NetworkService...");
         debug!("[NetworkService] Creating DiscoveryService with discv5_addr: {}, p2p_port: {}, ext_ip: {:?}", config.discv5_addr, config.p2p_addr.port(), config.ext_ip);
-        //2
-        let discovery = DiscoveryService::new(config.discv5_addr, config.p2p_addr.port(), config.ext_ip, config.bootnodes)?;
+
+        let (discovery, discovery_recv) = DiscoveryService::new(config.discv5_addr, config.p2p_addr.port(), config.ext_ip, config.bootnodes)?;
         debug!("[NetworkService] DiscoveryService created.");
         
         let protocol_meta = protocol_handler::create_meta(storage, sync_send.clone(), network_send);
@@ -95,6 +96,7 @@ impl NetworkService {
             p2p_listen_addr,
             peer_manager,
             sync_send,
+            discovery_recv,
         })
     }
 
@@ -121,9 +123,7 @@ impl NetworkService {
             return Err(e);
         }
         
-        debug!("[NetworkService] Subscribing to Discv5 events...");
-        let mut discv5_events = self.discovery.event_stream().await
-            .map_err(|e| format!("{:?}", e))?;
+        debug!("[NetworkService] Using decoupled DiscoveryService event channel...");
         
         info!("[NetworkService] Network service running and listening for events.");
 
@@ -148,31 +148,12 @@ impl NetworkService {
 
         loop {
             tokio::select! {
-                event = discv5_events.recv() => {
-                    debug!("[NetworkService] Received Discv5 event");
+                event = self.discovery_recv.recv() => {
                     if let Some(event) = event {
                         match event {
-                            discv5::Event::Discovered(enr) => {
-                                info!("[NetworkService] Peer discovered via Discv5: {}", enr.node_id());
-                                // Try to connect via P2P
+                            DiscoveryEvent::PeerFound(enr) => {
+                                info!("[NetworkService] Peer discovered: {}", enr.node_id());
                                 self.dial_enr(enr).await;
-                            }
-                            discv5::Event::NodeInserted { node_id, .. } => {
-                                info!("[NetworkService] Node inserted into DHT: {}", node_id);
-                                // NodeInserted only gives node_id, not ENR.
-                                // We might want to look up the ENR if we want to dial it.
-                                let enr = {
-                                    let discv5 = self.discovery.discv5_clone();
-                                    let lock = discv5.lock().await;
-                                    lock.find_enr(&node_id)
-                                };
-                                
-                                if let Some(enr) = enr {
-                                    self.dial_enr(enr).await;
-                                }
-                            }
-                            _ => {
-                                debug!("[NetworkService] Other Discv5 event: {:?}", event);
                             }
                         }
                     }
