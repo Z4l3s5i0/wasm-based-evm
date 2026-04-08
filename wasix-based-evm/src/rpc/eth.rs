@@ -1,5 +1,5 @@
 use crate::rpc::{MyTransactionService, AccountsResponse, BlockNumberResponse, GasPriceResponse, GetBalanceRequest, BalanceResponse, GetBlockByNumberRequest, BlockResponse, GetBlockByHashRequest, GetBlockTransactionCountByHashRequest, TransactionCountResponse, GetBlockTransactionCountByNumberRequest, GetTransactionByHashRequest, TransactionInfoResponse, TransactionReceiptResponse, TransactionRequest, TransactionResponse, GetCodeRequest, CodeResponse, RootsResponse, MempoolResponse, Empty};
-use crate::storage::{InMemoryStorage, types::{Transaction, Block}};
+use crate::storage::{InMemoryStorage, types::{Transaction, Block}, Receipt, Withdrawal};
 use crate::ev::h160_to_address;
 use crate::{info, debug};
 use alloy_primitives::{Address, U256, B256, hex};
@@ -57,13 +57,7 @@ impl MyTransactionService {
         let block = storage.get_block_by_number(req.number)
             .ok_or_else(|| Status::not_found("Block not found"))?;
 
-        Ok(Response::new(BlockResponse {
-            number: block.body.execution_payload.block_number,
-            hash: format!("{:?}", block.body.execution_payload.block_hash),
-            parent_hash: format!("{:?}", block.body.execution_payload.parent_hash),
-            timestamp: block.body.execution_payload.timestamp,
-            transactions: block.body.execution_payload.transactions.iter().map(|t| format!("{:?}", t.hash)).collect(),
-        }))
+        Ok(Response::new(BlockResponse::from(block)))
     }
 
     pub async fn eth_get_block_by_hash_impl(
@@ -76,13 +70,7 @@ impl MyTransactionService {
         let block = storage.get_block_by_hash(hash)
             .ok_or_else(|| Status::not_found("Block not found"))?;
 
-        Ok(Response::new(BlockResponse {
-            number: block.body.execution_payload.block_number,
-            hash: format!("{:?}", block.body.execution_payload.block_hash),
-            parent_hash: format!("{:?}", block.body.execution_payload.parent_hash),
-            timestamp: block.body.execution_payload.timestamp,
-            transactions: block.body.execution_payload.transactions.iter().map(|t| format!("{:?}", t.hash)).collect(),
-        }))
+        Ok(Response::new(BlockResponse::from(block)))
     }
 
     pub async fn eth_get_block_transaction_count_by_hash_impl(
@@ -156,37 +144,7 @@ impl MyTransactionService {
         let block = storage.get_block_by_transaction_hash(hash)
             .ok_or_else(|| Status::not_found("Block for transaction not found"))?;
 
-        let tx_index = block.body.execution_payload.transactions.iter()
-            .position(|t| t.hash == hash)
-            .unwrap_or(0) as u64;
-
-        let logs = receipt.logs.iter().enumerate().map(|(i, log)| {
-            LogEntry {
-                address: format!("{:?}", log.address),
-                topics: log.topics.iter().map(|t| format!("{:?}", t)).collect(),
-                data: log.data.clone(),
-                block_number: block.body.execution_payload.block_number,
-                block_hash: format!("{:?}", block.body.execution_payload.block_hash),
-                transaction_hash: format!("{:?}", hash),
-                transaction_index: tx_index,
-                log_index: i as u64,
-            }
-        }).collect();
-
-        Ok(Response::new(TransactionReceiptResponse {
-            transaction_hash: format!("{:?}", hash),
-            transaction_index: tx_index,
-            block_hash: format!("{:?}", block.body.execution_payload.block_hash),
-            block_number: block.body.execution_payload.block_number,
-            from: format!("{:?}", tx.from),
-            to: tx.to.map(|a| format!("{:?}", a)).unwrap_or_default(),
-            cumulative_gas_used: receipt.cumulative_gas_used,
-            gas_used: receipt.cumulative_gas_used, // Simplified
-            contract_address: String::new(), // TODO: implement if needed
-            logs,
-            logs_bloom: format!("{:?}", receipt.logs_bloom),
-            status: if receipt.success { 1 } else { 0 },
-        }))
+        Ok(Response::new(self.build_receipt_response(&tx, &receipt, &block)))
     }
 
     pub async fn eth_send_transaction_impl(
@@ -194,26 +152,7 @@ impl MyTransactionService {
         request: Request<TransactionRequest>,
     ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
-
-        let from_addr: Address = req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
-        let to_addr: Option<Address> = if req.to.is_empty() {
-            None
-        } else {
-            Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
-        };
-
-        let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
-            U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
-        }).map_err(|_| Status::invalid_argument("Invalid value"))?;
-
-        let tx = Transaction::builder(from_addr)
-            .nonce(req.nonce)
-            .to(to_addr)
-            .value(val_u256)
-            .data(req.data)
-            .gas_limit(req.gas_limit)
-            .gas_price(U256::from(req.gas_price))
-            .build();
+        let tx = Transaction::try_from(req)?;
 
         let mut storage = self.storage.lock().await;
         let tx_hash = tx.hash;
@@ -240,32 +179,12 @@ impl MyTransactionService {
         request: Request<TransactionRequest>,
     ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
-
-        let from_addr: Address = req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
-        let to_addr: Option<Address> = if req.to.is_empty() {
-            None
-        } else {
-            Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
-        };
+        let tx = Transaction::try_from(req)?;
 
         let storage = self.storage.lock().await;
         let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
 
-        let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
-            // Try hex if decimal fails
-            U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
-        }).map_err(|_| Status::invalid_argument("Invalid value"))?;
-
-        let tx = Transaction::builder(from_addr)
-            .nonce(req.nonce)
-            .to(to_addr)
-            .value(val_u256)
-            .data(req.data)
-            .gas_limit(req.gas_limit)
-            .gas_price(U256::from(req.gas_price))
-            .build();
-
-        debug!("[RPC] DEBUG: Calling eth_call: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
+        debug!("[RPC] DEBUG: Calling eth_call: from={:?}, to={:?}, value={}", tx.from, tx.to, tx.value);
 
         // For eth_call, we use the latest block state without incrementing the block number
         let block = latest_block;
@@ -323,11 +242,12 @@ impl MyTransactionService {
     ) -> Result<Response<RootsResponse>, Status> {
         let storage = self.storage.lock().await;
         let block = storage.get_latest_block().expect("Genesis block should exist");
+        let hash = block.body.execution_payload.block_hash;
 
         let calculated_state_root = storage.calculate_state_root();
-        let calculated_tx_root = InMemoryStorage::calculate_transactions_root(&block.body.execution_payload.transactions);
-        let calculated_receipts_root = InMemoryStorage::calculate_receipts_root(&storage.get_block_receipts(block.body.execution_payload.block_hash));
-        let calculated_withdrawals_root = InMemoryStorage::calculate_withdrawals_root(&block.body.execution_payload.withdrawals);
+        let calculated_tx_root = Transaction::calculate_root(&block.body.execution_payload.transactions);
+        let calculated_receipts_root = Receipt::calculate_root(&storage.get_block_receipts(hash));
+        let calculated_withdrawals_root = Withdrawal::calculate_root(&block.body.execution_payload.withdrawals);
 
         Ok(Response::new(RootsResponse {
             state_root: format!("{:?} (calc: {:?})", block.body.execution_payload.state_root, calculated_state_root),

@@ -223,16 +223,4 @@ impl InMemoryStorage {
             (Address::from(addr.0), trie_acc)
         }))
     }
-
-    pub fn calculate_transactions_root(transactions: &[Transaction]) -> B256 {
-        ordered_trie_root(transactions)
-    }
-
-    pub fn calculate_withdrawals_root(withdrawals: &[Withdrawal]) -> B256 {
-        ordered_trie_root(withdrawals)
-    }
-
-    pub fn calculate_receipts_root(receipts: &[Receipt]) -> B256 {
-        ordered_trie_root(receipts)
-    }
 }

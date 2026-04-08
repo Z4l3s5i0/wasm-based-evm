@@ -3,6 +3,7 @@ use tokio::sync::{Mutex, mpsc};
 use crate::storage::{InMemoryStorage, Block};
 use crate::network::NetworkMessage;
 use crate::network::protocol::{GetBlockHeaders, BlockHashOrNumber, GetBlockBodies};
+use crate::network::sync_strategy::{SyncStrategy, SyncAction};
 use crate::executor::Executor;
 use std::collections::{VecDeque, HashMap};
 use std::time::{Instant, Duration};
@@ -13,10 +14,9 @@ pub struct SyncService {
     network_send: mpsc::Sender<NetworkMessage>,
     sync_recv: mpsc::Receiver<SyncEvent>,
     executor: Executor,
-    pending_headers: VecDeque<Block>,
     pending_requests: HashMap<u64, (tentacle::SessionId, Instant, RequestType)>,
     active_sessions: HashMap<tentacle::SessionId, Instant>,
-    next_request_id: u64,
+    strategy: SyncStrategy,
 }
 
 enum RequestType {
@@ -44,10 +44,9 @@ impl SyncService {
                 network_send,
                 sync_recv,
                 executor: Executor::new(),
-                pending_headers: VecDeque::new(),
                 pending_requests: HashMap::new(),
                 active_sessions: HashMap::new(),
-                next_request_id: 1,
+                strategy: SyncStrategy::new(),
             },
             sync_send,
         )
@@ -125,13 +124,6 @@ impl SyncService {
         }
     }
 
-    async fn periodic_reputation_adjustment(&self) {
-        // Broadcast a small reputation boost to all active peers every cycle
-        // This allows peers to recover over time.
-        // We'll use a special SessionId or handle it in NetworkService.
-        // For now, let's just send a "heartbeat" or similar if needed, 
-        // but it's easier to implement recovery in NetworkService directly.
-    }
 
     async fn request_headers(&mut self, session_id: tentacle::SessionId) {
         let latest_number = {
@@ -139,26 +131,21 @@ impl SyncService {
             storage.get_latest_block_number()
         };
 
-        let request_id = self.next_request_id;
-        self.next_request_id += 1;
+        match self.strategy.request_headers(session_id, latest_number) {
+            SyncAction::RequestHeaders(sid, request) => {
+                let request_id = request.request_id;
+                self.pending_requests.insert(request_id, (sid, Instant::now(), RequestType::Headers));
+                debug!("[SyncService] Requesting headers (id: {}) from session {}", request_id, sid);
 
-        let request = GetBlockHeaders {
-            request_id,
-            block: BlockHashOrNumber::Number(latest_number + 1),
-            amount: 10,
-            skip: 0,
-            reverse: false,
-        };
-
-        self.pending_requests.insert(request_id, (session_id, Instant::now(), RequestType::Headers));
-        debug!("[SyncService] Requesting headers (id: {}) from session {}", request_id, session_id);
-
-        if let Err(e) = self.network_send.send(NetworkMessage::RequestHeaders {
-            session_id,
-            request,
-        }).await {
-            info!("[SyncService] Failed to send RequestHeaders: {:?}", e);
-            self.pending_requests.remove(&request_id);
+                if let Err(e) = self.network_send.send(NetworkMessage::RequestHeaders {
+                    session_id: sid,
+                    request,
+                }).await {
+                    info!("[SyncService] Failed to send RequestHeaders: {:?}", e);
+                    self.pending_requests.remove(&request_id);
+                }
+            }
+            _ => {}
         }
     }
 
@@ -168,36 +155,28 @@ impl SyncService {
             return;
         }
 
-        let mut hashes = Vec::new();
-        for header in headers.headers {
-            hashes.push(header.body.execution_payload.block_hash);
-            self.pending_headers.push_back(header);
-        }
+        match self.strategy.handle_headers(session_id, headers.headers) {
+            SyncAction::RequestBodies(sid, request) => {
+                let request_id = request.request_id;
+                self.pending_requests.insert(request_id, (sid, Instant::now(), RequestType::Bodies));
+                debug!("[SyncService] Requesting bodies (id: {}) from session {}", request_id, sid);
 
-        let request_id = self.next_request_id;
-        self.next_request_id += 1;
-
-        let request = GetBlockBodies {
-            request_id,
-            hashes,
-        };
-
-        self.pending_requests.insert(request_id, (session_id, Instant::now(), RequestType::Bodies));
-        debug!("[SyncService] Requesting bodies (id: {}) from session {}", request_id, session_id);
-
-        if let Err(e) = self.network_send.send(NetworkMessage::RequestBodies {
-            session_id,
-            request,
-        }).await {
-            info!("[SyncService] Failed to send RequestBodies: {:?}", e);
-            self.pending_requests.remove(&request_id);
+                if let Err(e) = self.network_send.send(NetworkMessage::RequestBodies {
+                    session_id: sid,
+                    request,
+                }).await {
+                    info!("[SyncService] Failed to send RequestBodies: {:?}", e);
+                    self.pending_requests.remove(&request_id);
+                }
+            }
+            _ => {}
         }
     }
 
     async fn handle_bodies(&mut self, session_id: tentacle::SessionId, bodies: crate::network::protocol::BlockBodies) {
         let mut storage = self.storage.lock().await;
         for body in bodies.bodies {
-            if let Some(header) = self.pending_headers.pop_front() {
+            if let Some(header) = self.strategy.pending_headers.pop_front() {
                 // In a real implementation, we should match body with header via hash
                 if header.body.execution_payload.block_hash == body.body.execution_payload.block_hash {
                     debug!("[SyncService] Executing block {}", header.body.execution_payload.block_number);
@@ -216,7 +195,7 @@ impl SyncService {
                 } else {
                     debug!("[SyncService] Mismatched body for block. Penalizing peer.");
                     let _ = self.network_send.send(NetworkMessage::ReportPeer(session_id, -20)).await;
-                    self.pending_headers.push_front(header);
+                    self.strategy.pending_headers.push_front(header);
                     break;
                 }
             }

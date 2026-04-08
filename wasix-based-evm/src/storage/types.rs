@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, Bloom, BloomInput, FixedBytes, B256, U256};
 use alloy_rlp::{Encodable, RlpDecodable, RlpEncodable};
+use alloy_trie::root::ordered_trie_root;
 use discv5::enr::k256::elliptic_curve::rand_core::RngCore;
 use crate::ev::h160_to_address;
 use crate::storage::storage::InMemoryStorage;
@@ -24,6 +25,10 @@ impl Receipt {
         let mut out = Vec::new();
         self.encode(&mut out);
         out
+    }
+
+    pub fn calculate_root(receipts: &[Receipt]) -> B256 {
+        ordered_trie_root(receipts)
     }
 }
 
@@ -73,6 +78,10 @@ impl Transaction {
         let mut out = Vec::new();
         self.encode(&mut out);
         out
+    }
+
+    pub fn calculate_root(transactions: &[Transaction]) -> B256 {
+        ordered_trie_root(transactions)
     }
 }
 
@@ -169,6 +178,10 @@ impl Withdrawal {
         let mut out = Vec::new();
         self.encode(&mut out);
         out
+    }
+
+    pub fn calculate_root(withdrawals: &[Withdrawal]) -> B256 {
+        ordered_trie_root(withdrawals)
     }
 }
 
@@ -456,19 +469,19 @@ impl BlockBuilder {
 
     pub fn build(self) -> Block {
         let transactions_root = if self.transactions_root == B256::ZERO && !self.transactions.is_empty() {
-            InMemoryStorage::calculate_transactions_root(&self.transactions)
+            Transaction::calculate_root(&self.transactions)
         } else {
             self.transactions_root
         };
 
         let withdrawals_root = if self.withdrawals_root == B256::ZERO && !self.withdrawals.is_empty() {
-            InMemoryStorage::calculate_withdrawals_root(&self.withdrawals)
+            Withdrawal::calculate_root(&self.withdrawals)
         } else {
             self.withdrawals_root
         };
 
         let receipts_root = if self.receipts_root == B256::ZERO && !self.receipts.is_empty() {
-            InMemoryStorage::calculate_receipts_root(&self.receipts)
+            Receipt::calculate_root(&self.receipts)
         } else {
             self.receipts_root
         };

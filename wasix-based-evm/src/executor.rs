@@ -9,7 +9,26 @@ use evm::{
 };
 use evm_precompile::StandardPrecompileSet;
 use crate::storage::storage::InMemoryStorage;
-use crate::storage::types::{logs_bloom, Block, Log, Receipt, Transaction};
+use crate::storage::types::{logs_bloom, Block, Log, Receipt, Transaction, Withdrawal};
+
+pub trait OverlayedChangeSetExt {
+    fn merge(&mut self, other: OverlayedChangeSet);
+}
+
+impl OverlayedChangeSetExt for OverlayedChangeSet {
+    fn merge(&mut self, other: OverlayedChangeSet) {
+        self.logs.extend(other.logs);
+        self.balances.extend(other.balances);
+        self.codes.extend(other.codes);
+        self.nonces.extend(other.nonces);
+        self.storage_resets.extend(other.storage_resets);
+        self.storages.extend(other.storages);
+        self.transient_storage.extend(other.transient_storage);
+        self.accessed.extend(other.accessed);
+        self.touched.extend(other.touched);
+        self.deletes.extend(other.deletes);
+    }
+}
 
 pub struct Executor {
     pub config: Config,
@@ -101,17 +120,7 @@ impl Executor {
                     cumulative_gas_used += value.used_gas.as_u64();
                     
                     let (_, changeset) = overlayed.deconstruct();
-                    // Merge changeset into total_changeset
-                    total_changeset.logs.extend(changeset.logs.clone());
-                    total_changeset.balances.extend(changeset.balances);
-                    total_changeset.codes.extend(changeset.codes);
-                    total_changeset.nonces.extend(changeset.nonces);
-                    total_changeset.storage_resets.extend(changeset.storage_resets);
-                    total_changeset.storages.extend(changeset.storages);
-                    total_changeset.transient_storage.extend(changeset.transient_storage);
-                    total_changeset.accessed.extend(changeset.accessed);
-                    total_changeset.touched.extend(changeset.touched);
-                    total_changeset.deletes.extend(changeset.deletes);
+                    total_changeset.merge(changeset.clone());
 
                     let logs: Vec<Log> = changeset.logs.into_iter().map(Log::from).collect();
                     let bloom = logs_bloom(&logs);
@@ -177,9 +186,9 @@ impl Executor {
         storage_for_root.backend.apply_overlayed(&total_changeset);
         let state_root = storage_for_root.calculate_state_root();
 
-        let txs_root = InMemoryStorage::calculate_transactions_root(&transactions);
-        let withdrawals_root = InMemoryStorage::calculate_withdrawals_root(&block.body.execution_payload.withdrawals);
-        let receipts_root = InMemoryStorage::calculate_receipts_root(&receipts);
+        let txs_root = Transaction::calculate_root(&transactions);
+        let withdrawals_root = Withdrawal::calculate_root(&block.body.execution_payload.withdrawals);
+        let receipts_root = Receipt::calculate_root(&receipts);
 
         debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", state_root, txs_root, receipts_root, withdrawals_root);
 

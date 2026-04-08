@@ -3914,6 +3914,7 @@ dependencies = [
  "evm-precompile",
  "getrandom 0.2.15",
  "h2",
+ "log",
  "mio 0.8.8",
  "prost",
  "rand 0.8.5",

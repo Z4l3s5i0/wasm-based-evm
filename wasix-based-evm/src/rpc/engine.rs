@@ -13,33 +13,13 @@ impl MyTransactionService {
         request: Request<TransactionRequest>,
     ) -> Result<Response<TransactionResponse>, Status> {
         let req = request.into_inner();
-
-        let from_addr: Address = req.from.parse().map_err(|_| Status::invalid_argument("Invalid from address"))?;
-        let to_addr: Option<Address> = if req.to.is_empty() {
-            None
-        } else {
-            Some(req.to.parse().map_err(|_| Status::invalid_argument("Invalid to address"))?)
-        };
+        let tx = Transaction::try_from(req)?;
 
         let mut storage = self.storage.lock().await;
         let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
         let next_number = latest_block.body.execution_payload.block_number + 1;
 
-        let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
-            // Try hex if decimal fails
-            U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
-        }).map_err(|_| Status::invalid_argument("Invalid value"))?;
-
-        let tx = Transaction::builder(from_addr)
-            .nonce(req.nonce)
-            .to(to_addr)
-            .value(val_u256)
-            .data(req.data)
-            .gas_limit(req.gas_limit)
-            .gas_price(U256::from(req.gas_price))
-            .build();
-
-        debug!("[RPC] DEBUG: Executing tx: from={:?}, to={:?}, value={}", from_addr, to_addr, val_u256);
+        debug!("[RPC] DEBUG: Executing tx: from={:?}, to={:?}, value={}", tx.from, tx.to, tx.value);
 
         let block = Block::builder(next_number)
             .parent_hash(latest_block.body.execution_payload.block_hash)
@@ -51,10 +31,10 @@ impl MyTransactionService {
         match self.executor.execute(&mut *storage, tx.clone(), block) {
             Ok(val) => {
                 info!("[RPC] Transaction executed successfully: {:?}", tx.hash);
-                let sender_balance = storage.get_balance(from_addr);
+                let sender_balance = storage.get_balance(tx.from);
                 debug!("[RPC] new balance for sender {}", sender_balance);
 
-                if let Some(to_addr) = to_addr {
+                if let Some(to_addr) = tx.to {
                     let receiver_balance = storage.get_balance(to_addr);
                     debug!("[RPC] new balance for receiver {}", receiver_balance);
                 }
