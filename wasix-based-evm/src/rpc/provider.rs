@@ -160,95 +160,110 @@ impl EthWriteProvider for DefaultBlockchainProvider {
 #[async_trait]
 impl EngineProvider for DefaultBlockchainProvider {
     async fn propose_block(&self, req: DomainProposeBlockRequest) -> Result<ProposeBlockResult, ProviderError> {
-        let mut storage = self.storage.write().await;
-        let mut mempool = self.mempool.write().await;
+        let storage_arc = self.storage.clone();
+        let mempool_arc = self.mempool.clone();
         let executor = self.executor.clone();
+        let network_send = self.network_send.clone();
 
-        // For propose_block, we build a new block from mempool
-        // Default behavior: pop up to 100 transactions from mempool
-        let transactions = mempool.pop_transactions(100);
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Handle::current();
+            
+            let (mut storage, mut mempool) = rt.block_on(async {
+                let s = storage_arc.write().await;
+                let m = mempool_arc.write().await;
+                (s, m)
+            });
 
-        let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
-        
-        let parent_hash = latest_block.body.execution_payload.block_hash;
-        let timestamp = if req.timestamp == 0 {
-            latest_block.body.execution_payload.timestamp + 12
-        } else {
-            req.timestamp
-        };
+            let transactions = mempool.pop_transactions(100);
 
-        let block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
-            .parent_hash(parent_hash)
-            .timestamp(timestamp)
-            .fee_recipient(latest_block.body.execution_payload.fee_recipient);
+            let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
+            
+            let parent_hash = latest_block.body.execution_payload.block_hash;
+            let timestamp = if req.timestamp == 0 {
+                latest_block.body.execution_payload.timestamp + 12
+            } else {
+                req.timestamp
+            };
 
-        let _ = executor.execute_block(&mut storage, transactions.clone(), block_builder.build())
-            .map_err(|e| ProviderError::Execution(e))?;
+            let block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
+                .parent_hash(parent_hash)
+                .timestamp(timestamp)
+                .fee_recipient(latest_block.body.execution_payload.fee_recipient);
 
-        // Get the actual block that was added to storage (with calculated roots)
-        let block = storage.get_latest_block().cloned().ok_or_else(|| ProviderError::Internal("Block not found after execution".to_string()))?;
-        let block_hash = block.body.execution_payload.block_hash;
+            executor.execute_block(&mut storage, transactions.clone(), block_builder.build())
+                .map_err(|e| ProviderError::Execution(e))?;
 
-        // Broadcast block
-        if let Some(ref network_send) = self.network_send {
-            let _ = network_send.send(NetworkMessage::BroadcastBlock(block)).await;
-        }
+            // Get the actual block that was added to storage (with calculated roots)
+            let block = storage.get_latest_block().cloned().ok_or_else(|| ProviderError::Internal("Block not found after execution".to_string()))?;
+            let block_hash = block.body.execution_payload.block_hash;
 
-        Ok(ProposeBlockResult {
-            block_hash,
-            tx_results: transactions,
-        })
+            // Broadcast block
+            if let Some(ref network_send) = network_send {
+                let _ = rt.block_on(network_send.send(NetworkMessage::BroadcastBlock(block)));
+            }
+
+            Ok(ProposeBlockResult {
+                block_hash,
+                tx_results: transactions,
+            })
+        }).await.map_err(|e| ProviderError::Internal(format!("Task panicked: {}", e)))?
     }
 
     async fn engine_new_payload(&self, payload: DomainExecutionPayload) -> Result<DomainPayloadStatus, ProviderError> {
-        let mut storage = self.storage.write().await;
+        let storage_arc = self.storage.clone();
         let executor = self.executor.clone();
+        let network_send = self.network_send.clone();
 
-        let block_hash = payload.block_hash;
-        if storage.get_block_by_hash(block_hash).is_some() {
-            return Ok(DomainPayloadStatus {
-                status: "VALID".to_string(),
-                latest_valid_hash: Some(block_hash),
-                validation_error: None,
-            });
-        }
+        tokio::task::spawn_blocking(move || {
+            let rt = tokio::runtime::Handle::current();
+            let mut storage = rt.block_on(storage_arc.write());
 
-        let transactions = payload.transactions.clone();
-        let parent_hash = payload.parent_hash;
-
-        let block = Block::builder(payload.block_number)
-            .parent_hash(parent_hash)
-            .timestamp(payload.timestamp)
-            .fee_recipient(payload.fee_recipient)
-            .gas_limit(payload.gas_limit)
-            .gas_used(payload.gas_used)
-            .block_hash(block_hash)
-            .transactions(transactions.clone())
-            .build();
-
-        // Execute block
-        match executor.execute_block(&mut storage, transactions, block.clone()) {
-            Ok(_) => {
-                storage.add_block(block.clone());
-                // Broadcast block
-                if let Some(ref network_send) = self.network_send {
-                    let _ = network_send.send(NetworkMessage::BroadcastBlock(block)).await;
-                }
-
-                Ok(DomainPayloadStatus {
+            let block_hash = payload.block_hash;
+            if storage.get_block_by_hash(block_hash).is_some() {
+                return Ok(DomainPayloadStatus {
                     status: "VALID".to_string(),
                     latest_valid_hash: Some(block_hash),
                     validation_error: None,
-                })
+                });
             }
-            Err(e) => {
-                Ok(DomainPayloadStatus {
-                    status: "INVALID".to_string(),
-                    latest_valid_hash: None,
-                    validation_error: Some(e),
-                })
+
+            let transactions = payload.transactions.clone();
+            let parent_hash = payload.parent_hash;
+
+            let block = Block::builder(payload.block_number)
+                .parent_hash(parent_hash)
+                .timestamp(payload.timestamp)
+                .fee_recipient(payload.fee_recipient)
+                .gas_limit(payload.gas_limit)
+                .gas_used(payload.gas_used)
+                .block_hash(block_hash)
+                .transactions(transactions.clone())
+                .build();
+
+            // Execute block
+            match executor.execute_block(&mut storage, transactions, block.clone()) {
+                Ok(_) => {
+                    storage.add_block(block.clone());
+                    // Broadcast block
+                    if let Some(ref network_send) = network_send {
+                        let _ = rt.block_on(network_send.send(NetworkMessage::BroadcastBlock(block)));
+                    }
+
+                    Ok(DomainPayloadStatus {
+                        status: "VALID".to_string(),
+                        latest_valid_hash: Some(block_hash),
+                        validation_error: None,
+                    })
+                }
+                Err(e) => {
+                    Ok(DomainPayloadStatus {
+                        status: "INVALID".to_string(),
+                        latest_valid_hash: None,
+                        validation_error: Some(e),
+                    })
+                }
             }
-        }
+        }).await.map_err(|e| ProviderError::Internal(format!("Task panicked: {}", e)))?
     }
 
     async fn engine_forkchoice_updated(&self, req: DomainForkchoiceUpdatedRequest) -> Result<DomainForkchoiceUpdatedResponse, ProviderError> {
@@ -262,53 +277,66 @@ impl EngineProvider for DefaultBlockchainProvider {
 
         // 2. Build payload if requested
         let payload_id = if let Some(attr) = req.payload_attributes {
-            let (mut storage, mut mempool, executor) = {
-                let storage = self.storage.read().await;
-                let mempool = self.mempool.read().await;
-                (storage.clone(), mempool.clone(), self.executor.clone())
-            };
+            let storage_arc = self.storage.clone();
+            let mempool_arc = self.mempool.clone();
+            let executor = self.executor.clone();
+            let pending_payloads_arc = self.pending_payloads.clone();
 
-            let latest_block = storage.get_block_by_hash(head_block_hash)
-                .cloned()
-                .or_else(|| storage.get_latest_block().cloned())
-                .expect("Genesis block should exist");
+            tokio::task::spawn_blocking(move || {
+                let rt = tokio::runtime::Handle::current();
+                let (mut storage, mut mempool) = rt.block_on(async {
+                    // Use read locks for simulation if possible, but execute_with_changeset needs &mut storage
+                    // Actually, InMemoryStorage clone is cheap (it's mostly Arcs/Maps)
+                    let s = storage_arc.read().await.clone();
+                    let m = mempool_arc.read().await.clone();
+                    (s, m)
+                });
 
-            let transactions = mempool.peek_transactions(100);
+                let latest_block = storage.get_block_by_hash(head_block_hash)
+                    .cloned()
+                    .or_else(|| storage.get_latest_block().cloned())
+                    .expect("Genesis block should exist");
 
-            let block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
-                .parent_hash(head_block_hash)
-                .timestamp(attr.timestamp)
-                .prev_randao(attr.prev_randao)
-                .fee_recipient(attr.suggested_fee_recipient);
+                let transactions = mempool.peek_transactions(100);
 
-            let dummy_block = block_builder.build();
+                let block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
+                    .parent_hash(head_block_hash)
+                    .timestamp(attr.timestamp)
+                    .prev_randao(attr.prev_randao)
+                    .fee_recipient(attr.suggested_fee_recipient);
 
-            let (_results, receipts, total_changeset) = executor.execute_with_changeset(&mut storage, transactions.clone(), dummy_block.clone())
-                .map_err(|e| ProviderError::Execution(e))?;
+                let dummy_block = block_builder.build();
 
-            // Build finalized block with correct roots
-            let mut block_builder = Block::builder(dummy_block.slot)
-                .parent_hash(dummy_block.body.execution_payload.parent_hash)
-                .timestamp(dummy_block.body.execution_payload.timestamp)
-                .prev_randao(dummy_block.body.execution_payload.prev_randao)
-                .fee_recipient(dummy_block.body.execution_payload.fee_recipient)
-                .transactions(transactions);
+                let (_results, receipts, total_changeset) = executor.execute_with_changeset(&mut storage, transactions.clone(), dummy_block.clone())
+                    .map_err(|e| ProviderError::Execution(e))?;
 
-            for r in receipts.clone() {
-                block_builder = block_builder.add_receipt(r);
-            }
+                // Build finalized block with correct roots
+                let mut block_builder = Block::builder(dummy_block.slot)
+                    .parent_hash(dummy_block.body.execution_payload.parent_hash)
+                    .timestamp(dummy_block.body.execution_payload.timestamp)
+                    .prev_randao(dummy_block.body.execution_payload.prev_randao)
+                    .fee_recipient(dummy_block.body.execution_payload.fee_recipient)
+                    .transactions(transactions);
 
-            let block = block_builder.build();
-            let id = block.body.execution_payload.block_hash;
+                for r in receipts.clone() {
+                    block_builder = block_builder.add_receipt(r);
+                }
 
-            let mut pending = self.pending_payloads.lock().await;
-            pending.insert(id, PendingPayload {
-                block,
-                receipts,
-                total_changeset,
-            });
+                let block = block_builder.build();
+                let id = block.body.execution_payload.block_hash;
 
-            Some(id)
+                rt.block_on(async {
+                    let mut pending = pending_payloads_arc.lock().await;
+                    pending.insert(id, PendingPayload {
+                        block,
+                        receipts,
+                        total_changeset,
+                    });
+                });
+
+                Ok::<B256, ProviderError>(id)
+            }).await.map_err(|e| ProviderError::Internal(format!("Task panicked: {}", e)))??
+            .into()
         } else {
             None
         };
