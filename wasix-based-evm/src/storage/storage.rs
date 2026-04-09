@@ -2,11 +2,11 @@ use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u25
 use crate::{debug};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, B256, U256, keccak256};
-use alloy_trie::{TrieAccount, root::ordered_trie_root};
+use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
 use crate::storage::genesis::Genesis;
-use crate::storage::types::{Block, Receipt, Transaction, Withdrawal};
+use crate::storage::types::{Block, Receipt, Transaction};
 
 
 #[derive(Clone)]

@@ -1,8 +1,4 @@
-use tentacle::{
-    traits::ServiceProtocol,
-    context::{ProtocolContext, ProtocolContextMutRef},
-    bytes::{Bytes, BytesMut},
-};
+use tentacle::bytes::Bytes;
 use alloy_rlp::{RlpEncodable, RlpDecodable, Encodable, Decodable, BufMut};
 use alloy_primitives::{B256, U256};
 use crate::storage::types::{Block, Transaction};

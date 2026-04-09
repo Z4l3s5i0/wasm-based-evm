@@ -2,22 +2,20 @@ use std::sync::Arc;
 use async_trait::async_trait;
 use tokio::sync::{Mutex, oneshot, mpsc};
 use alloy_primitives::{Address, B256};
-use alloy_rlp::Decodable;
 
 use crate::executor::Executor;
 use crate::storage::storage::InMemoryStorage;
-use crate::storage::types::{Block, Transaction, PendingPayload, Receipt};
+use crate::storage::types::{Block, Transaction, PendingPayload, Receipt, ExecutionPayload as DomainExecutionPayload};
 use crate::rpc::provider_error::ProviderError;
 use crate::rpc::provider_api::*;
 use crate::network::NetworkMessage;
-use crate::rpc::evm_rpc::{TransactionRequest, ProposeBlockRequest, ForkchoiceUpdatedRequest, GetPayloadRequest, PeerInfo as ProtoPeerInfo, ExecutionPayload as ProtoExecutionPayload};
 
 pub struct DefaultBlockchainProvider {
     pub storage: Arc<Mutex<InMemoryStorage>>,
     pub executor: Executor,
     pub network_send: Option<mpsc::Sender<NetworkMessage>>,
     pub tx_broadcast: Option<mpsc::Sender<Transaction>>,
-    pub pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
+    pub pending_payloads: Arc<Mutex<std::collections::HashMap<B256, PendingPayload>>>,
 }
 
 impl DefaultBlockchainProvider {
@@ -26,7 +24,7 @@ impl DefaultBlockchainProvider {
         executor: Executor,
         network_send: Option<mpsc::Sender<NetworkMessage>>,
         tx_broadcast: Option<mpsc::Sender<Transaction>>,
-        pending_payloads: Arc<Mutex<std::collections::HashMap<String, PendingPayload>>>,
+        pending_payloads: Arc<Mutex<std::collections::HashMap<B256, PendingPayload>>>,
     ) -> Self {
         Self {
             storage,
@@ -122,8 +120,15 @@ impl EthReadProvider for DefaultBlockchainProvider {
 
 #[async_trait]
 impl EthWriteProvider for DefaultBlockchainProvider {
-    async fn send_transaction(&self, req: TransactionRequest) -> Result<Transaction, ProviderError> {
-        let tx = Transaction::try_from(req)?;
+    async fn send_transaction(&self, req: DomainTransactionRequest) -> Result<Transaction, ProviderError> {
+        let tx = Transaction::builder(req.from)
+            .nonce(req.nonce)
+            .to(req.to)
+            .value(req.value)
+            .data(req.data)
+            .gas_limit(req.gas_limit)
+            .gas_price(req.gas_price)
+            .build();
 
         // Broadcast to network if handle is available
         if let Some(ref tx_broadcast) = self.tx_broadcast {
@@ -135,52 +140,44 @@ impl EthWriteProvider for DefaultBlockchainProvider {
         Ok(tx)
     }
 
-    async fn call(&self, req: TransactionRequest) -> Result<Transaction, ProviderError> {
-        let tx = Transaction::try_from(req)?;
+    async fn call(&self, req: DomainTransactionRequest) -> Result<Transaction, ProviderError> {
+        let tx = Transaction::builder(req.from)
+            .nonce(req.nonce)
+            .to(req.to)
+            .value(req.value)
+            .data(req.data)
+            .gas_limit(req.gas_limit)
+            .gas_price(req.gas_price)
+            .build();
         Ok(tx)
     }
 }
 
 #[async_trait]
 impl EngineProvider for DefaultBlockchainProvider {
-    async fn propose_block(&self, req: ProposeBlockRequest) -> Result<ProposeBlockResult, ProviderError> {
-        let address: Address = req.fee_recipient.parse().map_err(|_| ProviderError::InvalidInput("Invalid address".to_string()))?;
-
+    async fn propose_block(&self, req: DomainProposeBlockRequest) -> Result<ProposeBlockResult, ProviderError> {
         let (mut storage, executor) = {
             let storage = self.storage.lock().await;
             (storage, self.executor.clone())
         };
 
-        // For propose_block, we build a new block from mempool or provided txs
-        let mut transactions = Vec::new();
-        if req.from_mempool {
-            let n = if req.max_transactions == 0 { 100 } else { req.max_transactions as usize };
-            transactions = storage.mempool.pop_transactions(n);
-        }
-
-        for tx_req in req.transactions {
-            let tx = Transaction::try_from(tx_req)?;
-            transactions.push(tx);
-        }
+        // For propose_block, we build a new block from mempool
+        // Default behavior: pop up to 100 transactions from mempool
+        let transactions = storage.mempool.pop_transactions(100);
 
         let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
         
-        let parent_hash = if req.parent_hash.is_empty() {
-            latest_block.body.execution_payload.block_hash
-        } else {
-            req.parent_hash.parse().map_err(|_| ProviderError::InvalidInput("Invalid parent hash".to_string()))?
-        };
-
+        let parent_hash = latest_block.body.execution_payload.block_hash;
         let timestamp = if req.timestamp == 0 {
             latest_block.body.execution_payload.timestamp + 12
         } else {
             req.timestamp
         };
 
-        let block_builder = Block::builder(req.slot)
+        let block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
             .parent_hash(parent_hash)
             .timestamp(timestamp)
-            .fee_recipient(address);
+            .fee_recipient(latest_block.body.execution_payload.fee_recipient);
 
         let _ = executor.execute_block(&mut storage, transactions.clone(), block_builder.build())
             .map_err(|e| ProviderError::Execution(e))?;
@@ -200,40 +197,26 @@ impl EngineProvider for DefaultBlockchainProvider {
         })
     }
 
-    async fn engine_new_payload(&self, payload: ProtoExecutionPayload) -> Result<crate::rpc::evm_rpc::PayloadStatus, ProviderError> {
+    async fn engine_new_payload(&self, payload: DomainExecutionPayload) -> Result<DomainPayloadStatus, ProviderError> {
         let mut storage = self.storage.lock().await;
         let executor = self.executor.clone();
 
-        let block_hash: B256 = payload.block_hash.parse().map_err(|_| ProviderError::InvalidInput("Invalid block hash".to_string()))?;
+        let block_hash = payload.block_hash;
         if storage.get_block_by_hash(block_hash).is_some() {
-            return Ok(crate::rpc::evm_rpc::PayloadStatus {
+            return Ok(DomainPayloadStatus {
                 status: "VALID".to_string(),
-                latest_valid_hash: format!("{:?}", block_hash),
-                validation_error: String::new(),
+                latest_valid_hash: Some(block_hash),
+                validation_error: None,
             });
         }
 
-        // Decode transactions
-        let mut transactions = Vec::new();
-        for data in &payload.transactions {
-            match Transaction::decode(&mut data.as_ref()) {
-                Ok(tx) => transactions.push(tx),
-                Err(e) => {
-                    return Ok(crate::rpc::evm_rpc::PayloadStatus {
-                        status: "INVALID".to_string(),
-                        latest_valid_hash: String::new(),
-                        validation_error: format!("Decode error: {:?}", e),
-                    });
-                }
-            }
-        }
-
-        let parent_hash: B256 = payload.parent_hash.parse().map_err(|_| ProviderError::InvalidInput("Invalid parent hash".to_string()))?;
+        let transactions = payload.transactions.clone();
+        let parent_hash = payload.parent_hash;
 
         let block = Block::builder(payload.block_number)
             .parent_hash(parent_hash)
             .timestamp(payload.timestamp)
-            .fee_recipient(payload.fee_recipient.parse().unwrap_or_default())
+            .fee_recipient(payload.fee_recipient)
             .gas_limit(payload.gas_limit)
             .gas_used(payload.gas_used)
             .block_hash(block_hash)
@@ -249,26 +232,24 @@ impl EngineProvider for DefaultBlockchainProvider {
                     let _ = network_send.send(NetworkMessage::BroadcastBlock(block)).await;
                 }
 
-                Ok(crate::rpc::evm_rpc::PayloadStatus {
+                Ok(DomainPayloadStatus {
                     status: "VALID".to_string(),
-                    latest_valid_hash: format!("{:?}", block_hash),
-                    validation_error: String::new(),
+                    latest_valid_hash: Some(block_hash),
+                    validation_error: None,
                 })
             }
             Err(e) => {
-                Ok(crate::rpc::evm_rpc::PayloadStatus {
+                Ok(DomainPayloadStatus {
                     status: "INVALID".to_string(),
-                    latest_valid_hash: String::new(),
-                    validation_error: e,
+                    latest_valid_hash: None,
+                    validation_error: Some(e),
                 })
             }
         }
     }
 
-    async fn engine_forkchoice_updated(&self, req: ForkchoiceUpdatedRequest) -> Result<crate::rpc::evm_rpc::ForkchoiceUpdatedResponse, ProviderError> {
-        let head_block_hash: B256 = req.forkchoice_state.as_ref()
-            .map(|s| s.head_block_hash.parse().unwrap_or_default())
-            .unwrap_or_default();
+    async fn engine_forkchoice_updated(&self, req: DomainForkchoiceUpdatedRequest) -> Result<DomainForkchoiceUpdatedResponse, ProviderError> {
+        let head_block_hash = req.head_block_hash;
 
         // 1. Update forkchoice in storage
         {
@@ -276,35 +257,51 @@ impl EngineProvider for DefaultBlockchainProvider {
             storage.update_forkchoice(head_block_hash);
         }
 
-        // 2. If payload_attributes is present, start building a new block
+        // 2. Build payload if requested
         let payload_id = if let Some(attr) = req.payload_attributes {
-            let mut storage = self.storage.lock().await;
-            let executor = self.executor.clone();
+            let (mut storage, executor) = {
+                let storage = self.storage.lock().await;
+                (storage.clone(), self.executor.clone())
+            };
 
-            let fee_recipient: Address = attr.suggested_fee_recipient.parse().map_err(|_| ProviderError::InvalidInput("Invalid fee recipient".to_string()))?;
+            let latest_block = storage.get_block_by_hash(head_block_hash)
+                .cloned()
+                .or_else(|| storage.get_latest_block().cloned())
+                .expect("Genesis block should exist");
 
-            let latest_block = storage.get_block_by_hash(head_block_hash).cloned().unwrap_or_else(|| storage.get_latest_block().cloned().unwrap());
-            let next_number = latest_block.body.execution_payload.block_number + 1;
-            let txs = storage.mempool.pop_transactions(10);
-            
-            let block_to_execute = Block::builder(next_number)
+            let transactions = storage.mempool.peek_transactions(100);
+
+            let block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
                 .parent_hash(head_block_hash)
                 .timestamp(attr.timestamp)
-                .fee_recipient(fee_recipient)
-                .transactions(txs.clone())
-                .build();
+                .prev_randao(attr.prev_randao)
+                .fee_recipient(attr.suggested_fee_recipient);
 
-            // Build block (dry run execution to get payload)
-            let (_results, receipts, changeset) = executor.execute_with_changeset(&mut storage, txs, block_to_execute.clone())
+            let dummy_block = block_builder.build();
+
+            let (_results, receipts, total_changeset) = executor.execute_with_changeset(&mut storage, transactions.clone(), dummy_block.clone())
                 .map_err(|e| ProviderError::Execution(e))?;
 
-            let id = format!("{:x}", head_block_hash); // Simplified ID
+            // Build finalized block with correct roots
+            let mut block_builder = Block::builder(dummy_block.slot)
+                .parent_hash(dummy_block.body.execution_payload.parent_hash)
+                .timestamp(dummy_block.body.execution_payload.timestamp)
+                .prev_randao(dummy_block.body.execution_payload.prev_randao)
+                .fee_recipient(dummy_block.body.execution_payload.fee_recipient)
+                .transactions(transactions);
+
+            for r in receipts.clone() {
+                block_builder = block_builder.add_receipt(r);
+            }
+
+            let block = block_builder.build();
+            let id = block.body.execution_payload.block_hash;
 
             let mut pending = self.pending_payloads.lock().await;
-            pending.insert(id.clone(), PendingPayload {
-                block: block_to_execute,
+            pending.insert(id, PendingPayload {
+                block,
                 receipts,
-                total_changeset: changeset,
+                total_changeset,
             });
 
             Some(id)
@@ -312,42 +309,16 @@ impl EngineProvider for DefaultBlockchainProvider {
             None
         };
 
-        Ok(crate::rpc::evm_rpc::ForkchoiceUpdatedResponse {
-            payload_status: Some(crate::rpc::evm_rpc::PayloadStatus {
-                status: "VALID".to_string(),
-                latest_valid_hash: req.forkchoice_state.as_ref().map(|s| s.head_block_hash.clone()).unwrap_or_default(),
-                validation_error: String::new(),
-            }),
-            payload_id: payload_id.unwrap_or_default(),
+        Ok(DomainForkchoiceUpdatedResponse {
+            status: "VALID".to_string(),
+            payload_id,
         })
     }
 
-    async fn engine_get_payload(&self, req: GetPayloadRequest) -> Result<ProtoExecutionPayload, ProviderError> {
+    async fn engine_get_payload(&self, req: DomainGetPayloadRequest) -> Result<DomainExecutionPayload, ProviderError> {
         let mut pending = self.pending_payloads.lock().await;
         let payload = pending.remove(&req.payload_id).ok_or_else(|| ProviderError::NotFound("Payload not found"))?;
-        let p = payload.block.body.execution_payload;
-        
-        Ok(ProtoExecutionPayload {
-            parent_hash: format!("{:?}", p.parent_hash),
-            fee_recipient: format!("{:?}", p.fee_recipient),
-            state_root: format!("{:?}", p.state_root),
-            receipts_root: format!("{:?}", p.receipts_root),
-            logs_bloom: format!("{:?}", p.logs_bloom),
-            prev_randao: format!("{:?}", p.prev_randao),
-            block_number: p.block_number,
-            gas_limit: p.gas_limit,
-            gas_used: p.gas_used,
-            timestamp: p.timestamp,
-            extra_data: p.extra_data,
-            base_fee_per_gas: p.base_fee_per_gas.to_string(),
-            block_hash: format!("{:?}", p.block_hash),
-            transactions: p.transactions.iter().map(|t| t.to_vec()).collect(),
-            withdrawals: Vec::new(), // TODO: map withdrawals if needed
-            blob_gas_used: 0,
-            excess_blob_gas: 0,
-            transactions_root: format!("{:?}", p.transactions_root),
-            withdrawals_root: String::new(),
-        })
+        Ok(payload.block.body.execution_payload)
     }
 }
 
@@ -364,26 +335,36 @@ impl NetProvider for DefaultBlockchainProvider {
         }
     }
 
-    async fn peers(&self) -> Result<Vec<crate::rpc::evm_rpc::PeerInfo>, ProviderError> {
+    async fn peers(&self) -> Result<Vec<DomainPeerInfo>, ProviderError> {
         let (tx, rx) = oneshot::channel();
         if let Some(ref network_send) = self.network_send {
             network_send.send(NetworkMessage::GetPeers(tx)).await
                 .map_err(|_| ProviderError::Internal("Network sender dropped".to_string()))?;
             let peers = rx.await.map_err(|_| ProviderError::Internal("Oneshot dropped".to_string()))?;
-            Ok(peers.into_iter().map(|p| ProtoPeerInfo {
+            Ok(peers.into_iter().map(|p| DomainPeerInfo {
                 id: p.id,
-                addr: p.addr,
+                enode: p.addr,
                 enr: p.enr.unwrap_or_default(),
+                name: String::new(),
+                caps: Vec::new(),
+                network: DomainPeerNetworkInfo {
+                    local_address: String::new(),
+                    remote_address: String::new(),
+                    inbound: false,
+                    trusted: false,
+                    static_node: false,
+                },
+                protocols: Vec::new(),
             }).collect())
         } else {
             Err(ProviderError::Internal("Network handle not available".to_string()))
         }
     }
 
-    async fn add_peer(&self, req: crate::rpc::evm_rpc::NetAddPeerRequest) -> Result<(), ProviderError> {
+    async fn add_peer(&self, req: DomainNetAddPeerRequest) -> Result<(), ProviderError> {
         let (tx, rx) = oneshot::channel();
         if let Some(ref network_send) = self.network_send {
-            network_send.send(NetworkMessage::AddPeer(req.addr, tx)).await
+            network_send.send(NetworkMessage::AddPeer(req.enode, tx)).await
                 .map_err(|_| ProviderError::Internal("Network sender dropped".to_string()))?;
             rx.await.map_err(|_| ProviderError::Internal("Oneshot dropped".to_string()))?
                 .map_err(|e| ProviderError::Internal(e))?;
@@ -393,16 +374,24 @@ impl NetProvider for DefaultBlockchainProvider {
         }
     }
 
-    async fn node_info(&self) -> Result<crate::rpc::evm_rpc::NetNodeInfoResponse, ProviderError> {
+    async fn node_info(&self) -> Result<DomainNetNodeInfoResponse, ProviderError> {
         let (tx, rx) = oneshot::channel();
         if let Some(ref network_send) = self.network_send {
             network_send.send(NetworkMessage::GetNodeInfo(tx)).await
                 .map_err(|_| ProviderError::Internal("Network sender dropped".to_string()))?;
             let info = rx.await.map_err(|_| ProviderError::Internal("Oneshot dropped".to_string()))?;
-            Ok(crate::rpc::evm_rpc::NetNodeInfoResponse {
+            Ok(DomainNetNodeInfoResponse {
+                enode: info.node_id.clone(),
                 enr: info.enr,
-                node_id: info.node_id,
-                listen_addresses: info.listen_addresses,
+                name: String::new(),
+                caps: Vec::new(),
+                id: info.node_id,
+                network: DomainNodeNetworkInfo {
+                    local_address: String::new(),
+                    remote_address: String::new(),
+                    listen_addr: info.listen_addresses.first().cloned().unwrap_or_default(),
+                },
+                protocols: Vec::new(),
             })
         } else {
             Err(ProviderError::Internal("Network handle not available".to_string()))

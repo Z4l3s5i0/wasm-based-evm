@@ -167,13 +167,13 @@ impl AppBuilder {
             MyTransactionService::new(provider)
         } else {
             let pending_payloads = Arc::new(Mutex::new(std::collections::HashMap::new()));
-            let provider = Box::new(crate::rpc::provider::DefaultBlockchainProvider::new(
+            let provider = Box::new(crate::rpc::provider::DefaultBlockchainProvider {
                 storage,
                 executor,
-                Some(network_handle.network_send.clone()),
-                Some(network_handle.tx_broadcast.clone()),
+                network_send: Some(network_handle.network_send.clone()),
+                tx_broadcast: Some(network_handle.tx_broadcast.clone()),
                 pending_payloads,
-            ));
+            });
             MyTransactionService::new(provider)
         };
 

@@ -1,6 +1,5 @@
 use crate::rpc::{MyTransactionService, AccountsResponse, BlockNumberResponse, GasPriceResponse, GetBalanceRequest, BalanceResponse, GetBlockByNumberRequest, BlockResponse, GetBlockByHashRequest, GetBlockTransactionCountByHashRequest, TransactionCountResponse, GetBlockTransactionCountByNumberRequest, GetTransactionByHashRequest, TransactionInfoResponse, TransactionReceiptResponse, TransactionRequest, TransactionResponse, GetCodeRequest, CodeResponse, RootsResponse, MempoolResponse, Empty};
-use crate::rpc::mappers::{status_from, map_block_response, map_receipt_response, map_tx_info_response};
-use crate::{info, debug};
+use crate::rpc::mappers::{status_from, map_block_response, map_receipt_response, map_tx_info_response, map_transaction_request};
 use alloy_primitives::{Address, B256};
 use tonic::{Request, Response, Status};
 
@@ -111,7 +110,7 @@ impl MyTransactionService {
         &self,
         request: Request<TransactionRequest>,
     ) -> Result<Response<TransactionResponse>, Status> {
-        let req = request.into_inner();
+        let req = map_transaction_request(request.into_inner())?;
         let tx = self.provider.send_transaction(req).await.map_err(status_from)?;
         Ok(Response::new(TransactionResponse {
             tx_hash: format!("{:?}", tx.hash),
@@ -126,7 +125,7 @@ impl MyTransactionService {
         &self,
         request: Request<TransactionRequest>,
     ) -> Result<Response<TransactionResponse>, Status> {
-        let req = request.into_inner();
+        let req = map_transaction_request(request.into_inner())?;
         let tx = self.provider.call(req).await.map_err(status_from)?;
         Ok(Response::new(TransactionResponse {
             tx_hash: format!("{:?}", tx.hash),

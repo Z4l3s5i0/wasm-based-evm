@@ -1,10 +1,10 @@
 use std::str::FromStr;
-use crate::network::{discovery::{DiscoveryService, DiscoveryEvent}, NetworkConfig, PeerInfo, peer_manager::{PeerManager, PeerManagerEvent}, protocol_handler};
+use crate::network::{discovery::{DiscoveryService, DiscoveryEvent}, NetworkConfig, peer_manager::{PeerManager, PeerManagerEvent}, protocol_handler};
 use crate::storage::{InMemoryStorage, Transaction};
 use crate::network::sync::SyncEvent;
 use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
-use discv5::{enr, Enr};
+use discv5::Enr;
 use alloy_primitives::U256;
 use tentacle::{
     builder::ServiceBuilder,

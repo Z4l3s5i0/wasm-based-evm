@@ -3,7 +3,6 @@ use alloy_rlp::{Encodable, RlpDecodable, RlpEncodable};
 use alloy_trie::root::ordered_trie_root;
 use discv5::enr::k256::elliptic_curve::rand_core::RngCore;
 use crate::ev::h160_to_address;
-use crate::storage::storage::InMemoryStorage;
 use evm::interpreter::runtime::Log as EvmLog;
 
 

@@ -2,10 +2,10 @@ use std::sync::Arc;
 use tokio::sync::{Mutex, mpsc};
 use crate::storage::{InMemoryStorage, Block};
 use crate::network::NetworkMessage;
-use crate::network::protocol::{GetBlockHeaders, BlockHashOrNumber, GetBlockBodies};
+use crate::network::protocol::Transactions;
 use crate::network::sync_strategy::{SyncStrategy, SyncAction};
 use crate::executor::Executor;
-use std::collections::{VecDeque, HashMap};
+use std::collections::HashMap;
 use std::time::{Instant, Duration};
 use crate::{info, debug};
 

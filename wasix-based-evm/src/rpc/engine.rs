@@ -1,6 +1,5 @@
 use crate::rpc::{MyTransactionService, TransactionRequest, TransactionResponse, ProposeBlockRequest, ProposeBlockResponse, ExecutionPayload, PayloadStatus, ForkchoiceUpdatedRequest, ForkchoiceUpdatedResponse, GetPayloadRequest};
-use crate::rpc::mappers::status_from;
-use crate::{info, debug};
+use crate::rpc::mappers::*;
 use tonic::{Request, Response, Status};
 
 impl MyTransactionService {
@@ -8,7 +7,8 @@ impl MyTransactionService {
         &self,
         request: Request<TransactionRequest>,
     ) -> Result<Response<TransactionResponse>, Status> {
-        let tx = self.provider.call(request.into_inner()).await.map_err(status_from)?;
+        let req = map_transaction_request(request.into_inner())?;
+        let tx = self.provider.call(req).await.map_err(status_from)?;
         Ok(Response::new(TransactionResponse {
             tx_hash: format!("{:?}", tx.hash),
             success: true,
@@ -22,7 +22,8 @@ impl MyTransactionService {
         &self,
         request: Request<ProposeBlockRequest>,
     ) -> Result<Response<ProposeBlockResponse>, Status> {
-        let result = self.provider.propose_block(request.into_inner()).await.map_err(status_from)?;
+        let req = map_propose_block_request(request.into_inner());
+        let result = self.provider.propose_block(req).await.map_err(status_from)?;
         
         let tx_results = result.tx_results.into_iter().map(|tx| TransactionResponse {
             success: true,
@@ -44,24 +45,27 @@ impl MyTransactionService {
         &self,
         request: Request<ExecutionPayload>,
     ) -> Result<Response<PayloadStatus>, Status> {
-        let status = self.provider.engine_new_payload(request.into_inner()).await.map_err(status_from)?;
-        Ok(Response::new(status))
+        let payload = map_proto_execution_payload_to_domain(request.into_inner())?;
+        let status = self.provider.engine_new_payload(payload).await.map_err(status_from)?;
+        Ok(Response::new(map_payload_status(status)))
     }
 
     pub async fn engine_forkchoice_updated_impl(
         &self,
         request: Request<ForkchoiceUpdatedRequest>,
     ) -> Result<Response<ForkchoiceUpdatedResponse>, Status> {
-        let resp = self.provider.engine_forkchoice_updated(request.into_inner()).await.map_err(status_from)?;
-        Ok(Response::new(resp))
+        let req = map_forkchoice_updated_request(request.into_inner())?;
+        let resp = self.provider.engine_forkchoice_updated(req).await.map_err(status_from)?;
+        Ok(Response::new(map_forkchoice_updated_response(resp)))
     }
 
     pub async fn engine_get_payload_impl(
         &self,
         request: Request<GetPayloadRequest>,
     ) -> Result<Response<ExecutionPayload>, Status> {
-        let payload = self.provider.engine_get_payload(request.into_inner()).await.map_err(status_from)?;
-        Ok(Response::new(payload))
+        let req = map_get_payload_request(request.into_inner())?;
+        let payload = self.provider.engine_get_payload(req).await.map_err(status_from)?;
+        Ok(Response::new(map_execution_payload_to_proto(payload)))
     }
 }
 
