@@ -14,7 +14,7 @@ pub use evm_rpc::transaction_service_server::TransactionService;
 pub use evm_rpc::*;
 use crate::executor::Executor;
 use crate::network::NetworkHandle;
-use crate::rpc::provider_api::DomainBlockchainProvider;
+pub use crate::rpc::provider_api::DomainBlockchainProvider;
 use crate::rpc::provider::DefaultBlockchainProvider;
 use std::sync::Arc;
 use tokio::sync::{Mutex};
@@ -23,23 +23,24 @@ use tonic::{Request, Response, Status};
 
 use crate::storage::storage::InMemoryStorage;
 use crate::storage::types::{Block, Receipt, Transaction};
+use crate::rpc::provider_error::ProviderError;
 use alloy_primitives::{Address, U256};
 
 impl TryFrom<TransactionRequest> for Transaction {
-    type Error = String;
+    type Error = ProviderError;
 
     fn try_from(req: TransactionRequest) -> Result<Self, Self::Error> {
-        let from_addr: Address = req.from.parse().map_err(|_| "Invalid from address".to_string())?;
+        let from_addr: Address = req.from.parse().map_err(|_| ProviderError::InvalidInput("Invalid from address".to_string()))?;
         let to_addr: Option<Address> = if req.to.is_empty() {
             None
         } else {
-            Some(req.to.parse().map_err(|_| "Invalid to address".to_string())?)
+            Some(req.to.parse().map_err(|_| ProviderError::InvalidInput("Invalid to address".to_string()))?)
         };
 
         let val_u256 = U256::from_str_radix(&req.value, 10).or_else(|_| {
             // Try hex if decimal fails
             U256::from_str_radix(req.value.trim_start_matches("0x"), 16)
-        }).map_err(|_| "Invalid value".to_string())?;
+        }).map_err(|_| ProviderError::InvalidInput("Invalid value".to_string()))?;
 
         Ok(Transaction::builder(from_addr)
             .nonce(req.nonce)

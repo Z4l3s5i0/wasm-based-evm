@@ -123,7 +123,7 @@ impl EthReadProvider for DefaultBlockchainProvider {
 #[async_trait]
 impl EthWriteProvider for DefaultBlockchainProvider {
     async fn send_transaction(&self, req: TransactionRequest) -> Result<Transaction, ProviderError> {
-        let tx = Transaction::try_from(req).map_err(ProviderError::InvalidInput)?;
+        let tx = Transaction::try_from(req)?;
 
         // Broadcast to network if handle is available
         if let Some(ref tx_broadcast) = self.tx_broadcast {
@@ -136,7 +136,7 @@ impl EthWriteProvider for DefaultBlockchainProvider {
     }
 
     async fn call(&self, req: TransactionRequest) -> Result<Transaction, ProviderError> {
-        let tx = Transaction::try_from(req).map_err(ProviderError::InvalidInput)?;
+        let tx = Transaction::try_from(req)?;
         Ok(tx)
     }
 }
@@ -159,7 +159,7 @@ impl EngineProvider for DefaultBlockchainProvider {
         }
 
         for tx_req in req.transactions {
-            let tx = Transaction::try_from(tx_req).map_err(ProviderError::InvalidInput)?;
+            let tx = Transaction::try_from(tx_req)?;
             transactions.push(tx);
         }
 
