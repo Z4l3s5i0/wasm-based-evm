@@ -4,19 +4,47 @@ use crate::network::PeerInfo;
 use crate::info;
 use crate::debug;
 
+#[derive(Clone)]
+struct PendingPeerMeta {
+    addr_prefix: String,
+    enr: String,
+}
+
 pub struct PeerManager {
     peers: HashMap<SessionId, PeerInfo>,
+    // Pending metadata captured before a session opens (e.g., from ENR dialing)
+    pending: Vec<PendingPeerMeta>,
 }
 
 impl PeerManager {
     pub fn new() -> Self {
         Self {
             peers: HashMap::new(),
+            pending: Vec::new(),
         }
     }
 
     pub fn add_peer(&mut self, session_id: SessionId, peer_info: PeerInfo) {
         self.peers.insert(session_id, peer_info);
+    }
+
+    // Register ENR and preferred addr prefix for an upcoming connection attempt
+    pub fn register_pending_enr(&mut self, addr_prefix: String, enr: String) {
+        debug!("[PeerManager] Registered pending ENR for addr_prefix {}", addr_prefix);
+        self.pending.push(PendingPeerMeta { addr_prefix, enr });
+    }
+
+    // Try to match a session address to a previously registered pending entry (by prefix)
+    pub fn take_pending_for_session_addr(&mut self, session_addr: &str) -> Option<PendingPeerMeta> {
+        if let Some(idx) = self
+            .pending
+            .iter()
+            .position(|p| session_addr.starts_with(&p.addr_prefix))
+        {
+            Some(self.pending.remove(idx))
+        } else {
+            None
+        }
     }
 
     pub fn remove_peer(&mut self, session_id: &SessionId) -> Option<PeerInfo> {
@@ -72,12 +100,27 @@ impl PeerManager {
             );
         }
 
+        // Start with raw session-provided addr
+        let mut final_addr = addr.clone();
+        let mut final_enr: Option<String> = None;
+
+        // If we have a pending record for this connection, use its ENR and
+        // prefer its addr when the session-provided addr looks bogus (0.0.0.0:0)
+        if let Some(pending) = self.take_pending_for_session_addr(&addr) {
+            final_enr = Some(pending.enr.clone());
+            // Heuristic: treat addresses containing "/ip4/0.0.0.0" or "/tcp/0" as invalid and
+            // prefer the dialed address prefix which should include a concrete ip/port.
+            if addr.contains("/ip4/0.0.0.0") || addr.contains("/tcp/0") {
+                final_addr = pending.addr_prefix;
+            }
+        }
+
         self.add_peer(
             session_id,
             PeerInfo {
                 id: session_id.to_string(),
-                addr,
-                enr: None,
+                addr: final_addr,
+                enr: final_enr,
                 reputation: 0,
             },
         );

@@ -204,7 +204,26 @@ impl ProtocolDispatcher {
                  match NewPooledTransactionHashes::decode(&mut &payload[..]) {
                     Ok(hashes) => {
                         debug!("[EthProtocol] Received {} new pooled transaction hashes from {}", hashes.0.len(), context.session.id);
-                        // In a real implementation, we would check which ones we are missing and request them
+                        // Request missing transactions
+                        let mempool = self.mempool.read().await;
+                        let mut missing = Vec::new();
+                        for hash in hashes.0 {
+                            if !mempool.get_all_transactions().into_iter().any(|tx| tx.hash == hash) {
+                                missing.push(hash);
+                            }
+                        }
+                        
+                        if !missing.is_empty() {
+                            debug!("[EthProtocol] Requesting {} missing transactions from {}", missing.len(), context.session.id);
+                            let req = GetPooledTransactions {
+                                request_id: rand::random(),
+                                hashes: missing,
+                            };
+                            let mut data = BytesMut::new();
+                            data.extend_from_slice(&[MessageId::GetPooledTransactions as u8]);
+                            req.encode(&mut data);
+                            let _ = context.send_message(data.freeze()).await;
+                        }
                     }
                     Err(e) => info!("[EthProtocol] Failed to decode NewPooledTransactionHashes from {}: {:?}", context.session.id, e),
                 }

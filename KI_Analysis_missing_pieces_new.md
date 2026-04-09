@@ -22,6 +22,10 @@ After a comprehensive analysis of the project's current state, including recent 
     *   **Current State**: Entirely `InMemoryStorage` (as correctly noted in `KI_Analysis_missing_pieces.md`).
     *   **Finding**: All blockchain state and history are lost on restart. There is no persistent KV store integration (RocksDB/MDBX).
 
+
+*   **Action:** Define a `Database` Trait.
+    *   **Implementation:** Create a trait for key-value storage that can be implemented by a WASI-compatible store (e.g., a filesystem-backed simple DB) or `InMemoryBackend` for testing.
+    *   **Benefit:** Provides a clear path toward persistence while maintaining the flexibility of the current WASIX environment.
 ### 3. Execution and Syncing
 
 *   **Sync Mechanisms**:

@@ -61,8 +61,8 @@ impl NetworkService {
         debug!("[NetworkService] Building P2P service...");
         let mut yamux_config = tentacle::yamux::config::Config::default();
         yamux_config.enable_keepalive = true;
-        yamux_config.keepalive_interval = std::time::Duration::from_secs(30);
-        yamux_config.connection_write_timeout = std::time::Duration::from_secs(60);
+        yamux_config.keepalive_interval = std::time::Duration::from_secs(20);
+        yamux_config.connection_write_timeout = std::time::Duration::from_secs(120);
 
         let mut service = ServiceBuilder::default()
             .insert_protocol(protocol_meta)
@@ -109,7 +109,13 @@ impl NetworkService {
                     ip.to_string()
                 };
                 if let Ok(addr) = format!("/ip4/{}/tcp/{}", ip_str, tcp_port).parse::<Multiaddr>() {
-                    debug!("[NetworkService] Attempting to dial ENR: {}", addr);
+                    let addr_str = addr.to_string();
+                    let enr_b64 = enr.to_base64();
+                    {
+                        let mut pm = self.peer_manager.lock().await;
+                        pm.register_pending_enr(addr_str.clone(), enr_b64);
+                    }
+                    debug!("[NetworkService] Attempting to dial ENR: {}", addr_str);
                     let _ = self.p2p_control.dial(addr, TargetProtocol::Single(crate::network::protocol::ETH_PROTOCOL_ID)).await;
                 }
             }
@@ -139,9 +145,15 @@ impl NetworkService {
                         ip.to_string()
                     };
                     let addr: Multiaddr = format!("/ip4/{}/tcp/{}", ip_str, tcp_port).parse().unwrap();
-                    debug!("[NetworkService] Attempting to dial bootnode: {}", addr);
+                    let addr_str = addr.to_string();
+                    let enr_b64 = enr.to_base64();
+                    {
+                        let mut pm = self.peer_manager.lock().await;
+                        pm.register_pending_enr(addr_str.clone(), enr_b64);
+                    }
+                    debug!("[NetworkService] Attempting to dial bootnode: {}", addr_str);
                     let res = self.p2p_control.dial(addr.clone(), TargetProtocol::Single(ETH_PROTOCOL_ID)).await;
-                    debug!("[NetworkService] Bootnode dial result for {}: {:?}", addr, res);
+                    debug!("[NetworkService] Bootnode dial result for {}: {:?}", addr_str, res);
                 }
             }
         }
@@ -161,10 +173,10 @@ impl NetworkService {
                 tx = self.rx_broadcast.recv() => {
                     debug!("[NetworkService] Received Transaction broadcast request");
                     if let Some(tx) = tx {
-                        info!("[NetworkService] Broadcasting transaction hash: {:?}", tx.hash);
+                        info!("[NetworkService] Broadcasting transaction: {:?}", tx.hash);
                         let mut data = BytesMut::new();
-                        data.extend_from_slice(&[MessageId::NewPooledTransactionHashes as u8]);
-                        let msg = NewPooledTransactionHashes(vec![tx.hash]);
+                        data.extend_from_slice(&[MessageId::Transactions as u8]);
+                        let msg = Transactions(vec![tx]);
                         msg.encode(&mut data);
                         let msg_bytes = data.freeze();
                         
@@ -173,7 +185,7 @@ impl NetworkService {
                             ETH_PROTOCOL_ID,
                             msg_bytes
                         ).await {
-                            info!("[NetworkService] Failed to broadcast transaction hash: {:?}", e);
+                            info!("[NetworkService] Failed to broadcast transaction: {:?}", e);
                         }
                     }
                 }
@@ -302,7 +314,26 @@ struct SimpleServiceHandle {
 #[async_trait::async_trait]
 impl ServiceHandle for SimpleServiceHandle {
     async fn handle_error(&mut self, _control: &mut ServiceContext, error: ServiceError) {
-        debug!("[P2P Service] error: {:?}", error);
+        match &error {
+            ServiceError::MuxerError { session_context, error } => {
+                info!("[P2P Service] MuxerError: session_id: {}, addr: {}, error: {:?}", session_context.id, session_context.address, error);
+                let mut pm = self.peer_manager.lock().await;
+                pm.report_peer(&session_context.id, -20);
+            }
+            ServiceError::SessionTimeout { session_context } => {
+                info!("[P2P Service] SessionTimeout: session_id: {}, addr: {}", session_context.id, session_context.address);
+                let mut pm = self.peer_manager.lock().await;
+                pm.report_peer(&session_context.id, -10);
+            }
+            ServiceError::ProtocolError { id, proto_id, error } => {
+                info!("[P2P Service] ProtocolError: session_id: {}, proto_id: {}, error: {:?}", id, proto_id, error);
+                let mut pm = self.peer_manager.lock().await;
+                pm.report_peer(id, -15);
+            }
+            _ => {
+                debug!("[P2P Service] error: {:?}", error);
+            }
+        }
     }
 
     async fn handle_event(&mut self, _control: &mut ServiceContext, event: ServiceEvent) {

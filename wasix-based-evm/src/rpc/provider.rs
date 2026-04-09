@@ -285,8 +285,6 @@ impl EngineProvider for DefaultBlockchainProvider {
             tokio::task::spawn_blocking(move || {
                 let rt = tokio::runtime::Handle::current();
                 let (mut storage, mut mempool) = rt.block_on(async {
-                    // Use read locks for simulation if possible, but execute_with_changeset needs &mut storage
-                    // Actually, InMemoryStorage clone is cheap (it's mostly Arcs/Maps)
                     let s = storage_arc.read().await.clone();
                     let m = mempool_arc.read().await.clone();
                     (s, m)

@@ -15,6 +15,7 @@ evm-precompile = { path = "../evm/precompile", default-features = false }
 evm-interpreter = { path = "../evm/interpreter", default-features = false }
 alloy-primitives = { version = "1.5.7", default-features = false, features = ["serde"] }
 alloy-genesis = { version = "=1.6.3", default-features = false }
+alloy-consensus = { version = "=1.6.3", default-features = false }
 alloy-serde= { version = "=1.6.3", default-features = false }
 alloy-eips = { version = "=1.6.3", default-features = false }
 alloy-trie = { version = "0.9.5", default-features = false, features = ["std"] }
@@ -36,7 +37,7 @@ clap = { version = "4.5.4", features = ["derive"] }
 
 # When using wasix
 wasix = { version = "0.13.1" }
-tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
+tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net", "parking_lot" ] }
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
 log = "0.4.29"
