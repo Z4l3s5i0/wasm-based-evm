@@ -1,9 +1,10 @@
 use std::sync::Arc;
 use async_trait::async_trait;
-use tokio::sync::{Mutex, oneshot, mpsc};
-use alloy_primitives::{Address, B256};
+use tokio::sync::{Mutex, RwLock, oneshot, mpsc};
+use alloy_primitives::{Address, B256, U256};
 
 use crate::executor::Executor;
+use crate::mempool::Mempool;
 use crate::storage::storage::InMemoryStorage;
 use crate::storage::types::{Block, Transaction, PendingPayload, Receipt, ExecutionPayload as DomainExecutionPayload};
 use crate::rpc::provider_error::ProviderError;
@@ -11,7 +12,8 @@ use crate::rpc::provider_api::*;
 use crate::network::NetworkMessage;
 
 pub struct DefaultBlockchainProvider {
-    pub storage: Arc<Mutex<InMemoryStorage>>,
+    pub storage: Arc<RwLock<InMemoryStorage>>,
+    pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
     pub network_send: Option<mpsc::Sender<NetworkMessage>>,
     pub tx_broadcast: Option<mpsc::Sender<Transaction>>,
@@ -20,7 +22,8 @@ pub struct DefaultBlockchainProvider {
 
 impl DefaultBlockchainProvider {
     pub fn new(
-        storage: Arc<Mutex<InMemoryStorage>>,
+        storage: Arc<RwLock<InMemoryStorage>>,
+        mempool: Arc<RwLock<Mempool>>,
         executor: Executor,
         network_send: Option<mpsc::Sender<NetworkMessage>>,
         tx_broadcast: Option<mpsc::Sender<Transaction>>,
@@ -28,6 +31,7 @@ impl DefaultBlockchainProvider {
     ) -> Self {
         Self {
             storage,
+            mempool,
             executor,
             network_send,
             tx_broadcast,
@@ -39,51 +43,51 @@ impl DefaultBlockchainProvider {
 #[async_trait]
 impl EthReadProvider for DefaultBlockchainProvider {
     async fn accounts(&self) -> Result<Vec<Address>, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_accounts())
     }
 
     async fn latest_block_number(&self) -> Result<u64, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_latest_block_number())
     }
 
     async fn balance(&self, address: Address) -> Result<u128, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_balance(address).to::<u128>())
     }
 
     async fn block_by_number(&self, number: u64) -> Result<Option<Block>, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_block_by_number(number).cloned())
     }
 
     async fn block_by_hash(&self, hash: B256) -> Result<Option<Block>, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_block_by_hash(hash).cloned())
     }
 
     async fn block_transaction_count_by_number(&self, number: u64) -> Result<u64, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_block_by_number(number)
             .map(|b| b.body.execution_payload.transactions.len() as u64)
             .unwrap_or(0))
     }
 
     async fn block_transaction_count_by_hash(&self, hash: B256) -> Result<u64, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_block_by_hash(hash)
             .map(|b| b.body.execution_payload.transactions.len() as u64)
             .unwrap_or(0))
     }
 
     async fn tx_by_hash(&self, hash: B256) -> Result<Option<Transaction>, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_transaction_by_hash(hash).cloned())
     }
 
     async fn tx_receipt_by_hash(&self, hash: B256) -> Result<Option<(Transaction, Receipt, Block)>, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         let receipt = match storage.get_receipt_by_tx_hash(hash) {
             Some(r) => r.clone(),
             None => return Ok(None),
@@ -100,12 +104,12 @@ impl EthReadProvider for DefaultBlockchainProvider {
     }
 
     async fn code_at(&self, address: Address) -> Result<Vec<u8>, ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         Ok(storage.get_code(address))
     }
 
     async fn roots(&self) -> Result<(B256, B256, Option<B256>), ProviderError> {
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         let latest_num = storage.get_latest_block_number();
         let latest_block = storage.get_block_by_number(latest_num);
         let receipts_root = latest_block.map(|b| b.body.execution_payload.receipts_root).unwrap_or(B256::ZERO);
@@ -113,8 +117,8 @@ impl EthReadProvider for DefaultBlockchainProvider {
     }
 
     async fn mempool(&self) -> Result<Vec<Transaction>, ProviderError> {
-        let storage = self.storage.lock().await;
-        Ok(storage.get_mempool().cloned().collect())
+        let mempool = self.mempool.read().await;
+        Ok(mempool.get_all_transactions())
     }
 }
 
@@ -135,8 +139,8 @@ impl EthWriteProvider for DefaultBlockchainProvider {
             let _ = tx_broadcast.send(tx.clone()).await;
         }
 
-        let mut storage = self.storage.lock().await;
-        storage.add_transaction(tx.clone());
+        let mut mempool = self.mempool.write().await;
+        mempool.add_transaction(tx.clone());
         Ok(tx)
     }
 
@@ -156,14 +160,13 @@ impl EthWriteProvider for DefaultBlockchainProvider {
 #[async_trait]
 impl EngineProvider for DefaultBlockchainProvider {
     async fn propose_block(&self, req: DomainProposeBlockRequest) -> Result<ProposeBlockResult, ProviderError> {
-        let (mut storage, executor) = {
-            let storage = self.storage.lock().await;
-            (storage, self.executor.clone())
-        };
+        let mut storage = self.storage.write().await;
+        let mut mempool = self.mempool.write().await;
+        let executor = self.executor.clone();
 
         // For propose_block, we build a new block from mempool
         // Default behavior: pop up to 100 transactions from mempool
-        let transactions = storage.mempool.pop_transactions(100);
+        let transactions = mempool.pop_transactions(100);
 
         let latest_block = storage.get_latest_block().cloned().expect("Genesis block should exist");
         
@@ -198,7 +201,7 @@ impl EngineProvider for DefaultBlockchainProvider {
     }
 
     async fn engine_new_payload(&self, payload: DomainExecutionPayload) -> Result<DomainPayloadStatus, ProviderError> {
-        let mut storage = self.storage.lock().await;
+        let mut storage = self.storage.write().await;
         let executor = self.executor.clone();
 
         let block_hash = payload.block_hash;
@@ -253,15 +256,16 @@ impl EngineProvider for DefaultBlockchainProvider {
 
         // 1. Update forkchoice in storage
         {
-            let mut storage = self.storage.lock().await;
+            let mut storage = self.storage.write().await;
             storage.update_forkchoice(head_block_hash);
         }
 
         // 2. Build payload if requested
         let payload_id = if let Some(attr) = req.payload_attributes {
-            let (mut storage, executor) = {
-                let storage = self.storage.lock().await;
-                (storage.clone(), self.executor.clone())
+            let (mut storage, mut mempool, executor) = {
+                let storage = self.storage.read().await;
+                let mempool = self.mempool.read().await;
+                (storage.clone(), mempool.clone(), self.executor.clone())
             };
 
             let latest_block = storage.get_block_by_hash(head_block_hash)
@@ -269,7 +273,7 @@ impl EngineProvider for DefaultBlockchainProvider {
                 .or_else(|| storage.get_latest_block().cloned())
                 .expect("Genesis block should exist");
 
-            let transactions = storage.mempool.peek_transactions(100);
+            let transactions = mempool.peek_transactions(100);
 
             let block_builder = Block::builder(latest_block.body.execution_payload.block_number + 1)
                 .parent_hash(head_block_hash)

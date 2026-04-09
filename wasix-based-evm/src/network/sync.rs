@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{RwLock, mpsc};
 use crate::storage::{InMemoryStorage, Block};
 use crate::network::NetworkMessage;
 use crate::network::protocol::Transactions;
@@ -10,7 +10,7 @@ use std::time::{Instant, Duration};
 use crate::{info, debug};
 
 pub struct SyncService {
-    storage: Arc<Mutex<InMemoryStorage>>,
+    storage: Arc<RwLock<InMemoryStorage>>,
     network_send: mpsc::Sender<NetworkMessage>,
     sync_recv: mpsc::Receiver<SyncEvent>,
     executor: Executor,
@@ -34,7 +34,7 @@ pub enum SyncEvent {
 
 impl SyncService {
     pub fn new(
-        storage: Arc<Mutex<InMemoryStorage>>,
+        storage: Arc<RwLock<InMemoryStorage>>,
         network_send: mpsc::Sender<NetworkMessage>,
     ) -> (Self, mpsc::Sender<SyncEvent>) {
         let (sync_send, sync_recv) = mpsc::channel(100);
@@ -127,7 +127,7 @@ impl SyncService {
 
     async fn request_headers(&mut self, session_id: tentacle::SessionId) {
         let latest_number = {
-            let storage = self.storage.lock().await;
+            let storage = self.storage.read().await;
             storage.get_latest_block_number()
         };
 
@@ -174,7 +174,7 @@ impl SyncService {
     }
 
     async fn handle_bodies(&mut self, session_id: tentacle::SessionId, bodies: crate::network::protocol::BlockBodies) {
-        let mut storage = self.storage.lock().await;
+        let mut storage = self.storage.write().await;
         for body in bodies.bodies {
             if let Some(header) = self.strategy.pending_headers.pop_front() {
                 // In a real implementation, we should match body with header via hash

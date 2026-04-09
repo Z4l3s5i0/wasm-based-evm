@@ -3,9 +3,10 @@ use crate::network::{discovery::{DiscoveryService, DiscoveryEvent}, NetworkConfi
 use crate::storage::{InMemoryStorage, Transaction};
 use crate::network::sync::SyncEvent;
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{RwLock, mpsc, Mutex};
 use discv5::Enr;
 use alloy_primitives::U256;
+use crate::mempool::Mempool;
 use tentacle::{
     builder::ServiceBuilder,
     service::{HandshakeType, ServiceAsyncControl, ServiceError, ServiceEvent, TargetProtocol},
@@ -34,7 +35,8 @@ pub struct NetworkService {
 impl NetworkService {
     pub async fn new(
         config: NetworkConfig,
-        storage: Arc<Mutex<InMemoryStorage>>,
+        storage: Arc<RwLock<InMemoryStorage>>,
+        mempool: Arc<RwLock<Mempool>>,
         rx_broadcast: mpsc::Receiver<Transaction>,
         network_recv: mpsc::Receiver<NetworkMessage>,
         sync_send: mpsc::Sender<SyncEvent>,
@@ -46,7 +48,7 @@ impl NetworkService {
         let (discovery, discovery_recv) = DiscoveryService::new(config.discv5_addr, config.p2p_addr.port(), config.ext_ip, config.bootnodes)?;
         debug!("[NetworkService] DiscoveryService created.");
         
-        let protocol_meta = protocol_handler::create_meta(storage, sync_send.clone(), network_send);
+        let protocol_meta = protocol_handler::create_meta(storage, mempool, sync_send.clone(), network_send);
         
         let peer_manager = Arc::new(Mutex::new(PeerManager::new()));
         let peer_manager_clone = peer_manager.clone();

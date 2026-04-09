@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc};
+use tokio::sync::{RwLock, mpsc};
 use tentacle::{
     service::{ProtocolHandle, ProtocolMeta},
     traits::ServiceProtocol,
@@ -18,24 +18,28 @@ use crate::network::{
     NetworkMessage,
     sync::SyncEvent,
 };
+use crate::mempool::Mempool;
 use crate::storage::InMemoryStorage;
 use crate::storage::types::Block;
 use crate::{info, debug};
 
 pub struct ProtocolDispatcher {
-    storage: Arc<Mutex<InMemoryStorage>>,
+    storage: Arc<RwLock<InMemoryStorage>>,
+    mempool: Arc<RwLock<Mempool>>,
     sync_send: mpsc::Sender<SyncEvent>,
     network_send: mpsc::Sender<NetworkMessage>,
 }
 
 impl ProtocolDispatcher {
     pub fn new(
-        storage: Arc<Mutex<InMemoryStorage>>,
+        storage: Arc<RwLock<InMemoryStorage>>,
+        mempool: Arc<RwLock<Mempool>>,
         sync_send: mpsc::Sender<SyncEvent>,
         network_send: mpsc::Sender<NetworkMessage>,
     ) -> Self {
         Self {
             storage,
+            mempool,
             sync_send,
             network_send,
         }
@@ -60,9 +64,9 @@ impl ProtocolDispatcher {
                 match Transactions::decode(&mut &payload[..]) {
                     Ok(txs) => {
                         info!("[EthProtocol] Received {} transactions from {}", txs.0.len(), context.session.id);
-                        let mut storage = self.storage.lock().await;
+                        let mut mempool = self.mempool.write().await;
                         for tx in txs.0 {
-                            storage.add_transaction(tx);
+                            mempool.add_transaction(tx);
                         }
                     }
                     Err(e) => info!("[EthProtocol] Failed to decode Transactions from {}: {:?}", context.session.id, e),
@@ -72,7 +76,7 @@ impl ProtocolDispatcher {
                 match NewBlock::decode(&mut &payload[..]) {
                     Ok(new_block) => {
                         info!("[EthProtocol] Received new block {} from {}", new_block.block.body.execution_payload.block_hash, context.session.id);
-                        let mut storage = self.storage.lock().await;
+                        let mut storage = self.storage.write().await;
                         if storage.get_block_by_hash(new_block.block.body.execution_payload.block_hash).is_none() {
                             storage.add_block(new_block.block.clone());
                             
@@ -91,7 +95,7 @@ impl ProtocolDispatcher {
                 match GetBlockHeaders::decode(&mut &payload[..]) {
                     Ok(req) => {
                         debug!("[EthProtocol] Received GetBlockHeaders from {}: {:?}", context.session.id, req);
-                        let storage = self.storage.lock().await;
+                        let storage = self.storage.read().await;
                         let mut headers = Vec::new();
                         let start_block = match req.block {
                             BlockHashOrNumber::Hash(h) => storage.get_block_by_hash(h).map(|b| b.body.execution_payload.block_number),
@@ -127,7 +131,7 @@ impl ProtocolDispatcher {
                 match GetBlockBodies::decode(&mut &payload[..]) {
                     Ok(req) => {
                         debug!("[EthProtocol] Received GetBlockBodies from {} with {} hashes", context.session.id, req.hashes.len());
-                        let storage = self.storage.lock().await;
+                        let storage = self.storage.read().await;
                         let mut bodies: Vec<Block> = Vec::new();
                         for hash in req.hashes {
                             if let Some(block) = storage.get_block_by_hash(hash) {
@@ -148,11 +152,12 @@ impl ProtocolDispatcher {
                 match GetPooledTransactions::decode(&mut &payload[..]) {
                     Ok(req) => {
                         debug!("[EthProtocol] Received GetPooledTransactions from {} with {} hashes", context.session.id, req.hashes.len());
-                        let storage = self.storage.lock().await;
+                        let mempool = self.mempool.read().await;
                         let mut txs = Vec::new();
                         for hash in req.hashes {
-                            if let Some(tx) = storage.get_transaction_by_hash(hash) {
-                                txs.push(tx.clone());
+                            // Find transaction in mempool
+                            if let Some(tx) = mempool.get_all_transactions().into_iter().find(|tx| tx.hash == hash) {
+                                txs.push(tx);
                             }
                         }
 
@@ -169,9 +174,9 @@ impl ProtocolDispatcher {
                 match PooledTransactions::decode(&mut &payload[..]) {
                     Ok(txs) => {
                         info!("[EthProtocol] Received {} PooledTransactions from {}", txs.transactions.len(), context.session.id);
-                        let mut storage = self.storage.lock().await;
+                        let mut mempool = self.mempool.write().await;
                         for tx in txs.transactions {
-                            storage.add_transaction(tx);
+                            mempool.add_transaction(tx);
                         }
                     }
                     Err(e) => info!("[EthProtocol] Failed to decode PooledTransactions from {}: {:?}", context.session.id, e),
@@ -213,7 +218,7 @@ impl ProtocolDispatcher {
 }
 
 pub struct EthProtocolHandler {
-    storage: Arc<Mutex<InMemoryStorage>>,
+    storage: Arc<RwLock<InMemoryStorage>>,
     network_send: mpsc::Sender<NetworkMessage>,
     dispatcher: Arc<ProtocolDispatcher>,
 }
@@ -228,7 +233,7 @@ impl ServiceProtocol for EthProtocolHandler {
         info!("[EthProtocol] connected on session: {}, version: {}", context.session.id, version);
         
         // Send Status message immediately
-        let storage = self.storage.lock().await;
+        let storage = self.storage.read().await;
         let latest_block = storage.get_latest_block();
         let status = Status {
             protocol_version: 66, // Example version
@@ -258,12 +263,14 @@ impl ServiceProtocol for EthProtocolHandler {
 }
 
 pub fn create_meta(
-    storage: Arc<Mutex<InMemoryStorage>>, 
+    storage: Arc<RwLock<InMemoryStorage>>,
+    mempool: Arc<RwLock<Mempool>>,
     sync_send: mpsc::Sender<SyncEvent>,
     network_send: mpsc::Sender<NetworkMessage>,
 ) -> ProtocolMeta {
     let dispatcher = Arc::new(ProtocolDispatcher::new(
         storage.clone(),
+        mempool.clone(),
         sync_send.clone(),
         network_send.clone(),
     ));

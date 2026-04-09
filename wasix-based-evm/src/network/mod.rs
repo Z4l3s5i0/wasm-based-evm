@@ -9,8 +9,9 @@ pub mod protocol_handler;
 use crate::{info, debug};
 
 use std::sync::Arc;
-use tokio::sync::{Mutex, mpsc, oneshot};
+use tokio::sync::{RwLock, mpsc, oneshot};
 use crate::storage::{InMemoryStorage, Block, Transaction};
+use crate::mempool::Mempool;
 use crate::network::protocol::{BlockHeaders, BlockBodies};
 
 #[derive(Debug, Clone)]
@@ -64,7 +65,8 @@ pub struct NetworkHandle {
 
 pub async fn start_network(
     config: NetworkConfig,
-    storage: Arc<Mutex<InMemoryStorage>>,
+    storage: Arc<RwLock<InMemoryStorage>>,
+    mempool: Arc<RwLock<Mempool>>,
 ) -> Result<NetworkHandle, Box<dyn std::error::Error>> {
     let (tx_broadcast, rx_broadcast) = mpsc::channel(100);
     let (network_send, network_recv) = mpsc::channel(100);
@@ -72,7 +74,7 @@ pub async fn start_network(
     let (sync_service, sync_send) = sync::SyncService::new(storage.clone(), network_send.clone());
     //1
     info!("[network::mod] Starting network with config: {:?}", config.discv5_addr);
-    let service = match service::NetworkService::new(config, storage, rx_broadcast, network_recv, sync_send, network_send.clone()).await {
+    let service = match service::NetworkService::new(config, storage, mempool, rx_broadcast, network_recv, sync_send, network_send.clone()).await {
         Ok(s) => {
             info!("[network::mod] NetworkService instance created successfully.");
             s

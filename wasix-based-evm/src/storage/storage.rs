@@ -17,7 +17,6 @@ pub struct InMemoryStorage {
     pub receipts: BTreeMap<B256, Receipt>,
     #[allow(dead_code)]
     pub contracts: BTreeMap<Address, Vec<u8>>,
-    pub mempool: crate::mempool::Mempool,
     pub head_block_hash: B256,
     pub safe_block_hash: B256,
     pub finalized_block_hash: B256,
@@ -52,7 +51,6 @@ impl InMemoryStorage {
             transactions: BTreeMap::new(),
             receipts: BTreeMap::new(),
             contracts: BTreeMap::new(),
-            mempool: crate::mempool::Mempool::new(U256::ZERO),
             head_block_hash: B256::ZERO,
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
@@ -226,10 +224,6 @@ impl InMemoryStorage {
 
     pub fn get_block_hash(&self, number: u64) -> Option<B256> {
         self.get_block_by_number(number).map(|b| b.body.execution_payload.block_hash)
-    }
-
-    pub fn get_mempool(&self) -> impl Iterator<Item = &Transaction> {
-        self.transactions.values().filter(|tx| !self.receipts.contains_key(&tx.hash))
     }
 
     pub fn update_forkchoice(&mut self, hash: B256) {

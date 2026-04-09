@@ -9,7 +9,8 @@ use crate::ev::alloy_u256_to_evm_u256;
 use alloy_primitives::U256;
 use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
-use tokio::sync::Mutex;
+use crate::mempool::Mempool;
+use tokio::sync::{Mutex, RwLock};
 use tonic::transport::Server;
 use std::path::PathBuf;
 use crate::{debug, info};
@@ -41,8 +42,10 @@ pub struct AppBuilder {
     args: Option<Args>,
     genesis: Option<Genesis>,
     genesis_configured: bool,
-    storage: Option<Arc<Mutex<InMemoryStorage>>>,
+    storage: Option<Arc<RwLock<InMemoryStorage>>>,
+    mempool: Option<Arc<RwLock<Mempool>>>,
     storage_configured: bool,
+    mempool_configured: bool,
     executor: Option<Executor>,
     executor_configured: bool,
     network_handle: Option<NetworkHandle>,
@@ -64,9 +67,15 @@ impl AppBuilder {
         self
     }
 
-    pub fn with_storage(mut self, storage: Arc<Mutex<InMemoryStorage>>) -> Self {
+    pub fn with_storage(mut self, storage: Arc<RwLock<InMemoryStorage>>) -> Self {
         self.storage = Some(storage);
         self.storage_configured = true;
+        self
+    }
+
+    pub fn with_mempool(mut self, mempool: Arc<RwLock<Mempool>>) -> Self {
+        self.mempool = Some(mempool);
+        self.mempool_configured = true;
         self
     }
 
@@ -128,7 +137,7 @@ impl AppBuilder {
             Genesis::from(alloy_genesis)
         };
 
-        // 3. Storage & Executor
+        // 3. Storage, Mempool & Executor
         let storage = if self.storage_configured {
             self.storage.ok_or("Storage marked as configured but not provided")?
         } else {
@@ -138,7 +147,13 @@ impl AppBuilder {
             for (h160, account) in &storage_inner.backend.state {
                 debug!("[App] Pre-funded account: 0x{:x}, balance: {} wei", h160, account.balance);
             }
-            Arc::new(Mutex::new(storage_inner))
+            Arc::new(RwLock::new(storage_inner))
+        };
+
+        let mempool = if self.mempool_configured {
+            self.mempool.ok_or("Mempool marked as configured but not provided")?
+        } else {
+            Arc::new(RwLock::new(Mempool::new(U256::ZERO)))
         };
 
         let executor = if self.executor_configured {
@@ -158,7 +173,7 @@ impl AppBuilder {
                 bootnodes: args.bootnodes,
                 max_peers: args.max_peers,
             };
-            network::start_network(network_config, storage.clone()).await?
+            network::start_network(network_config, storage.clone(), mempool.clone()).await?
         };
 
         // 5. RPC Service
@@ -169,6 +184,7 @@ impl AppBuilder {
             let pending_payloads = Arc::new(Mutex::new(std::collections::HashMap::new()));
             let provider = Box::new(crate::rpc::provider::DefaultBlockchainProvider {
                 storage,
+                mempool,
                 executor,
                 network_send: Some(network_handle.network_send.clone()),
                 tx_broadcast: Some(network_handle.tx_broadcast.clone()),
