@@ -34,7 +34,7 @@ getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" ,
 mio = { git = "https://github.com/wasix-org/mio", default-features = false }
 h2 = "0.4"
 serde_json = { version = "1.0.0", default-features = false, features = ["alloc", "std"] }
-discv5 = "0.10.4"
+discv5 = { version = "0.10.4" }
 async-trait = "0.1.89"
 clap = { version = "4.5.4", features = ["derive"] }
 thiserror = "2.0.18"
@@ -74,7 +74,7 @@ libp2p = {version = "0.56.0", default-features = false, features = [
     "websocket-websys",
     "websocket",
     "webtransport-websys",
-#    "yamux",
+    "yamux",
     "upnp",
 
 ]}

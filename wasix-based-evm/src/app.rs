@@ -226,7 +226,7 @@ impl AppBuilder {
             p2p_identity.enr,
             args.discovery_port,
             args.bootnodes.clone(),
-        )?;
+        ).await?;
         
         Ok(App {
             eth_rpc_addr,

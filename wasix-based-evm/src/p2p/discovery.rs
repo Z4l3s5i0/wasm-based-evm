@@ -1,15 +1,16 @@
 use discv5::{Discv5, ConfigBuilder, Event, ListenConfig};
 use discv5::enr::{CombinedKey, Enr as RawEnr, NodeId};
 use std::net::SocketAddr;
+use std::sync::Arc;
 use crate::{info, error, debug};
 use anyhow::Result;
 
 pub struct DiscoveryService {
-    discv5: Discv5,
+    discv5: Arc<Discv5>,
 }
 
 impl DiscoveryService {
-    pub fn new(
+    pub async fn new(
         identity_key: CombinedKey,
         local_enr: RawEnr<CombinedKey>,
         listen_port: u16,
@@ -37,17 +38,38 @@ impl DiscoveryService {
             }
         }
 
-        Ok(Self { discv5 })
+        // Start the service before wrapping it in Arc
+        discv5.start().await
+            .map_err(|e| anyhow::anyhow!("Failed to start Discv5: {}", e))?;
+        
+        Ok(Self { discv5: Arc::new(discv5) })
     }
 
-    pub async fn start(mut self) -> Result<()> {
-        info!("[Discovery] Starting Discv5 service...");
+    pub async fn start(&self) -> Result<()> {
+        info!("[Discovery] Starting background tasks...");
         
-        self.discv5.start().await
-            .map_err(|e| anyhow::anyhow!("Failed to start Discv5: {}", e))?;
-
         let mut event_stream = self.discv5.event_stream().await
             .map_err(|e| anyhow::anyhow!("Failed to get Discv5 event stream: {}", e))?;
+
+        // Active discovery loop
+        let discv5_clone = Arc::clone(&self.discv5);
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(tokio::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                debug!("[Discovery] Triggering random DHT query...");
+                let target_node = NodeId::random();
+                let found_nodes = discv5_clone.find_node(target_node).await;
+                match found_nodes {
+                    Ok(nodes) => {
+                        if !nodes.is_empty() {
+                            info!("[Discovery] DHT query found {} nodes", nodes.len());
+                        }
+                    }
+                    Err(e) => debug!("[Discovery] DHT query failed: {}", e),
+                }
+            }
+        });
 
         // Event handler loop
         tokio::spawn(async move {
