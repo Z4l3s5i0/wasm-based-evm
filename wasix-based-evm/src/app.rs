@@ -13,6 +13,7 @@ use std::path::PathBuf;
 use crate::{debug, info};
 
 use crate::rpc::RpcServerFacade;
+use crate::rpc::eth_service::EthService;
 use crate::rpc::account_service::AccountService;
 use crate::rpc::block_service::BlockService;
 use crate::rpc::transaction_service::TransactionService;
@@ -159,6 +160,13 @@ impl AppBuilder {
         let provider = Arc::new(StorageProvider::new(storage.clone()));
 
         facade.register_accounts(AccountService { storage: provider.clone() })?;
+        facade.register_eth(EthService { 
+            block_storage: provider.clone(),
+            state_storage: provider.clone(),
+            mempool: mempool.clone(),
+            executor: executor.clone(),
+            storage: storage.clone(),
+        })?;
         facade.register_blocks(BlockService { storage: provider.clone() })?;
         facade.register_transactions(TransactionService { storage: provider.clone() })?;
         facade.register_logs(LogService { storage: provider.clone() })?;

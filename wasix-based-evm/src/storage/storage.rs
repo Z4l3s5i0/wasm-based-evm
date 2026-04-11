@@ -279,6 +279,10 @@ impl StateProvider for StorageProvider {
     async fn transaction_count(&self, address: Address, block_id: BlockId) -> Result<u64> {
         self.inner.read().await.transaction_count(address, block_id).await
     }
+
+    async fn accounts(&self) -> Result<Vec<Address>> {
+        self.inner.read().await.accounts().await
+    }
 }
 
 #[async_trait]
@@ -297,6 +301,10 @@ impl BlockProvider for StorageProvider {
 
     async fn latest_block_number(&self) -> Result<u64> {
         self.inner.read().await.latest_block_number().await
+    }
+
+    async fn chain_id(&self) -> Result<u64> {
+        self.inner.read().await.chain_id().await
     }
 }
 
@@ -360,6 +368,10 @@ impl StateProvider for InMemoryStorage {
         let h160 = H160::from_slice(address.as_slice());
         Ok(self.backend.state.get(&h160).map(|acc| acc.nonce.as_u64()).unwrap_or(0))
     }
+
+    async fn accounts(&self) -> Result<Vec<Address>> {
+        Ok(self.get_accounts())
+    }
 }
 
 #[async_trait]
@@ -400,6 +412,11 @@ impl BlockProvider for InMemoryStorage {
 
     async fn latest_block_number(&self) -> Result<u64> {
         Ok(self.get_latest_block_number())
+    }
+
+    async fn chain_id(&self) -> Result<u64> {
+        let chain_id = self.backend.environment.chain_id;
+        Ok(crate::ev::evm_u256_to_alloy_u256(chain_id).to::<u64>())
     }
 }
 

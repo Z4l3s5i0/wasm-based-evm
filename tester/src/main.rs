@@ -1,4 +1,4 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes};
 use alloy_consensus::Transaction as _;
 use alloy_rpc_types::{Block, Transaction, TransactionReceipt, Filter, Log};
 use alloy_eips::BlockId;
@@ -74,6 +74,38 @@ enum Commands {
         topics: Vec<String>,
     },
     /// Opens the block explorer
+    #[command(about = "Get account code")]
+    GetCode {
+        #[arg(short, long)]
+        address: String,
+        #[arg(short, long, default_value = "latest")]
+        block_tag: String,
+    },
+    #[command(about = "Get storage at a given slot")]
+    GetStorageAt {
+        #[arg(short, long)]
+        address: String,
+        #[arg(short, long)]
+        slot: String,
+        #[arg(short, long, default_value = "latest")]
+        block_tag: String,
+    },
+    #[command(about = "Get chain ID")]
+    ChainId,
+    #[command(about = "Get gas price")]
+    GasPrice,
+    #[command(about = "Get block transaction count by number")]
+    GetBlockTransactionCountByNumber {
+        #[arg(short, long)]
+        number: u64,
+    },
+    #[command(about = "Get block transaction count by hash")]
+    GetBlockTransactionCountByHash {
+        #[arg(short, long)]
+        hash: String,
+    },
+    /// Returns a list of addresses owned by client
+    Accounts,
     Explorer,
     Exit,
     /// Connects to a different EVM JSON-RPC server
@@ -263,6 +295,34 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                         }
                         let res: Vec<Log> = client.request("eth_getLogs", rpc_params![filter]).await?;
                         println!("{:#?}", res);
+                    }
+                    Commands::GetCode { address, block_tag } => {
+                        let res: Bytes = client.request("eth_getCode", rpc_params![address, parse_block_id(&block_tag)]).await?;
+                        println!("Code: {}", res);
+                    }
+                    Commands::GetStorageAt { address, slot, block_tag } => {
+                        let res: String = client.request("eth_getStorageAt", rpc_params![address, slot, parse_block_id(&block_tag)]).await?;
+                        println!("Storage value: {}", res);
+                    }
+                    Commands::ChainId => {
+                        let res: String = client.request("eth_chainId", rpc_params![]).await?;
+                        println!("Chain ID: {}", res);
+                    }
+                    Commands::GasPrice => {
+                        let res: String = client.request("eth_gasPrice", rpc_params![]).await?;
+                        println!("Gas price: {}", res);
+                    }
+                    Commands::GetBlockTransactionCountByNumber { number } => {
+                        let res: Option<String> = client.request("eth_getBlockTransactionCountByNumber", rpc_params![BlockId::number(number)]).await?;
+                        println!("Transaction count: {:?}", res);
+                    }
+                    Commands::GetBlockTransactionCountByHash { hash } => {
+                        let res: Option<String> = client.request("eth_getBlockTransactionCountByHash", rpc_params![hash]).await?;
+                        println!("Transaction count: {:?}", res);
+                    }
+                    Commands::Accounts => {
+                        let res: Vec<String> = client.request("eth_accounts", rpc_params![]).await?;
+                        println!("Accounts: {:?}", res);
                     }
                     Commands::Explorer => {
                         if let Err(e) = run_explorer(&client).await {

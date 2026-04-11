@@ -1,8 +1,10 @@
+mod eth_controller;
 mod account_controller;
 mod block_controller;
 mod transaction_controller;
 mod log_controller;
 
+pub mod eth_service;
 pub mod account_service;
 pub mod block_service;
 pub mod transaction_service;
@@ -15,6 +17,8 @@ mod log_mapper;
 
 use crate::error::RpcResult;
 use alloy_primitives::{Address, B256};
+use crate::rpc::eth_controller::{EthController, EthRpcServer};
+use crate::rpc::eth_service::EthService;
 use crate::rpc::account_controller::{AccountController, AccountRpcServer};
 use crate::rpc::account_service::AccountService;
 use crate::rpc::block_controller::{BlockController, BlockRpcServer};
@@ -35,6 +39,10 @@ impl RpcServerFacade {
 
     pub fn register_accounts(&mut self, service: AccountService) -> Result<(), jsonrpsee::types::ErrorObjectOwned> {
         self.module.merge(AccountController { service }.into_rpc()).map_err(|e| jsonrpsee::types::ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e.to_string(), None::<()>))
+    }
+
+    pub fn register_eth(&mut self, service: EthService) -> Result<(), jsonrpsee::types::ErrorObjectOwned> {
+        self.module.merge(EthController { service }.into_rpc()).map_err(|e| jsonrpsee::types::ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e.to_string(), None::<()>))
     }
 
     pub fn register_blocks(&mut self, service: BlockService) -> Result<(), jsonrpsee::types::ErrorObjectOwned> {

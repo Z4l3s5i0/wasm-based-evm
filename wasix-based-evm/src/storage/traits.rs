@@ -11,6 +11,7 @@ pub trait StateProvider: Send + Sync {
     async fn code(&self, address: Address, block_id: BlockId) -> Result<Option<Bytes>>;
     async fn balance(&self, address: Address, block_id: BlockId) -> Result<U256>;
     async fn transaction_count(&self, address: Address, block_id: BlockId) -> Result<u64>;
+    async fn accounts(&self) -> Result<Vec<Address>>;
 }
 
 #[async_trait]
@@ -19,6 +20,7 @@ pub trait BlockProvider: Send + Sync {
     async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>>;
     async fn block_hash(&self, number: u64) -> Result<Option<B256>>;
     async fn latest_block_number(&self) -> Result<u64>;
+    async fn chain_id(&self) -> Result<u64>;
 }
 
 #[async_trait]
