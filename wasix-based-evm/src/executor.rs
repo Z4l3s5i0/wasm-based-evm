@@ -1,5 +1,4 @@
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope, Header, Transaction as _, transaction::SignerRecoverable as _};
-use alloy_eips::eip4895::Withdrawal;
 use alloy_primitives::{logs_bloom, Log, B256, Address, LogData};
 use crate::ev::{H160, EvmU256, evm};
 use evm::backend::OverlayedChangeSet;
@@ -53,6 +52,7 @@ impl Executor {
     }
 
     pub fn execute_with_changeset(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
+        info!("[Executor] Executing {} transactions for block {}", transactions.len(), block.header.number);
         let precompiles = StandardPrecompileSet;
         let etable = evm::interpreter::etable::Chained(ExecutionEtable::new(), GasometerEtable::new());
         let resolver = EtableResolver::new(&precompiles, &etable);

@@ -66,7 +66,7 @@ Methods for sending transactions and simulating execution.
 
 | Method | Status | Description |
 | :--- | :--- | :--- |
-| `eth_sendTransaction` | ✅ Implemented* | Creates new message call transaction or a contract creation (Returns error: needs node signing). |
+| `eth_sendTransaction` | ✅ Implemented | Creates new message call transaction or a contract creation (Signed by node using AccountManager). |
 | `eth_sendRawTransaction` | ❌ Pending | Creates new message call transaction or a contract creation for signed transactions. |
 | `eth_call` | ✅ Implemented | Executes a new message call immediately without creating a transaction on the blockchain. |
 | `eth_estimateGas` | ✅ Implemented | Generates and returns an estimate of how much gas is necessary to allow the transaction to complete. |

@@ -1,5 +1,4 @@
 use crate::error::RpcResult;
-use alloy_primitives::B256;
 use alloy_rpc_types::Transaction;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;

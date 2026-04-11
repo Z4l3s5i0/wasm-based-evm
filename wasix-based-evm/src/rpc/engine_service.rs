@@ -8,7 +8,8 @@ use alloy_rpc_types::engine::{
     PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadBodyV1,
 };
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
-use alloy_primitives::{B256, U256, Address, Bytes};
+use alloy_primitives::{B256, U256, Bytes};
+use crate::info;
 use crate::storage::storage::InMemoryStorage;
 use crate::mempool::Mempool;
 use crate::executor::Executor;
@@ -23,6 +24,7 @@ pub struct EngineService {
 
 impl EngineService {
     pub fn new(storage: Arc<RwLock<InMemoryStorage>>, mempool: Arc<RwLock<Mempool>>, executor: Executor) -> Self {
+        info!("[EngineService] Initializing engine service");
         Self {
             storage,
             mempool,
@@ -34,29 +36,29 @@ impl EngineService {
     pub async fn exchange_capabilities(&self, _capabilities: Vec<String>) -> RpcResult<Vec<String>> {
         Ok(vec![
             "engine_exchangeCapabilities".to_string(),
-            "engine_exchangeTransitionConfigurationV1".to_string(),
+            // "engine_exchangeTransitionConfigurationV1".to_string(),
             "engine_forkchoiceUpdatedV1".to_string(),
             "engine_forkchoiceUpdatedV2".to_string(),
-            "engine_forkchoiceUpdatedV3".to_string(),
-            "engine_forkchoiceUpdatedV4".to_string(),
-            "engine_getBlobsV1".to_string(),
-            "engine_getBlobsV2".to_string(),
-            "engine_getBlobsV3".to_string(),
+            // "engine_forkchoiceUpdatedV3".to_string(),
+            // "engine_forkchoiceUpdatedV4".to_string(),
+            // "engine_getBlobsV1".to_string(),
+            // "engine_getBlobsV2".to_string(),
+            // "engine_getBlobsV3".to_string(),
             "engine_getPayloadBodiesByHashV1".to_string(),
             "engine_getPayloadBodiesByHashV2".to_string(),
             "engine_getPayloadBodiesByRangeV1".to_string(),
             "engine_getPayloadBodiesByRangeV2".to_string(),
             "engine_getPayloadV1".to_string(),
             "engine_getPayloadV2".to_string(),
-            "engine_getPayloadV3".to_string(),
-            "engine_getPayloadV4".to_string(),
-            "engine_getPayloadV5".to_string(),
-            "engine_getPayloadV6".to_string(),
+            // "engine_getPayloadV3".to_string(),
+            // "engine_getPayloadV4".to_string(),
+            // "engine_getPayloadV5".to_string(),
+            // "engine_getPayloadV6".to_string(),
             "engine_newPayloadV1".to_string(),
             "engine_newPayloadV2".to_string(),
-            "engine_newPayloadV3".to_string(),
-            "engine_newPayloadV4".to_string(),
-            "engine_newPayloadV5".to_string(),
+            // "engine_newPayloadV3".to_string(),
+            // "engine_newPayloadV4".to_string(),
+            // "engine_newPayloadV5".to_string(),
         ])
     }
 
@@ -264,6 +266,7 @@ impl EngineService {
         payload_attributes: Option<PayloadAttributes>,
         _version: u8,
     ) -> RpcResult<ForkchoiceUpdated> {
+        info!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let mut storage = self.storage.write().await;
 
         // Update forkchoice in storage
@@ -335,6 +338,7 @@ impl EngineService {
             };
 
             self.payloads.write().await.insert(id, block);
+            info!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
             }
         }
 
@@ -408,6 +412,7 @@ impl EngineService {
         payload_v1: ExecutionPayloadV1,
         withdrawals: Option<Vec<alloy_rpc_types::Withdrawal>>,
     ) -> RpcResult<PayloadStatus> {
+        info!("[EngineService] newPayload: block_number={}, block_hash={:?}, parent_hash={:?}", payload_v1.block_number, payload_v1.block_hash, payload_v1.parent_hash);
         // 1. Convert ExecutionPayload to Block
         let mut transactions = Vec::new();
         for tx_bytes in &payload_v1.transactions {

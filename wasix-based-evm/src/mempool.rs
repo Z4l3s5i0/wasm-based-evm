@@ -1,7 +1,7 @@
 use std::collections::{HashMap, VecDeque};
 use alloy_primitives::{Address, B256, U256};
 use alloy_consensus::{TxEnvelope as Transaction, Transaction as _, transaction::SignerRecoverable as _};
-use crate::debug;
+use crate::info;
 
 /// A simple mempool to store pending transactions.
 #[derive(Debug, Default, Clone)]
@@ -23,7 +23,8 @@ impl Mempool {
 
     /// Add a transaction to the mempool.
     pub fn add_transaction(&mut self, tx: Transaction) {
-        debug!("[Mempool] Adding transaction {:?} to mempool", tx.hash());
+        let hash = tx.hash();
+        info!("[Mempool] Adding transaction {:?} to mempool", hash);
         let from = tx.recover_signer().unwrap_or_default();
         let queue = self.pending_transactions
             .entry(from)
@@ -61,6 +62,9 @@ impl Mempool {
 
     /// Remove transactions that have been included in a block.
     pub fn remove_transactions(&mut self, tx_hashes: &[B256]) {
+        if !tx_hashes.is_empty() {
+            info!("[Mempool] Removing {} transactions from mempool", tx_hashes.len());
+        }
         for queue in self.pending_transactions.values_mut() {
             queue.retain(|tx| !tx_hashes.contains(&tx.hash()));
         }

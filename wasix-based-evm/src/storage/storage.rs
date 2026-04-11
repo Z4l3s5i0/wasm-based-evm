@@ -1,11 +1,10 @@
 use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
-use crate::{debug};
+use crate::{info, debug};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, B256, U256, keccak256, Bytes};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
-use std::hash::Hash;
 use crate::storage::genesis::Genesis;
 use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, LogProvider};
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction, Header};
@@ -62,7 +61,7 @@ impl InMemoryStorage {
         };
 
         // Create genesis block
-        let genesis_block: Block<Transaction> = Block {
+        let _genesis_block: Block<Transaction> = Block {
             header: Header {
                 number: 0,
                 timestamp: genesis.timestamp,
@@ -113,10 +112,11 @@ impl InMemoryStorage {
     pub fn add_block(&mut self, block: Block<Transaction>) {
         let block_number = block.header.number;
         let block_hash = block.header.hash_slow();
-        debug!("[Storage] Adding block #{} with hash {:?}", block_number, block_hash);
+        info!("[Storage] Adding block #{} with hash {:?}", block_number, block_hash);
         
         for (i, tx) in block.body.transactions.iter().enumerate() {
             let tx_hash = tx.hash();
+            debug!("[Storage] Indexing transaction {:?} in block {}", tx_hash, block_number);
             self.tx_location.insert(*tx_hash, (block_number, block_hash, i));
             self.transactions.insert(*tx_hash, tx.clone());
         }
@@ -244,6 +244,7 @@ impl InMemoryStorage {
     }
 
     pub fn update_forkchoice(&mut self, hash: B256) {
+        info!("[Storage] Updating forkchoice: head={:?}", hash);
         self.head_block_hash = hash;
     }
 }

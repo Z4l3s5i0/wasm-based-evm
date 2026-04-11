@@ -6,10 +6,13 @@ use crate::storage::traits::{BlockProvider, StateProvider};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use tokio::sync::RwLock;
 use crate::mempool::Mempool;
+use crate::rpc::account_manager::AccountManager;
 use crate::executor::Executor;
 use alloy_consensus::{TxEnvelope as Transaction, TxLegacy};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
+
+use crate::info;
 
 pub struct EthService {
     pub block_storage: Arc<dyn BlockProvider>,
@@ -17,6 +20,7 @@ pub struct EthService {
     pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
     pub storage: Arc<RwLock<InMemoryStorage>>,
+    pub account_manager: Arc<AccountManager>,
 }
 
 impl EthService {
@@ -40,33 +44,46 @@ impl EthService {
     }
 
     pub async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<alloy_primitives::B256> {
-        // TODO implement eth_sendTransaction
-        // For eth_sendTransaction, the node must manage the account and sign it.
-        // Since we don't have a secure way to manage keys yet, let's create a legacy transaction 
-        // with a dummy signature for now if it's not signed, or just use send_raw_transaction if it's signed.
-        // But the Ethereum JSON-RPC spec for eth_sendTransaction expects the node to sign.
+        info!("[EthService] eth_sendTransaction from: {:?}", request.from);
         
-        // This is a placeholder for a real signing implementation.
-        // In a real scenario, we would look up the key for `request.from` and sign it.
+        let from = request.from.ok_or_else(|| crate::error::RpcError::InvalidParams("from address is required".to_string()))?;
         
+        if !self.account_manager.is_managed(&from) {
+            return Err(crate::error::RpcError::AccountNotFound(from));
+        }
+
+        let chain_id = self.block_storage.chain_id().await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))?;
+        let nonce = if let Some(n) = request.nonce {
+            n
+        } else {
+            self.state_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest)).await
+                .map_err(|e| crate::error::RpcError::Internal(e.to_string()))?
+        };
+
+        let gas_price = request.gas_price.unwrap_or(1_000_000_000u128);
+        let gas_limit = request.gas.unwrap_or(21000);
+
         let tx = TxLegacy {
-            chain_id: Some(self.block_storage.chain_id().await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))?),
-            nonce: request.nonce.unwrap_or_default(),
-            gas_price: request.gas_price.unwrap_or(1_000_000_000u128),
-            gas_limit: request.gas.unwrap_or(21000),
+            chain_id: Some(chain_id),
+            nonce,
+            gas_price,
+            gas_limit,
             to: request.to.unwrap_or_default().into(),
             value: request.value.unwrap_or_default(),
             input: request.input.data.clone().unwrap_or_default(),
         };
 
-        // We can't really sign it without a private key.
-        // For now, let's just return an error that it's not implemented, or use a dummy.
-        // Given this is a WASM-based EVM, maybe we should focus on eth_sendRawTransaction.
-        
-        Err(crate::error::RpcError::Internal("eth_sendTransaction requires node-side signing which is not yet implemented. Use eth_sendRawTransaction instead.".to_string()))
+        let signed_tx: Transaction = self.account_manager.sign_transaction(&from, tx).await?;
+        let hash = signed_tx.hash().clone();
+
+        info!("[EthService] Adding signed transaction {:?} to mempool", hash);
+        self.mempool.write().await.add_transaction(signed_tx);
+
+        Ok(hash)
     }
 
     pub async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<Bytes> {
+        info!("[EthService] eth_call: to={:?}, data_len={}", request.to, request.input.data.as_ref().map(|d| d.len()).unwrap_or(0));
         // TODO: Implement eth_call
         let block_id = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let block = self.block_storage.block(block_id).await
@@ -103,7 +120,7 @@ impl EthService {
         // Similar to call, but we return gas used.
         // This is a simplified version.
         let block_id = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
-        let block = self.block_storage.block(block_id).await
+        let _block = self.block_storage.block(block_id).await
             .map_err(|e| crate::error::RpcError::Internal(e.to_string()))?
             .ok_or(crate::error::RpcError::BlockNotFound(block_id))?;
         
@@ -116,9 +133,9 @@ impl EthService {
             value: request.value.unwrap_or_default(),
             input: request.input.data.clone().unwrap_or_default(),
         };
-        let tx_envelope = Transaction::Legacy(alloy_consensus::Signed::new_unchecked(tx, alloy_primitives::Signature::test_signature(), alloy_primitives::B256::ZERO));
+        let _tx_envelope = Transaction::Legacy(alloy_consensus::Signed::new_unchecked(tx, alloy_primitives::Signature::test_signature(), alloy_primitives::B256::ZERO));
 
-        let storage_lock = self.storage.read().await;
+        let _storage_lock = self.storage.read().await;
         // For estimation, we need to know gas used.
         // Our executor currently returns TransactValue which is just the output bytes.
         // We might need to modify Executor to return more info.

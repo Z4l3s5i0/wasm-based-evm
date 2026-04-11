@@ -12,9 +12,13 @@ pub struct Args {
     #[arg(long, default_value_t = 9000)]
     pub discovery_port: u16,
 
-    /// gRPC/JSON-RPC port
-    #[arg(long, default_value_t = 50051)]
-    pub rpc_port: u16,
+    /// TCP port for Eth JSON-RPC
+    #[arg(long, default_value_t = 8545)]
+    pub eth_rpc_port: u16,
+
+    /// TCP port for Auth Engine JSON-RPC
+    #[arg(long, default_value_t = 8551)]
+    pub auth_rpc_port: u16,
 
     /// Comma-separated list of ENRs for bootstrapping
     #[arg(long, value_delimiter = ',')]

@@ -8,6 +8,7 @@ mod log_controller;
 pub mod eth_service;
 pub mod engine_service;
 pub mod account_service;
+pub mod account_manager;
 pub mod block_service;
 pub mod transaction_service;
 pub mod log_service;
@@ -39,6 +40,10 @@ pub struct RpcServerFacade {
 impl RpcServerFacade {
     pub fn new() -> Self {
         Self { module: jsonrpsee::RpcModule::new(()) }
+    }
+
+    pub fn empty_module() -> jsonrpsee::RpcModule<()> {
+        jsonrpsee::RpcModule::new(())
     }
 
     pub fn register_accounts(&mut self, service: AccountService) -> Result<(), jsonrpsee::types::ErrorObjectOwned> {

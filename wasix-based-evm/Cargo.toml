@@ -16,6 +16,9 @@ evm-interpreter = { path = "../evm/interpreter", default-features = false }
 alloy-primitives = { version = "1.5.7", default-features = false, features = ["serde"] }
 alloy-genesis = { version = "=1.6.3", default-features = false }
 alloy-consensus = { version = "=1.6.3", default-features = false, features = ["k256", "std"] }
+alloy-signer-local = { version = "=1.6.3", default-features = false }
+alloy-signer = { version = "=1.6.3", default-features = false }
+alloy-network = { version = "=1.6.3", default-features = false }
 alloy-json-rpc = { version = "=1.6.3", default-features = false }
 alloy-tx-macros = { version = "=1.6.3", default-features = false }
 alloy-serde= { version = "=1.6.3", default-features = false }

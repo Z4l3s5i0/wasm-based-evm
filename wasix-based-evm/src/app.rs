@@ -8,7 +8,8 @@ use alloy_primitives::U256;
 use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
 use crate::mempool::Mempool;
-use tokio::sync::{Mutex, RwLock};
+use crate::rpc::account_manager::AccountManager;
+use tokio::sync::RwLock;
 use std::path::PathBuf;
 use crate::{debug, info};
 
@@ -21,8 +22,10 @@ use crate::rpc::log_service::LogService;
 use crate::rpc::engine_service::EngineService;
 
 pub struct App {
-    rpc_addr: std::net::SocketAddr,
-    module: jsonrpsee::RpcModule<()>,
+    eth_rpc_addr: std::net::SocketAddr,
+    auth_rpc_addr: std::net::SocketAddr,
+    eth_module: jsonrpsee::RpcModule<()>,
+    auth_module: jsonrpsee::RpcModule<()>,
 }
 
 impl App {
@@ -30,12 +33,19 @@ impl App {
         AppBuilder::default()
     }
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        let server = jsonrpsee::server::Server::builder()
-            .build(self.rpc_addr)
+        let eth_server = jsonrpsee::server::Server::builder()
+            .build(self.eth_rpc_addr)
+            .await?;
+        
+        let auth_server = jsonrpsee::server::Server::builder()
+            .build(self.auth_rpc_addr)
             .await?;
 
-        info!("[App] JSON-RPC Server listening on {}", self.rpc_addr);
-        let _handle = server.start(self.module);
+        info!("[App] Eth JSON-RPC Server listening on {}", self.eth_rpc_addr);
+        info!("[App] Auth Engine JSON-RPC Server listening on {}", self.auth_rpc_addr);
+        
+        let _eth_handle = eth_server.start(self.eth_module);
+        let _auth_handle = auth_server.start(self.auth_module);
         
         // Keep the app running
         loop {
@@ -56,6 +66,7 @@ pub struct AppBuilder {
     executor: Option<Executor>,
     executor_configured: bool,
     logging_configured: bool,
+    account_manager: Option<Arc<AccountManager>>,
 }
 
 impl AppBuilder {
@@ -94,6 +105,11 @@ impl AppBuilder {
         self
     }
 
+    pub fn with_account_manager(mut self, manager: AccountManager) -> Self {
+        self.account_manager = Some(Arc::new(manager));
+        self
+    }
+
     pub async fn build(self) -> Result<App, Box<dyn std::error::Error>> {
         let args = self.args.clone().ok_or("Args not provided")?;
 
@@ -107,7 +123,8 @@ impl AppBuilder {
             logging::set_log_level(level);
         }
 
-        let rpc_addr = format!("127.0.0.1:{}", args.rpc_port).parse()?;
+        let eth_rpc_addr = format!("127.0.0.1:{}", args.eth_rpc_port).parse()?;
+        let auth_rpc_addr = format!("127.0.0.1:{}", args.auth_rpc_port).parse()?;
 
         // 2. Data Dir & Genesis
         let data_dir = if let Some(dir) = args.data_dir {
@@ -153,33 +170,44 @@ impl AppBuilder {
             Executor::new()
         };
 
+        let account_manager = if let Some(manager) = self.account_manager {
+            manager
+        } else {
+            // By default, enable dev keys for easier testing if we are in dev mode/debug
+            Arc::new(AccountManager::new_with_dev_keys())
+        };
+
         // 4. RPC Setup
-        let mut facade = RpcServerFacade::new();
+        let mut eth_facade = RpcServerFacade::new();
+        let mut auth_facade = RpcServerFacade::new();
         
         // Use the StorageProvider wrapper to handle the Arc<RwLock<InMemoryStorage>>
         // This allows RPC services to see live updates from the Executor.
         let provider = Arc::new(StorageProvider::new(storage.clone()));
 
-        facade.register_accounts(AccountService { storage: provider.clone() })?;
-        facade.register_eth(EthService { 
+        eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
+        eth_facade.register_eth(EthService { 
             block_storage: provider.clone(),
             state_storage: provider.clone(),
             mempool: mempool.clone(),
             executor: executor.clone(),
             storage: storage.clone(),
+            account_manager: account_manager.clone(),
         })?;
-        facade.register_engine(EngineService::new(
+        auth_facade.register_engine(EngineService::new(
             storage.clone(),
             mempool.clone(),
             executor.clone(),
         ))?;
-        facade.register_blocks(BlockService { storage: provider.clone() })?;
-        facade.register_transactions(TransactionService { storage: provider.clone() })?;
-        facade.register_logs(LogService { storage: provider.clone() })?;
+        eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
+        eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
+        eth_facade.register_logs(LogService { storage: provider.clone() })?;
         
         Ok(App {
-            rpc_addr,
-            module: facade.into_module(),
+            eth_rpc_addr,
+            auth_rpc_addr,
+            eth_module: eth_facade.into_module(),
+            auth_module: auth_facade.into_module(),
         })
     }
 }
