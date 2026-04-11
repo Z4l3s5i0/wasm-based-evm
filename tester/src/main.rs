@@ -1,6 +1,10 @@
-use alloy_primitives::{Address, Bytes};
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_consensus::Transaction as _;
 use alloy_rpc_types::{Block, Transaction, TransactionReceipt, Filter, Log};
+use alloy_rpc_types::engine::{
+    ExecutionPayloadV1, ExecutionPayloadV2, ForkchoiceState, ForkchoiceUpdated,
+    PayloadAttributes, PayloadId, PayloadStatus,
+};
 use alloy_eips::BlockId;
 use clap::{Parser, Subcommand};
 use jsonrpsee::http_client::{HttpClient, HttpClientBuilder};
@@ -106,6 +110,42 @@ enum Commands {
     },
     /// Returns a list of addresses owned by client
     Accounts,
+    /// Engine API: Exchange capabilities
+    ExchangeCapabilities {
+        capabilities: Vec<String>,
+    },
+    /// Engine API: Forkchoice updated V1
+    ForkchoiceUpdatedV1 {
+        head_block_hash: String,
+        safe_block_hash: String,
+        finalized_block_hash: String,
+        #[arg(long)]
+        payload_attributes: Option<String>, // JSON string for attributes
+    },
+    /// Engine API: Forkchoice updated V2
+    ForkchoiceUpdatedV2 {
+        head_block_hash: String,
+        safe_block_hash: String,
+        finalized_block_hash: String,
+        #[arg(long)]
+        payload_attributes: Option<String>, // JSON string for attributes
+    },
+    /// Engine API: Get payload V1
+    GetPayloadV1 {
+        payload_id: String,
+    },
+    /// Engine API: Get payload V2
+    GetPayloadV2 {
+        payload_id: String,
+    },
+    /// Engine API: New payload V1
+    NewPayloadV1 {
+        payload_json: String,
+    },
+    /// Engine API: New payload V2
+    NewPayloadV2 {
+        payload_json: String,
+    },
     Explorer,
     Exit,
     /// Connects to a different EVM JSON-RPC server
@@ -323,6 +363,58 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Commands::Accounts => {
                         let res: Vec<String> = client.request("eth_accounts", rpc_params![]).await?;
                         println!("Accounts: {:?}", res);
+                    }
+                    Commands::ExchangeCapabilities { capabilities } => {
+                        let res: Vec<String> = client.request("engine_exchangeCapabilities", rpc_params![capabilities]).await?;
+                        println!("Capabilities: {:?}", res);
+                    }
+                    Commands::ForkchoiceUpdatedV1 { head_block_hash, safe_block_hash, finalized_block_hash, payload_attributes } => {
+                        let state = ForkchoiceState {
+                            head_block_hash: B256::from_str(&head_block_hash)?,
+                            safe_block_hash: B256::from_str(&safe_block_hash)?,
+                            finalized_block_hash: B256::from_str(&finalized_block_hash)?,
+                        };
+                        let attr: Option<PayloadAttributes> = match payload_attributes {
+                            Some(s) => Some(serde_json::from_str(&s)?),
+                            None => None,
+                        };
+                        let res: ForkchoiceUpdated = client.request("engine_forkchoiceUpdatedV1", rpc_params![state, attr]).await?;
+                        println!("Forkchoice Updated V1: {:#?}", res);
+                    }
+                    Commands::ForkchoiceUpdatedV2 { head_block_hash, safe_block_hash, finalized_block_hash, payload_attributes } => {
+                        let state = ForkchoiceState {
+                            head_block_hash: B256::from_str(&head_block_hash)?,
+                            safe_block_hash: B256::from_str(&safe_block_hash)?,
+                            finalized_block_hash: B256::from_str(&finalized_block_hash)?,
+                        };
+                        let attr: Option<PayloadAttributes> = match payload_attributes {
+                            Some(s) => Some(serde_json::from_str(&s)?),
+                            None => None,
+                        };
+                        let res: ForkchoiceUpdated = client.request("engine_forkchoiceUpdatedV2", rpc_params![state, attr]).await?;
+                        println!("Forkchoice Updated V2: {:#?}", res);
+                    }
+                    Commands::GetPayloadV1 { payload_id } => {
+                        let id_bytes = hex::decode(payload_id.trim_start_matches("0x"))?;
+                        let id = PayloadId::new(id_bytes.try_into().map_err(|_| "Invalid payload ID length")?);
+                        let res: ExecutionPayloadV1 = client.request("engine_getPayloadV1", rpc_params![id]).await?;
+                        println!("Payload V1: {:#?}", res);
+                    }
+                    Commands::GetPayloadV2 { payload_id } => {
+                        let id_bytes = hex::decode(payload_id.trim_start_matches("0x"))?;
+                        let id = PayloadId::new(id_bytes.try_into().map_err(|_| "Invalid payload ID length")?);
+                        let res: ExecutionPayloadV2 = client.request("engine_getPayloadV2", rpc_params![id]).await?;
+                        println!("Payload V2: {:#?}", res);
+                    }
+                    Commands::NewPayloadV1 { payload_json } => {
+                        let payload: ExecutionPayloadV1 = serde_json::from_str(&payload_json)?;
+                        let res: PayloadStatus = client.request("engine_newPayloadV1", rpc_params![payload]).await?;
+                        println!("New Payload V1 Status: {:#?}", res);
+                    }
+                    Commands::NewPayloadV2 { payload_json } => {
+                        let payload: ExecutionPayloadV2 = serde_json::from_str(&payload_json)?;
+                        let res: PayloadStatus = client.request("engine_newPayloadV2", rpc_params![payload]).await?;
+                        println!("New Payload V2 Status: {:#?}", res);
                     }
                     Commands::Explorer => {
                         if let Err(e) = run_explorer(&client).await {

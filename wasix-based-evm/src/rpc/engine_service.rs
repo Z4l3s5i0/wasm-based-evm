@@ -69,24 +69,44 @@ impl EngineService {
         // Update forkchoice in storage
         storage.update_forkchoice(forkchoice_state.head_block_hash);
 
-        let status = PayloadStatus {
-            status: PayloadStatusEnum::Valid,
-            latest_valid_hash: Some(forkchoice_state.head_block_hash),
+        // Check if head block is in storage
+        let status = if storage.get_block_by_hash(forkchoice_state.head_block_hash).is_none() {
+            PayloadStatus {
+                status: PayloadStatusEnum::Syncing,
+                latest_valid_hash: None,
+            }
+        } else {
+            PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(forkchoice_state.head_block_hash),
+            }
         };
 
         let mut payload_id = None;
-        if let Some(attr) = payload_attributes {
-            // Start building a block
-            let id = PayloadId::new(rand::random());
-            payload_id = Some(id);
+        if status.status == PayloadStatusEnum::Valid {
+            if let Some(attr) = payload_attributes {
+                // Validate attributes
+                let parent_block = storage.get_block_by_hash(forkchoice_state.head_block_hash)
+                    .cloned()
+                    .ok_or_else(|| RpcError::Internal("Parent block not found".to_string()))?;
 
-            // Build block logic (simplified)
-            let parent_block = storage.get_block_by_hash(forkchoice_state.head_block_hash)
-                .cloned()
-                .ok_or_else(|| RpcError::Internal("Parent block not found".to_string()))?;
+                if attr.timestamp <= parent_block.header.timestamp {
+                    return Ok(ForkchoiceUpdated {
+                        payload_status: PayloadStatus {
+                            status: PayloadStatusEnum::Invalid { validation_error: "Invalid timestamp".to_string() },
+                            latest_valid_hash: Some(forkchoice_state.head_block_hash),
+                        },
+                        payload_id: None,
+                    });
+                }
 
-            let mempool = self.mempool.read().await;
-            let transactions = mempool.peek_transactions(10); // Take top 10 transactions
+                // Start building a block
+                let id = PayloadId::new(rand::random());
+                payload_id = Some(id);
+
+                // Build block logic (simplified)
+                let mempool = self.mempool.read().await;
+                let transactions = mempool.peek_transactions(10); // Take top 10 transactions
 
             let header = Header {
                 parent_hash: forkchoice_state.head_block_hash,
@@ -115,6 +135,7 @@ impl EngineService {
             };
 
             self.payloads.write().await.insert(id, block);
+            }
         }
 
         Ok(ForkchoiceUpdated {
@@ -236,6 +257,15 @@ impl EngineService {
 
         // 2. Execute Block
         let mut storage = self.storage.write().await;
+
+        // Check for parent block - if missing, return SYNCING
+        if storage.get_block_by_hash(payload_v1.parent_hash).is_none() {
+            return Ok(PayloadStatus {
+                status: PayloadStatusEnum::Syncing,
+                latest_valid_hash: None,
+            });
+        }
+
         match self.executor.execute_block(&mut storage, transactions, block.clone()) {
             Ok(_) => {
                 // 3. Add to storage
