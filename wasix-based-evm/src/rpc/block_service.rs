@@ -11,11 +11,11 @@ pub struct BlockService {
 
 impl BlockService {
     pub async fn get_block_by_id(&self, id: BlockId, full: bool) -> RpcResult<Option<Block>> {
-        let block = self.storage.block(id).map_err(|e| crate::error::RpcError::Internal(e.to_string()))?;
+        let block = self.storage.block(id).await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))?;
         Ok(block.map(|b| BlockMapper::to_rpc_block(b, full)))
     }
 
     pub async fn latest_block_number(&self) -> RpcResult<u64> {
-        self.storage.latest_block_number().map_err(|e| crate::error::RpcError::Internal(e.to_string()))
+        self.storage.latest_block_number().await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))
     }
 }

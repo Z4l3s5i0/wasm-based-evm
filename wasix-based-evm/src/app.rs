@@ -1,6 +1,6 @@
 use crate::cli::Args;
 use crate::storage::genesis::Genesis;
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::{InMemoryStorage, StorageProvider};
 use crate::executor::Executor;
 use crate::logging::{self, LogLevel};
 use crate::ev::alloy_u256_to_evm_u256;
@@ -154,20 +154,14 @@ impl AppBuilder {
         // 4. RPC Setup
         let mut facade = RpcServerFacade::new();
         
-        // We use the storage both as StateProvider, BlockProvider, etc.
-        // Since InMemoryStorage implements all of them.
-        // We need to handle the Arc<RwLock<InMemoryStorage>> properly.
-        // However, our services expect Arc<dyn Provider>.
-        // For simplicity in this refactor, let's create a wrapper or just use the storage directly if it was Arc<InMemoryStorage>.
-        // Since it's RwLock, we might need a version that works with RwLock or just use a snapshot.
-        // For now, let's assume we can use the storage directly for the services.
-        
-        let storage_provider: Arc<InMemoryStorage> = Arc::new(storage.read().await.clone()); 
+        // Use the StorageProvider wrapper to handle the Arc<RwLock<InMemoryStorage>>
+        // This allows RPC services to see live updates from the Executor.
+        let provider = Arc::new(StorageProvider::new(storage.clone()));
 
-        facade.register_accounts(AccountService { storage: storage_provider.clone() })?;
-        facade.register_blocks(BlockService { storage: storage_provider.clone() })?;
-        facade.register_transactions(TransactionService { storage: storage_provider.clone() })?;
-        facade.register_logs(LogService { storage: storage_provider.clone() })?;
+        facade.register_accounts(AccountService { storage: provider.clone() })?;
+        facade.register_blocks(BlockService { storage: provider.clone() })?;
+        facade.register_transactions(TransactionService { storage: provider.clone() })?;
+        facade.register_logs(LogService { storage: provider.clone() })?;
         
         Ok(App {
             rpc_addr,

@@ -10,10 +10,10 @@ pub struct AccountService {
 
 impl AccountService {
     pub async fn get_balance(&self, address: Address, block_id: BlockId) -> RpcResult<U256> {
-        self.storage.balance(address, block_id).map_err(|e| crate::error::RpcError::Internal(e.to_string()))
+        self.storage.balance(address, block_id).await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))
     }
 
     pub async fn get_transaction_count(&self, address: Address, block_id: BlockId) -> RpcResult<u64> {
-        self.storage.transaction_count(address, block_id).map_err(|e| crate::error::RpcError::Internal(e.to_string()))
+        self.storage.transaction_count(address, block_id).await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))
     }
 }

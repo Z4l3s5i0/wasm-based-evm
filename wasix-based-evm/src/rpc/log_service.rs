@@ -9,6 +9,6 @@ pub struct LogService {
 
 impl LogService {
     pub async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
-        self.storage.logs(filter).map_err(|e| crate::error::RpcError::Internal(e.to_string()))
+        self.storage.logs(filter).await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))
     }
 }

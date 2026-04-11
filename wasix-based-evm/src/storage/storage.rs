@@ -11,6 +11,9 @@ use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, 
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction, Header};
 use alloy_eips::BlockId;
 use anyhow::{Result, anyhow};
+use async_trait::async_trait;
+use tokio::sync::RwLock;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct InMemoryStorage {
@@ -245,8 +248,83 @@ impl InMemoryStorage {
     }
 }
 
+pub struct StorageProvider {
+    inner: Arc<RwLock<InMemoryStorage>>,
+}
+
+impl StorageProvider {
+    pub fn new(storage: Arc<RwLock<InMemoryStorage>>) -> Self {
+        Self { inner: storage }
+    }
+}
+
+#[async_trait]
+impl StateProvider for StorageProvider {
+    async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>> {
+        self.inner.read().await.account(address, block_id).await
+    }
+
+    async fn storage(&self, address: Address, slot: B256, block_id: BlockId) -> Result<Option<U256>> {
+        self.inner.read().await.storage(address, slot, block_id).await
+    }
+
+    async fn code(&self, address: Address, block_id: BlockId) -> Result<Option<Bytes>> {
+        self.inner.read().await.code(address, block_id).await
+    }
+
+    async fn balance(&self, address: Address, block_id: BlockId) -> Result<U256> {
+        self.inner.read().await.balance(address, block_id).await
+    }
+
+    async fn transaction_count(&self, address: Address, block_id: BlockId) -> Result<u64> {
+        self.inner.read().await.transaction_count(address, block_id).await
+    }
+}
+
+#[async_trait]
+impl BlockProvider for StorageProvider {
+    async fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
+        self.inner.read().await.header(block_id).await
+    }
+
+    async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> {
+        self.inner.read().await.block(block_id).await
+    }
+
+    async fn block_hash(&self, number: u64) -> Result<Option<B256>> {
+        self.inner.read().await.block_hash(number).await
+    }
+
+    async fn latest_block_number(&self) -> Result<u64> {
+        self.inner.read().await.latest_block_number().await
+    }
+}
+
+#[async_trait]
+impl TransactionProvider for StorageProvider {
+    async fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
+        self.inner.read().await.transaction(hash).await
+    }
+
+    async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>> {
+        self.inner.read().await.transaction_receipt(hash).await
+    }
+
+    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
+        self.inner.read().await.transaction_block_reference(hash).await
+    }
+}
+
+#[async_trait]
+impl LogProvider for StorageProvider {
+    async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::Log>> {
+        self.inner.read().await.logs(filter).await
+    }
+}
+
+#[async_trait]
 impl StateProvider for InMemoryStorage {
-    fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>> {
+    async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>> {
         let h160 = H160::from_slice(address.as_slice());
         Ok(self.backend.state.get(&h160).map(|acc| crate::storage::genesis::GenesisAccount {
             address,
@@ -261,7 +339,7 @@ impl StateProvider for InMemoryStorage {
         }))
     }
 
-    fn storage(&self, address: Address, slot: B256, _block_id: BlockId) -> Result<Option<U256>> {
+    async fn storage(&self, address: Address, slot: B256, _block_id: BlockId) -> Result<Option<U256>> {
         let h160 = H160::from_slice(address.as_slice());
         let h256 = H256(slot.0);
         Ok(self.backend.state.get(&h160)
@@ -269,23 +347,24 @@ impl StateProvider for InMemoryStorage {
             .map(|v| U256::from_be_bytes(v.0)))
     }
 
-    fn code(&self, address: Address, _block_id: BlockId) -> Result<Option<Bytes>> {
+    async fn code(&self, address: Address, _block_id: BlockId) -> Result<Option<Bytes>> {
         let h160 = H160::from_slice(address.as_slice());
         Ok(self.backend.state.get(&h160).map(|acc| acc.code.clone().into()))
     }
 
-    fn balance(&self, address: Address, _block_id: BlockId) -> Result<U256> {
+    async fn balance(&self, address: Address, _block_id: BlockId) -> Result<U256> {
         Ok(self.get_balance(address))
     }
 
-    fn transaction_count(&self, address: Address, _block_id: BlockId) -> Result<u64> {
+    async fn transaction_count(&self, address: Address, _block_id: BlockId) -> Result<u64> {
         let h160 = H160::from_slice(address.as_slice());
         Ok(self.backend.state.get(&h160).map(|acc| acc.nonce.as_u64()).unwrap_or(0))
     }
 }
 
+#[async_trait]
 impl BlockProvider for InMemoryStorage {
-    fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
+    async fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
         match block_id {
             BlockId::Hash(hash) => Ok(self.get_block_by_hash(hash.into()).map(|b| b.header.clone())),
             BlockId::Number(num) => {
@@ -300,7 +379,7 @@ impl BlockProvider for InMemoryStorage {
         }
     }
 
-    fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> {
+    async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> {
         match block_id {
             BlockId::Hash(hash) => Ok(self.get_block_by_hash(hash.into()).cloned()),
             BlockId::Number(num) => {
@@ -315,31 +394,33 @@ impl BlockProvider for InMemoryStorage {
         }
     }
 
-    fn block_hash(&self, number: u64) -> Result<Option<B256>> {
+    async fn block_hash(&self, number: u64) -> Result<Option<B256>> {
         Ok(self.get_block_hash(number))
     }
 
-    fn latest_block_number(&self) -> Result<u64> {
+    async fn latest_block_number(&self) -> Result<u64> {
         Ok(self.get_latest_block_number())
     }
 }
 
+#[async_trait]
 impl TransactionProvider for InMemoryStorage {
-    fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
+    async fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
         Ok(self.get_transaction_by_hash(hash).cloned())
     }
 
-    fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>> {
+    async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>> {
         Ok(self.get_receipt_by_tx_hash(hash).cloned())
     }
 
-    fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
+    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
         Ok(self.tx_location.get(&hash).cloned())
     }
 }
 
+#[async_trait]
 impl LogProvider for InMemoryStorage {
-    fn logs(&self, _filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::Log>> {
+    async fn logs(&self, _filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::Log>> {
         // TODO use the filter on indexed logs
         Ok(vec![])
     }
