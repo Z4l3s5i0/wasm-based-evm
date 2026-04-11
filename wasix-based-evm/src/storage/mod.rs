@@ -1,7 +1,6 @@
 pub mod genesis;
 pub mod storage;
-pub mod types;
+pub mod traits;
 
 
-pub use storage::InMemoryStorage;
-pub use types::{Block, Transaction, Log, ExecutionPayload};
+pub use traits::{StateProvider, BlockProvider, TransactionProvider, LogProvider};

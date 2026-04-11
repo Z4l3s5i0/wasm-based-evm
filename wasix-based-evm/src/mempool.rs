@@ -1,6 +1,6 @@
 use std::collections::{HashMap, VecDeque};
 use alloy_primitives::{Address, B256, U256};
-use crate::storage::Transaction;
+use alloy_consensus::{TxEnvelope as Transaction, Transaction as _, transaction::SignerRecoverable as _};
 use crate::debug;
 
 /// A simple mempool to store pending transactions.
@@ -11,7 +11,6 @@ pub struct Mempool {
     /// Current base fee for transactions in the mempool.
     pub base_fee: U256,
 }
-//TODO add eviction policy
 
 impl Mempool {
     /// Create a new mempool with the given base fee.
@@ -24,19 +23,22 @@ impl Mempool {
 
     /// Add a transaction to the mempool.
     pub fn add_transaction(&mut self, tx: Transaction) {
-        debug!("[Mempool] Adding transaction {:?} to mempool", tx.hash);
+        debug!("[Mempool] Adding transaction {:?} to mempool", tx.hash());
+        let from = tx.recover_signer().unwrap_or_default();
         let queue = self.pending_transactions
-            .entry(tx.from)
+            .entry(from)
             .or_insert_with(VecDeque::new);
             
         // Insert in nonce order
-        let pos = queue.binary_search_by_key(&tx.nonce, |t| t.nonce)
+        let nonce = tx.nonce();
+        let pos = queue.binary_search_by_key(&nonce, |t| t.nonce())
             .unwrap_or_else(|e| e);
 
         // If a transaction with the same nonce exists, we might want to replace it
         // if the new one has a higher gas price. For now, let's just insert it.
-        if pos < queue.len() && queue[pos].nonce == tx.nonce {
-            if tx.gas_price > queue[pos].gas_price {
+        let gas_price = tx.gas_price().unwrap_or_default();
+        if pos < queue.len() && queue[pos].nonce() == nonce {
+            if gas_price > queue[pos].gas_price().unwrap_or_default() {
                 queue[pos] = tx;
             }
         } else {
@@ -48,8 +50,7 @@ impl Mempool {
     pub fn get_all_transactions(&self) -> Vec<Transaction> {
         self.pending_transactions
             .values()
-            .flatten()
-            .cloned()
+            .flat_map(|q: &VecDeque<Transaction>| q.iter().cloned())
             .collect()
     }
 
@@ -61,7 +62,7 @@ impl Mempool {
     /// Remove transactions that have been included in a block.
     pub fn remove_transactions(&mut self, tx_hashes: &[B256]) {
         for queue in self.pending_transactions.values_mut() {
-            queue.retain(|tx| !tx_hashes.contains(&tx.hash));
+            queue.retain(|tx| !tx_hashes.contains(&tx.hash()));
         }
         // Clean up empty queues
         self.pending_transactions.retain(|_, queue| !queue.is_empty());
@@ -78,8 +79,9 @@ impl Mempool {
 
             for (address, queue) in &copy.pending_transactions {
                 if let Some(tx) = queue.front() {
-                    if tx.gas_price > best_gas_price {
-                        best_gas_price = tx.gas_price;
+                    let gas_price = U256::from(tx.gas_price().unwrap_or_default());
+                    if gas_price > best_gas_price {
+                        best_gas_price = gas_price;
                         best_sender = Some(*address);
                     }
                 }
@@ -113,8 +115,9 @@ impl Mempool {
 
             for (address, queue) in &self.pending_transactions {
                 if let Some(tx) = queue.front() {
-                    if tx.gas_price > best_gas_price {
-                        best_gas_price = tx.gas_price;
+                    let gas_price = U256::from(tx.gas_price().unwrap_or_default());
+                    if gas_price > best_gas_price {
+                        best_gas_price = gas_price;
                         best_sender = Some(*address);
                     }
                 }
@@ -139,7 +142,7 @@ impl Mempool {
 
     /// Get the total count of transactions in the mempool.
     pub fn len(&self) -> usize {
-        self.pending_transactions.values().map(|q| q.len()).sum()
+        self.pending_transactions.values().map(|q: &VecDeque<Transaction>| q.len()).sum()
     }
 
     /// Check if the mempool is empty.

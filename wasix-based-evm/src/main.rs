@@ -1,12 +1,13 @@
+mod error;
 mod ev;
 mod rpc;
 mod executor;
 mod storage;
 mod mempool;
-mod network;
 mod cli;
 mod logging;
 mod app;
+// mod network;
 
 use clap::Parser;
 use crate::app::App;

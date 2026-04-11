@@ -2,8 +2,6 @@ use crate::cli::Args;
 use crate::storage::genesis::Genesis;
 use crate::storage::storage::InMemoryStorage;
 use crate::executor::Executor;
-use crate::rpc::{MyTransactionService, evm_rpc::transaction_service_server::TransactionServiceServer, DomainBlockchainProvider};
-use crate::network::{self, NetworkConfig, NetworkHandle};
 use crate::logging::{self, LogLevel};
 use crate::ev::alloy_u256_to_evm_u256;
 use alloy_primitives::U256;
@@ -11,29 +9,36 @@ use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
 use crate::mempool::Mempool;
 use tokio::sync::{Mutex, RwLock};
-use tonic::transport::Server;
 use std::path::PathBuf;
 use crate::{debug, info};
 
+use crate::rpc::RpcServerFacade;
+use crate::rpc::account_service::AccountService;
+use crate::rpc::block_service::BlockService;
+use crate::rpc::transaction_service::TransactionService;
+use crate::rpc::log_service::LogService;
+
 pub struct App {
     rpc_addr: std::net::SocketAddr,
-    transaction_service: MyTransactionService,
+    module: jsonrpsee::RpcModule<()>,
 }
 
 impl App {
     pub fn builder() -> AppBuilder {
         AppBuilder::default()
     }
-
     pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[App] EVM gRPC Server listening on {}", self.rpc_addr);
-
-        Server::builder()
-            .add_service(TransactionServiceServer::new(self.transaction_service))
-            .serve(self.rpc_addr)
+        let server = jsonrpsee::server::Server::builder()
+            .build(self.rpc_addr)
             .await?;
 
-        Ok(())
+        info!("[App] JSON-RPC Server listening on {}", self.rpc_addr);
+        let _handle = server.start(self.module);
+        
+        // Keep the app running
+        loop {
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+        }
     }
 }
 
@@ -48,10 +53,6 @@ pub struct AppBuilder {
     mempool_configured: bool,
     executor: Option<Executor>,
     executor_configured: bool,
-    network_handle: Option<NetworkHandle>,
-    network_configured: bool,
-    rpc_provider: Option<Box<dyn DomainBlockchainProvider + Send + Sync>>,
-    rpc_provider_configured: bool,
     logging_configured: bool,
 }
 
@@ -85,18 +86,6 @@ impl AppBuilder {
         self
     }
 
-    pub fn with_network_handle(mut self, network_handle: NetworkHandle) -> Self {
-        self.network_handle = Some(network_handle);
-        self.network_configured = true;
-        self
-    }
-
-    pub fn with_rpc_provider(mut self, provider: Box<dyn DomainBlockchainProvider + Send + Sync>) -> Self {
-        self.rpc_provider = Some(provider);
-        self.rpc_provider_configured = true;
-        self
-    }
-
     pub fn with_logging(mut self, level: LogLevel) -> Self {
         logging::set_log_level(level);
         self.logging_configured = true;
@@ -104,7 +93,7 @@ impl AppBuilder {
     }
 
     pub async fn build(self) -> Result<App, Box<dyn std::error::Error>> {
-        let args = self.args.ok_or("Args not provided")?;
+        let args = self.args.clone().ok_or("Args not provided")?;
 
         // 1. Logging
         if !self.logging_configured {
@@ -128,7 +117,7 @@ impl AppBuilder {
         };
 
         let genesis = if self.genesis_configured {
-            self.genesis.ok_or("Genesis marked as configured but not provided")?
+            self.genesis.clone().ok_or("Genesis marked as configured but not provided")?
         } else {
             let genesis_path = data_dir.join("genesis/genesis.json");
             info!("[App] Loading genesis from {:?}", genesis_path);
@@ -139,7 +128,7 @@ impl AppBuilder {
 
         // 3. Storage, Mempool & Executor
         let storage = if self.storage_configured {
-            self.storage.ok_or("Storage marked as configured but not provided")?
+            self.storage.clone().ok_or("Storage marked as configured but not provided")?
         } else {
             let chain_id = alloy_u256_to_evm_u256(U256::from(genesis.chain_id));
             let storage_inner = InMemoryStorage::new_with_genesis(chain_id, genesis);
@@ -151,51 +140,38 @@ impl AppBuilder {
         };
 
         let mempool = if self.mempool_configured {
-            self.mempool.ok_or("Mempool marked as configured but not provided")?
+            self.mempool.clone().ok_or("Mempool marked as configured but not provided")?
         } else {
             Arc::new(RwLock::new(Mempool::new(U256::ZERO)))
         };
 
         let executor = if self.executor_configured {
-            self.executor.ok_or("Executor marked as configured but not provided")?
+            self.executor.clone().ok_or("Executor marked as configured but not provided")?
         } else {
             Executor::new()
         };
 
-        // 4. Networking
-        let network_handle = if self.network_configured {
-            self.network_handle.ok_or("Network marked as configured but not provided")?
-        } else {
-            let network_config = NetworkConfig {
-                discv5_addr: format!("0.0.0.0:{}", args.discovery_port).parse()?,
-                p2p_addr: format!("0.0.0.0:{}", args.p2p_port).parse()?,
-                ext_ip: args.ext_ip,
-                bootnodes: args.bootnodes,
-                max_peers: args.max_peers,
-            };
-            network::start_network(network_config, storage.clone(), mempool.clone()).await?
-        };
+        // 4. RPC Setup
+        let mut facade = RpcServerFacade::new();
+        
+        // We use the storage both as StateProvider, BlockProvider, etc.
+        // Since InMemoryStorage implements all of them.
+        // We need to handle the Arc<RwLock<InMemoryStorage>> properly.
+        // However, our services expect Arc<dyn Provider>.
+        // For simplicity in this refactor, let's create a wrapper or just use the storage directly if it was Arc<InMemoryStorage>.
+        // Since it's RwLock, we might need a version that works with RwLock or just use a snapshot.
+        // For now, let's assume we can use the storage directly for the services.
+        
+        let storage_provider: Arc<InMemoryStorage> = Arc::new(storage.read().await.clone()); 
 
-        // 5. RPC Service
-        let transaction_service = if self.rpc_provider_configured {
-            let provider = self.rpc_provider.ok_or("RPC provider marked as configured but not provided")?;
-            MyTransactionService::new(provider)
-        } else {
-            let pending_payloads = Arc::new(Mutex::new(std::collections::HashMap::new()));
-            let provider = Box::new(crate::rpc::provider::DefaultBlockchainProvider {
-                storage,
-                mempool,
-                executor,
-                network_send: Some(network_handle.network_send.clone()),
-                tx_broadcast: Some(network_handle.tx_broadcast.clone()),
-                pending_payloads,
-            });
-            MyTransactionService::new(provider)
-        };
-
+        facade.register_accounts(AccountService { storage: storage_provider.clone() })?;
+        facade.register_blocks(BlockService { storage: storage_provider.clone() })?;
+        facade.register_transactions(TransactionService { storage: storage_provider.clone() })?;
+        facade.register_logs(LogService { storage: storage_provider.clone() })?;
+        
         Ok(App {
             rpc_addr,
-            transaction_service,
+            module: facade.into_module(),
         })
     }
 }

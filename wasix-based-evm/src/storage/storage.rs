@@ -1,22 +1,24 @@
 use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
 use crate::{debug};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
-use alloy_primitives::{Address, B256, U256, keccak256};
+use alloy_primitives::{Address, B256, U256, keccak256, Bytes};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
+use std::hash::Hash;
 use crate::storage::genesis::Genesis;
-use crate::storage::types::{Block, Receipt, Transaction};
-
+use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, LogProvider};
+use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction, Header};
+use alloy_eips::BlockId;
+use anyhow::{Result, anyhow};
 
 #[derive(Clone)]
 pub struct InMemoryStorage {
     pub backend: InMemoryBackend,
-    pub blocks: BTreeMap<u64, Block>,
+    pub blocks: BTreeMap<u64, Block<Transaction>>,
     pub transactions: BTreeMap<B256, Transaction>,
     pub receipts: BTreeMap<B256, Receipt>,
-    #[allow(dead_code)]
-    pub contracts: BTreeMap<Address, Vec<u8>>,
+    pub tx_location: BTreeMap<B256, (u64, B256, usize)>, // hash -> (number, hash, index)
     pub head_block_hash: B256,
     pub safe_block_hash: B256,
     pub finalized_block_hash: B256,
@@ -50,16 +52,22 @@ impl InMemoryStorage {
             blocks: BTreeMap::new(),
             transactions: BTreeMap::new(),
             receipts: BTreeMap::new(),
-            contracts: BTreeMap::new(),
+            tx_location: BTreeMap::new(),
             head_block_hash: B256::ZERO,
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
         };
 
         // Create genesis block
-        let genesis_block_builder = Block::builder(0)
-            .timestamp(genesis.timestamp)
-            .gas_limit(genesis.gas_limit);
+        let genesis_block: Block<Transaction> = Block {
+            header: Header {
+                number: 0,
+                timestamp: genesis.timestamp,
+                gas_limit: genesis.gas_limit,
+                ..Default::default()
+            },
+            body: Default::default(),
+        };
 
         // Pre-fund and initialize accounts
         for account in genesis.accounts {
@@ -80,8 +88,17 @@ impl InMemoryStorage {
         }
 
         let state_root = storage.calculate_state_root();
-        let genesis_block = genesis_block_builder.state_root(state_root).build();
-        let genesis_hash = genesis_block.body.execution_payload.block_hash;
+        let genesis_block: Block<Transaction> = Block {
+            header: Header {
+                number: 0,
+                timestamp: genesis.timestamp,
+                gas_limit: genesis.gas_limit,
+                state_root,
+                ..Default::default()
+            },
+            body: Default::default(),
+        };
+        let genesis_hash = genesis_block.header.hash_slow();
         storage.add_block(genesis_block);
         storage.head_block_hash = genesis_hash;
         storage.safe_block_hash = genesis_hash;
@@ -90,17 +107,25 @@ impl InMemoryStorage {
         storage
     }
 
-    pub fn add_block(&mut self, block: Block) {
-        let block_number = block.body.execution_payload.block_number;
-        let block_hash = block.body.execution_payload.block_hash;
+    pub fn add_block(&mut self, block: Block<Transaction>) {
+        let block_number = block.header.number;
+        let block_hash = block.header.hash_slow();
         debug!("[Storage] Adding block #{} with hash {:?}", block_number, block_hash);
+        
+        for (i, tx) in block.body.transactions.iter().enumerate() {
+            let tx_hash = tx.hash();
+            self.tx_location.insert(*tx_hash, (block_number, block_hash, i));
+            self.transactions.insert(*tx_hash, tx.clone());
+        }
+
         self.blocks.insert(block_number, block);
         self.head_block_hash = block_hash;
     }
 
     pub fn add_transaction(&mut self, tx: Transaction) {
-        debug!("[Storage] Adding transaction {:?}", tx.hash);
-        self.transactions.insert(tx.hash, tx);
+        let hash = tx.hash();
+        debug!("[Storage] Adding transaction {:?}", hash);
+        self.transactions.insert(*hash, tx);
     }
 
     pub fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
@@ -112,20 +137,20 @@ impl InMemoryStorage {
         self.receipts.get(&tx_hash)
     }
 
-    pub fn get_block_by_number(&self, number: u64) -> Option<&Block> {
+    pub fn get_block_by_number(&self, number: u64) -> Option<&Block<Transaction>> {
         self.blocks.get(&number)
     }
 
-    pub fn get_block_by_hash(&self, hash: B256) -> Option<&Block> {
-        self.blocks.values().find(|b| b.body.execution_payload.block_hash == hash)
+    pub fn get_block_by_hash(&self, hash: B256) -> Option<&Block<Transaction>> {
+        self.blocks.values().find(|b| b.header.hash_slow() == hash)
     }
 
     pub fn get_transaction_by_hash(&self, hash: B256) -> Option<&Transaction> {
         self.transactions.get(&hash)
     }
 
-    pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<&Block> {
-        self.blocks.values().find(|b| b.body.execution_payload.transactions.iter().any(|tx| tx.hash == tx_hash))
+    pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<&Block<Transaction>> {
+        self.tx_location.get(&tx_hash).and_then(|(num, _, _)| self.blocks.get(num))
     }
 
     pub fn get_block_receipts(&self, block_hash: B256) -> Vec<Receipt> {
@@ -133,12 +158,12 @@ impl InMemoryStorage {
             Some(b) => b,
             None => return Vec::new(),
         };
-        block.body.execution_payload.transactions.iter()
-            .filter_map(|tx| self.receipts.get(&tx.hash).cloned())
+        block.body.transactions.iter()
+            .filter_map(|tx| self.receipts.get(tx.hash()).cloned())
             .collect()
     }
 
-    pub fn get_latest_block(&self) -> Option<&Block> {
+    pub fn get_latest_block(&self) -> Option<&Block<Transaction>> {
         self.blocks.values().last()
     }
 
@@ -177,18 +202,7 @@ impl InMemoryStorage {
             .unwrap_or_default()
     }
 
-    #[allow(dead_code)]
-    pub fn set_contract_code(&mut self, address: Address, code: Vec<u8>) {
-        debug!("[Storage] Setting contract code for address {:?}", address);
-        self.contracts.insert(address, code.clone());
-        self.backend.state.entry(H160::from_slice(address.as_slice())).or_insert(InMemoryAccount {
-            balance: EvmU256::zero(),
-            code: code.clone(),
-            nonce: EvmU256::zero(),
-            storage: BTreeMap::<H256, H256>::new(),
-            transient_storage: BTreeMap::<H256, H256>::new(),
-        }).code = code.clone();
-    }
+
 
     pub fn set_balance(&mut self, address: Address, balance: U256) {
         debug!("[Storage] Setting balance for address {:?} to {}", address, balance);
@@ -223,10 +237,110 @@ impl InMemoryStorage {
     }
 
     pub fn get_block_hash(&self, number: u64) -> Option<B256> {
-        self.get_block_by_number(number).map(|b| b.body.execution_payload.block_hash)
+        self.get_block_by_number(number).map(|b| b.header.hash_slow())
     }
 
     pub fn update_forkchoice(&mut self, hash: B256) {
         self.head_block_hash = hash;
+    }
+}
+
+impl StateProvider for InMemoryStorage {
+    fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>> {
+        let h160 = H160::from_slice(address.as_slice());
+        Ok(self.backend.state.get(&h160).map(|acc| crate::storage::genesis::GenesisAccount {
+            address,
+            balance: {
+                let mut b = [0u8; 32];
+                acc.balance.to_big_endian(&mut b);
+                U256::from_be_bytes(b)
+            },
+            nonce: Some(acc.nonce.as_u64()),
+            code: Some(acc.code.clone()),
+            storage: Some(acc.storage.iter().map(|(k, v)| (B256::from(k.0), B256::from(v.0))).collect()),
+        }))
+    }
+
+    fn storage(&self, address: Address, slot: B256, _block_id: BlockId) -> Result<Option<U256>> {
+        let h160 = H160::from_slice(address.as_slice());
+        let h256 = H256(slot.0);
+        Ok(self.backend.state.get(&h160)
+            .and_then(|acc| acc.storage.get(&h256))
+            .map(|v| U256::from_be_bytes(v.0)))
+    }
+
+    fn code(&self, address: Address, _block_id: BlockId) -> Result<Option<Bytes>> {
+        let h160 = H160::from_slice(address.as_slice());
+        Ok(self.backend.state.get(&h160).map(|acc| acc.code.clone().into()))
+    }
+
+    fn balance(&self, address: Address, _block_id: BlockId) -> Result<U256> {
+        Ok(self.get_balance(address))
+    }
+
+    fn transaction_count(&self, address: Address, _block_id: BlockId) -> Result<u64> {
+        let h160 = H160::from_slice(address.as_slice());
+        Ok(self.backend.state.get(&h160).map(|acc| acc.nonce.as_u64()).unwrap_or(0))
+    }
+}
+
+impl BlockProvider for InMemoryStorage {
+    fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
+        match block_id {
+            BlockId::Hash(hash) => Ok(self.get_block_by_hash(hash.into()).map(|b| b.header.clone())),
+            BlockId::Number(num) => {
+                let n = match num {
+                    alloy_eips::BlockNumberOrTag::Number(n) => n,
+                    alloy_eips::BlockNumberOrTag::Latest => self.get_latest_block_number(),
+                    alloy_eips::BlockNumberOrTag::Earliest => 0,
+                    _ => return Err(anyhow!("Unsupported block tag")),
+                };
+                Ok(self.get_block_by_number(n).map(|b| b.header.clone()))
+            }
+        }
+    }
+
+    fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> {
+        match block_id {
+            BlockId::Hash(hash) => Ok(self.get_block_by_hash(hash.into()).cloned()),
+            BlockId::Number(num) => {
+                let n = match num {
+                    alloy_eips::BlockNumberOrTag::Number(n) => n,
+                    alloy_eips::BlockNumberOrTag::Latest => self.get_latest_block_number(),
+                    alloy_eips::BlockNumberOrTag::Earliest => 0,
+                    _ => return Err(anyhow!("Unsupported block tag")),
+                };
+                Ok(self.get_block_by_number(n).cloned())
+            }
+        }
+    }
+
+    fn block_hash(&self, number: u64) -> Result<Option<B256>> {
+        Ok(self.get_block_hash(number))
+    }
+
+    fn latest_block_number(&self) -> Result<u64> {
+        Ok(self.get_latest_block_number())
+    }
+}
+
+impl TransactionProvider for InMemoryStorage {
+    fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
+        Ok(self.get_transaction_by_hash(hash).cloned())
+    }
+
+    fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>> {
+        Ok(self.get_receipt_by_tx_hash(hash).cloned())
+    }
+
+    fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
+        Ok(self.tx_location.get(&hash).cloned())
+    }
+}
+
+impl LogProvider for InMemoryStorage {
+    fn logs(&self, _filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::Log>> {
+        // TODO use the filter on indexed logs
+        Ok(vec![])
     }
 }

@@ -1,4 +1,6 @@
-use alloy_primitives::B256;
+use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope, Header, Transaction as _, transaction::SignerRecoverable as _};
+use alloy_eips::eip4895::Withdrawal;
+use alloy_primitives::{logs_bloom, Log, B256, Address, LogData};
 use crate::ev::{H160, EvmU256, evm};
 use evm::backend::OverlayedChangeSet;
 use crate::{info, debug};
@@ -9,7 +11,6 @@ use evm::{
 };
 use evm_precompile::StandardPrecompileSet;
 use crate::storage::storage::InMemoryStorage;
-use crate::storage::types::{logs_bloom, Block, Log, Receipt, Transaction, Withdrawal};
 
 pub trait OverlayedChangeSetExt {
     fn merge(&mut self, other: OverlayedChangeSet);
@@ -42,24 +43,24 @@ impl Executor {
         }
     }
 
-    pub fn execute(&self, storage: &mut InMemoryStorage, tx: Transaction, block: Block) -> Result<TransactValue, String> {
+    pub fn execute(&self, storage: &mut InMemoryStorage, tx: TxEnvelope, block: Block<TxEnvelope>) -> Result<TransactValue, String> {
         self.run_execution(storage, vec![tx], block, true).map(|mut v| v.remove(0))
     }
 
-    pub fn call(&self, storage: &InMemoryStorage, tx: Transaction, block: Block) -> Result<TransactValue, String> {
+    pub fn call(&self, storage: &InMemoryStorage, tx: TxEnvelope, block: Block<TxEnvelope>) -> Result<TransactValue, String> {
         let mut storage_copy = storage.clone();
         self.run_execution(&mut storage_copy, vec![tx], block, false).map(|mut v| v.remove(0))
     }
 
-    pub fn execute_with_changeset(&self, storage: &mut InMemoryStorage, transactions: Vec<Transaction>, block: Block) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
+    pub fn execute_with_changeset(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
         let precompiles = StandardPrecompileSet;
         let etable = evm::interpreter::etable::Chained(ExecutionEtable::new(), GasometerEtable::new());
         let resolver = EtableResolver::new(&precompiles, &etable);
         let invoker = Invoker::new(&resolver);
 
         // Update backend environment for the current block
-        storage.backend.environment.block_number = EvmU256::from(block.body.execution_payload.block_number);
-        storage.backend.environment.block_timestamp = EvmU256::from(block.body.execution_payload.timestamp);
+        storage.backend.environment.block_number = EvmU256::from(block.header.number);
+        storage.backend.environment.block_timestamp = EvmU256::from(block.header.timestamp);
 
         let mut results = Vec::new();
         let mut receipts = Vec::new();
@@ -79,24 +80,25 @@ impl Executor {
         };
 
         for tx in &transactions {
-            debug!("[Executor] DEBUG: Executing tx: from={:?}, to={:?}, value={:?}, gas_limit={:?}", tx.from, tx.to, tx.value, tx.gas_limit);
-            let gas_price = TransactGasPrice::Legacy(EvmU256::from_big_endian(&tx.gas_price.to_be_bytes::<32>()));
+            let sender = tx.recover_signer().map_err(|e| format!("Failed to recover signer: {:?}", e))?;
+            debug!("[Executor] DEBUG: Executing tx: from={:?}, to={:?}, value={:?}, gas_limit={:?}", sender, tx.to(), tx.value(), tx.gas_limit());
+            let gas_price = TransactGasPrice::Legacy(EvmU256::from(tx.gas_price().unwrap_or_default()));
             
-            let call_create = match tx.to {
+            let call_create = match tx.to() {
                 Some(to) => TransactArgsCallCreate::Call {
                     address: H160::from_slice(to.as_slice()),
-                    data: tx.data.clone(),
+                    data: tx.input().to_vec(),
                 },
                 None => TransactArgsCallCreate::Create {
-                    init_code: tx.data.clone(),
+                    init_code: tx.input().to_vec(),
                     salt: None,
                 },
             };
 
             let args = TransactArgs {
-                caller: H160::from_slice(tx.from.as_slice()),
-                value: EvmU256::from_big_endian(&tx.value.to_be_bytes::<32>()),
-                gas_limit: EvmU256::from(tx.gas_limit),
+                caller: H160::from_slice(sender.as_slice()),
+                value: EvmU256::from_big_endian(&tx.value().to_be_bytes::<32>()),
+                gas_limit: EvmU256::from(tx.gas_limit()),
                 gas_price,
                 access_list: Vec::new(),
                 call_create,
@@ -117,30 +119,42 @@ impl Executor {
 
             match result {
                 Ok(value) => {
-                    info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}", tx.hash, value.used_gas);
+                    info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}", tx.hash(), value.used_gas);
                     cumulative_gas_used += value.used_gas.as_u64();
                     
                     let (_, changeset) = overlayed.deconstruct();
                     total_changeset.merge(changeset.clone());
 
-                    let logs: Vec<Log> = changeset.logs.into_iter().map(Log::from).collect();
-                    let bloom = logs_bloom(&logs);
-                    let success = match value.call_create {
-                        crate::ev::evm::standard::TransactValueCallCreate::Call { .. } => true,
-                        crate::ev::evm::standard::TransactValueCallCreate::Create { .. } => true,
+                    let logs: Vec<Log> = changeset.logs.into_iter().map(|l| Log {
+                        address: Address::from(l.address.0),
+                        data: LogData::new_unchecked(
+                            l.topics.into_iter().map(|t| B256::from(t.0)).collect(),
+                            l.data.into(),
+                        ),
+                    }).collect();
+                    let bloom = logs_bloom(logs.iter());
+                    
+                    let status = match value.call_create {
+                        evm::standard::TransactValueCallCreate::Call { .. } => {
+                            alloy_consensus::Eip658Value::success()
+                        }
+                        evm::standard::TransactValueCallCreate::Create { .. } => {
+                            alloy_consensus::Eip658Value::success()
+                        }
                     };
                     let receipt = Receipt {
-                        success,
-                        cumulative_gas_used,
+                        receipt: alloy_consensus::Receipt {
+                            status,
+                            cumulative_gas_used,
+                            logs,
+                        },
                         logs_bloom: bloom,
-                        logs,
-                        block_number: block.body.execution_payload.block_number,
                     };
                     receipts.push(receipt);
                     results.push(value);
                 }
                 Err(e) => {
-                    info!("[Executor] Transaction execution failed: hash={:?}, error={:?}", tx.hash, e);
+                    info!("[Executor] Transaction execution failed: hash={:?}, error={:?}", tx.hash(), e);
                     return Err(format!("Transaction execution failed: {:?}", e));
                 }
             }
@@ -149,96 +163,96 @@ impl Executor {
         Ok((results, receipts, total_changeset))
     }
 
-    pub fn execute_block(&self, storage: &mut InMemoryStorage, transactions: Vec<Transaction>, block: Block) -> Result<Vec<TransactValue>, String> {
+    pub fn execute_block(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
         let (results, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
         
         // Finalize block with correct roots
-        let cumulative_gas_used = receipts.last().map(|r| r.cumulative_gas_used).unwrap_or(0);
+        let cumulative_gas_used = receipts.last().map(|r| r.receipt.cumulative_gas_used).unwrap_or(0);
         
-        let mut block_builder = Block::builder(block.slot)
-            .proposer_index(block.proposer_index)
-            .parent_root(block.parent_root)
-            .parent_hash(block.body.execution_payload.parent_hash)
-            .fee_recipient(block.body.execution_payload.fee_recipient)
-            .prev_randao(block.body.execution_payload.prev_randao)
-            .block_number(block.body.execution_payload.block_number)
-            .gas_limit(block.body.execution_payload.gas_limit)
-            .gas_used(cumulative_gas_used)
-            .timestamp(block.body.execution_payload.timestamp)
-            .extra_data(block.body.execution_payload.extra_data.clone())
-            .base_fee_per_gas(block.body.execution_payload.base_fee_per_gas);
-
-        for tx in &transactions {
-            block_builder = block_builder.add_transaction(tx.clone());
-        }
-
-        for receipt in &receipts {
-            block_builder = block_builder.add_receipt(receipt.clone());
-        }
-
-        let bloom = logs_bloom(&receipts.iter().flat_map(|r| r.logs.clone()).collect::<Vec<_>>());
-        block_builder = block_builder.logs_bloom(bloom.as_slice().to_vec());
-
-        for withdrawal in &block.body.execution_payload.withdrawals {
-            block_builder = block_builder.withdrawals(vec![withdrawal.clone()]);
-        }
+        let bloom = logs_bloom(receipts.iter().flat_map(|r| r.receipt.logs.iter()));
+        
+        let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
 
         // Apply changeset to storage to calculate state root
         let mut storage_for_root = storage.clone();
         storage_for_root.backend.apply_overlayed(&total_changeset);
         let state_root = storage_for_root.calculate_state_root();
 
-        let txs_root = Transaction::calculate_root(&transactions);
-        let withdrawals_root = Withdrawal::calculate_root(&block.body.execution_payload.withdrawals);
-        let receipts_root = Receipt::calculate_root(&receipts);
+        let txs_root = alloy_trie::root::ordered_trie_root(&transactions);
+        let withdrawals_root = alloy_trie::root::ordered_trie_root(&withdrawals);
+        let receipts_root = alloy_trie::root::ordered_trie_root(&receipts);
 
         debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", state_root, txs_root, receipts_root, withdrawals_root);
 
         // Verify roots against block
-        if block.body.execution_payload.state_root != B256::ZERO && state_root != block.body.execution_payload.state_root {
-            let err = format!("State root mismatch: expected {:?}, got {:?}", block.body.execution_payload.state_root, state_root);
+        if block.header.state_root != B256::ZERO && state_root != block.header.state_root {
+            let err = format!("State root mismatch: expected {:?}, got {:?}", block.header.state_root, state_root);
             info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
-        if block.body.execution_payload.transactions_root != B256::ZERO && txs_root != block.body.execution_payload.transactions_root {
-            let err = format!("Transactions root mismatch: expected {:?}, got {:?}", block.body.execution_payload.transactions_root, txs_root);
+        if block.header.transactions_root != B256::ZERO && txs_root != block.header.transactions_root {
+            let err = format!("Transactions root mismatch: expected {:?}, got {:?}", block.header.transactions_root, txs_root);
             info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
-        if block.body.execution_payload.receipts_root != B256::ZERO && receipts_root != block.body.execution_payload.receipts_root {
-            let err = format!("Receipts root mismatch: expected {:?}, got {:?}", block.body.execution_payload.receipts_root, receipts_root);
+        if block.header.receipts_root != B256::ZERO && receipts_root != block.header.receipts_root {
+            let err = format!("Receipts root mismatch: expected {:?}, got {:?}", block.header.receipts_root, receipts_root);
             info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
-        if block.body.execution_payload.withdrawals_root != B256::ZERO && withdrawals_root != block.body.execution_payload.withdrawals_root {
-            let err = format!("Withdrawals root mismatch: expected {:?}, got {:?}", block.body.execution_payload.withdrawals_root, withdrawals_root);
+        if block.header.withdrawals_root.unwrap_or(B256::ZERO) != B256::ZERO && withdrawals_root != block.header.withdrawals_root.unwrap_or(B256::ZERO) {
+            let err = format!("Withdrawals root mismatch: expected {:?}, got {:?}", block.header.withdrawals_root, withdrawals_root);
             info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
 
-        let finalized_block = block_builder
-            .state_root(state_root)
-            .transactions_root(txs_root)
-            .withdrawals_root(withdrawals_root)
-            .receipts_root(receipts_root)
-            .build();
+        let finalized_block = Block {
+            header: Header {
+                number: block.header.number,
+                parent_hash: block.header.parent_hash,
+                ommers_hash: block.header.ommers_hash,
+                beneficiary: block.header.beneficiary,
+                state_root,
+                transactions_root: txs_root,
+                receipts_root,
+                logs_bloom: bloom,
+                difficulty: block.header.difficulty,
+                gas_limit: block.header.gas_limit,
+                gas_used: cumulative_gas_used,
+                timestamp: block.header.timestamp,
+                extra_data: block.header.extra_data.clone(),
+                mix_hash: block.header.mix_hash,
+                nonce: block.header.nonce,
+                base_fee_per_gas: block.header.base_fee_per_gas,
+                withdrawals_root: Some(withdrawals_root),
+                blob_gas_used: block.header.blob_gas_used,
+                excess_blob_gas: block.header.excess_blob_gas,
+                parent_beacon_block_root: block.header.parent_beacon_block_root,
+                ..Default::default()
+            },
+            body: alloy_consensus::BlockBody {
+                transactions: transactions.clone(),
+                ommers: Vec::new(),
+                withdrawals: Some(withdrawals),
+            },
+        };
 
         // Apply total changeset to actual storage
         storage.backend.apply_overlayed(&total_changeset);
 
         // Add transactions, receipts and block to storage
         for (tx, receipt) in transactions.into_iter().zip(receipts.into_iter()) {
-            let tx_hash = tx.hash;
+            let hash = *tx.hash();
             storage.add_transaction(tx);
-            storage.add_receipt(tx_hash, receipt);
+            storage.add_receipt(hash, receipt);
         }
         storage.add_block(finalized_block);
-        info!("[Executor] Block finalized and saved to storage: slot={:?}", block.slot);
+        info!("[Executor] Block finalized and saved to storage: number={:?}", block.header.number);
 
         Ok(results)
     }
 
-    fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<Transaction>, block: Block, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
+    fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
         if apply_changes {
             self.execute_block(storage, transactions, block)
         } else {
@@ -250,21 +264,22 @@ impl Executor {
 
             let mut results = Vec::new();
             for tx in &transactions {
-                let gas_price = TransactGasPrice::Legacy(EvmU256::from_big_endian(&tx.gas_price.to_be_bytes::<32>()));
-                let call_create = match tx.to {
+                let sender = tx.recover_signer().map_err(|e| format!("Failed to recover signer: {:?}", e))?;
+                let gas_price = TransactGasPrice::Legacy(EvmU256::from(tx.gas_price().unwrap_or_default()));
+                let call_create = match tx.to() {
                     Some(to) => TransactArgsCallCreate::Call {
                         address: H160::from_slice(to.as_slice()),
-                        data: tx.data.clone(),
+                        data: tx.input().to_vec(),
                     },
                     None => TransactArgsCallCreate::Create {
-                        init_code: tx.data.clone(),
+                        init_code: tx.input().to_vec(),
                         salt: None,
                     },
                 };
                 let args = TransactArgs {
-                    caller: H160::from_slice(tx.from.as_slice()),
-                    value: EvmU256::from_big_endian(&tx.value.to_be_bytes::<32>()),
-                    gas_limit: EvmU256::from(tx.gas_limit),
+                    caller: H160::from_slice(sender.as_slice()),
+                    value: EvmU256::from_big_endian(&tx.value().to_be_bytes::<32>()),
+                    gas_limit: EvmU256::from(tx.gas_limit()),
                     gas_price,
                     access_list: Vec::new(),
                     call_create,
