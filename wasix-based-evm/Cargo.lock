@@ -3915,7 +3915,7 @@ source = "git+https://github.com/wasix-org/mio#7253c623373e1b1e625af53c7ff7647f3
 dependencies = [
  "libc 0.2.151",
  "wasi 0.11.1+wasi-snapshot-preview1",
- "wasix",
+ "wasix 0.12.21",
  "windows-sys 0.48.0",
 ]
 
@@ -6075,6 +6075,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "wasix"
+version = "0.13.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1757e0d1f8456693c7e5c6c629bdb54884e032aa0bb53c155f6a39f94440d332"
+dependencies = [
+ "wasi 0.11.1+wasi-snapshot-preview1",
+]
+
+[[package]]
 name = "wasix-based-evm"
 version = "0.1.0"
 dependencies = [
@@ -6109,6 +6118,7 @@ dependencies = [
  "socket2 0.4.10",
  "thiserror 2.0.18",
  "tokio",
+ "wasix 0.13.1",
 ]
 
 [[package]]

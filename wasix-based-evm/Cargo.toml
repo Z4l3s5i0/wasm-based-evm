@@ -81,7 +81,7 @@ libp2p = {version = "0.56.0", default-features = false, features = [
 ]}
 
 # When using wasix
-#wasix = { version = "0.13.1" }
+wasix = { version = "0.13.1" }
 #tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
 #socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 #tentacle = { git = "https://github.com/Z4l3s5i0/tentacle-wasmer", branch = "fix", default-features = false, features = ["tokio-runtime", "tokio-timer"]}

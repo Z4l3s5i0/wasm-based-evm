@@ -1,9 +1,12 @@
 use discv5::{Discv5, ConfigBuilder, Event, ListenConfig};
 use discv5::enr::{CombinedKey, Enr as RawEnr, NodeId};
-use std::net::SocketAddr;
+use std::net::{SocketAddr, Ipv4Addr, Ipv6Addr, IpAddr};
 use std::sync::Arc;
 use crate::{info, error, debug};
 use anyhow::{Result, anyhow};
+
+#[cfg(target_os = "wasi")]
+use wasix::{sock_bind, sock_open, AddressFamily, Socktype, Address, AddressV4, AddressV6};
 
 pub struct DiscoveryService {
     discv5: Arc<Discv5>,
@@ -16,25 +19,69 @@ impl DiscoveryService {
         listen_port: u16,
         bootnodes: Vec<String>,
     ) -> Result<Self> {
-        let listen_config = if local_enr.ip4().is_some() || local_enr.ip6().is_some() {
-            // If the ENR has an IP, we can use it to determine the listen configuration.
-            // However, usually we want to listen on all interfaces to be reachable.
-            // Discv5 ListenConfig::from(SocketAddr) defaults to Ipv4 if it's an Ipv4 addr.
-            
-            if let Some(ip4) = local_enr.ip4() {
-                ListenConfig::Ipv4 {
-                    ip: std::net::Ipv4Addr::UNSPECIFIED,
-                    port: listen_port,
-                }
+        #[cfg(target_os = "wasi")]
+        {
+            // Explicitly bind the UDP socket via wasix syscalls if possible
+            // to ensure the sandbox has pre-mapped the interface.
+            let (ip, port) = if let Some(ip4) = local_enr.ip4() {
+                (IpAddr::V4(ip4), listen_port)
             } else if let Some(ip6) = local_enr.ip6() {
-                ListenConfig::Ipv6 {
-                    ip: std::net::Ipv6Addr::UNSPECIFIED,
-                    port: listen_port,
-                }
+                (IpAddr::V6(ip6), listen_port)
             } else {
-                ListenConfig::from(SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), listen_port))
+                (IpAddr::V4(Ipv4Addr::UNSPECIFIED), listen_port)
+            };
+
+            info!("[Discovery] [WASIX] Attempting manual bind for Discv5 to {}:{}", ip, port);
+            
+            // Note: discv5 handles its own socket creation, but calling wasix::sock_bind 
+            // here can help trigger the host's networking bridge before the library starts.
+            unsafe {
+                let family = match ip {
+                    IpAddr::V4(_) => AddressFamily::Inet,
+                    IpAddr::V6(_) => AddressFamily::Inet6,
+                };
+                
+                if let Ok(fd) = sock_open(family, Socktype::Datagram, 0) {
+                    let addr = match ip {
+                        IpAddr::V4(ip4) => {
+                            let octets = ip4.octets();
+                            Address::Inet(AddressV4 {
+                                port: port,
+                                addr: [octets[0], octets[1], octets[2], octets[3]],
+                            })
+                        }
+                        IpAddr::V6(ip6) => {
+                            let segments = ip6.segments();
+                            Address::Inet6(AddressV6 {
+                                port: port,
+                                addr: [segments[0], segments[1], segments[2], segments[3], segments[4], segments[5], segments[6], segments[7]],
+                                flowinfo: 0,
+                                scope_id: 0,
+                            })
+                        }
+                    };
+                    let _ = sock_bind(fd, &addr);
+                    // We don't need to keep the FD open as discv5 will open its own,
+                    // but the bind call tells the host runtime to reserve the port.
+                    let _ = wasix::fd_close(fd);
+                }
+            }
+        }
+
+        let listen_config = if let Some(ip4) = local_enr.ip4() {
+            // In WASIX environments, binding to a specific IP (from --ext-ip) 
+            // is often necessary for the host to bridge UDP traffic correctly.
+            ListenConfig::Ipv4 {
+                ip: ip4,
+                port: listen_port,
+            }
+        } else if let Some(ip6) = local_enr.ip6() {
+            ListenConfig::Ipv6 {
+                ip: ip6,
+                port: listen_port,
             }
         } else {
+            // Default to UNSPECIFIED if no IP is set in ENR
             ListenConfig::from(SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), listen_port))
         };
         
