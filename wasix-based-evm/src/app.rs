@@ -18,6 +18,7 @@ use crate::rpc::account_service::AccountService;
 use crate::rpc::block_service::BlockService;
 use crate::rpc::transaction_service::TransactionService;
 use crate::rpc::log_service::LogService;
+use crate::rpc::engine_service::EngineService;
 
 pub struct App {
     rpc_addr: std::net::SocketAddr,
@@ -167,6 +168,11 @@ impl AppBuilder {
             executor: executor.clone(),
             storage: storage.clone(),
         })?;
+        facade.register_engine(EngineService::new(
+            storage.clone(),
+            mempool.clone(),
+            executor.clone(),
+        ))?;
         facade.register_blocks(BlockService { storage: provider.clone() })?;
         facade.register_transactions(TransactionService { storage: provider.clone() })?;
         facade.register_logs(LogService { storage: provider.clone() })?;
