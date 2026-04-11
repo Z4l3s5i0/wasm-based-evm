@@ -8,6 +8,8 @@ use alloy_primitives::U256;
 use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
 use crate::mempool::Mempool;
+use crate::p2p::identity::Identity;
+use crate::p2p::discovery::DiscoveryService;
 use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
@@ -26,13 +28,19 @@ pub struct App {
     auth_rpc_addr: std::net::SocketAddr,
     eth_module: jsonrpsee::RpcModule<()>,
     auth_module: jsonrpsee::RpcModule<()>,
+    discovery: DiscoveryService,
 }
 
 impl App {
     pub fn builder() -> AppBuilder {
         AppBuilder::default()
     }
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+        info!("[App] Node ENR: {}", self.discovery.local_enr());
+
+        // Start P2P discovery
+        self.discovery.start().await?;
+
         let eth_server = jsonrpsee::server::Server::builder()
             .build(self.eth_rpc_addr)
             .await?;
@@ -127,8 +135,8 @@ impl AppBuilder {
         let auth_rpc_addr = format!("127.0.0.1:{}", args.auth_rpc_port).parse()?;
 
         // 2. Data Dir & Genesis
-        let data_dir = if let Some(dir) = args.data_dir {
-            dir
+        let data_dir = if let Some(ref dir) = args.data_dir {
+            dir.clone()
         } else if cfg!(target_os = "wasi") {
             std::env::current_dir()?
         } else {
@@ -202,12 +210,30 @@ impl AppBuilder {
         eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
         eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
         eth_facade.register_logs(LogService { storage: provider.clone() })?;
+
+        // 5. P2P Identity
+        let p2p_identity = Identity::new(
+            args.data_dir.as_deref(),
+            args.p2p_port,
+            args.discovery_port,
+            args.ext_ip,
+        )?;
+        info!("[App] P2P Identity generated: {}", p2p_identity.enr);
+
+        // 6. Discovery Service
+        let discovery = DiscoveryService::new(
+            p2p_identity.keypair,
+            p2p_identity.enr,
+            args.discovery_port,
+            args.bootnodes.clone(),
+        )?;
         
         Ok(App {
             eth_rpc_addr,
             auth_rpc_addr,
             eth_module: eth_facade.into_module(),
             auth_module: auth_facade.into_module(),
+            discovery,
         })
     }
 }

@@ -1,0 +1,8 @@
+# Exclude large, unnecessary folders from Docker build context
+.git
+.idea
+js
+smart-contracts
+tester
+**/node_modules
+**/*.log

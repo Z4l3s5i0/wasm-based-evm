@@ -7,6 +7,7 @@ mod mempool;
 mod cli;
 mod logging;
 mod app;
+mod p2p;
 // mod network;
 
 use clap::Parser;

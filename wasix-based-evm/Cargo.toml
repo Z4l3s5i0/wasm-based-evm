@@ -38,6 +38,46 @@ discv5 = "0.10.4"
 async-trait = "0.1.89"
 clap = { version = "4.5.4", features = ["derive"] }
 thiserror = "2.0.18"
+libp2p = {version = "0.56.0", default-features = false, features = [
+    "autonat",
+    "cbor",
+    "dcutr",
+    "dns",
+    "ecdsa",
+    "ed25519",
+    "floodsub",
+    "gossipsub",
+    "identify",
+    "json",
+    "kad",
+    "macros",
+    "mdns",
+    "memory-connection-limits",
+    "metrics",
+    "noise",
+    "ping",
+    "plaintext",
+    "pnet",
+    "quic",
+    "relay",
+    "rendezvous",
+    "request-response",
+    "rsa",
+    "secp256k1",
+    "serde",
+    "tcp",
+    "tls",
+    "tokio",
+    "uds",
+    "wasm-bindgen",
+    "webrtc-websys",
+    "websocket-websys",
+    "websocket",
+    "webtransport-websys",
+#    "yamux",
+    "upnp",
+
+]}
 
 # When using wasix
 #wasix = { version = "0.13.1" }
@@ -51,7 +91,6 @@ anyhow = "1.0.102"
 
 # When using something different than wasix
 socket2 = { version="0.4.10" , default-features = false, features = ["all"]}
-tentacle = { version = "0.7.5", default-features = false, features = ["tokio-runtime", "tokio-timer"]}
 tokio = { version = "1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
 
 

@@ -34,3 +34,10 @@ macro_rules! debug {
         }
     };
 }
+
+#[macro_export]
+macro_rules! error {
+    ($($arg:tt)*) => {
+        eprintln!($($arg)*);
+    };
+}
