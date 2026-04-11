@@ -3,8 +3,9 @@ use std::collections::HashMap;
 use tokio::sync::RwLock;
 use crate::error::{RpcResult, RpcError};
 use alloy_rpc_types::engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ForkchoiceState, ForkchoiceUpdated,
-    PayloadAttributes, PayloadId, PayloadStatus, PayloadStatusEnum,
+    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, 
+    ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
+    PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadBodyV1,
 };
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_primitives::{B256, U256, Address, Bytes};
@@ -33,13 +34,212 @@ impl EngineService {
     pub async fn exchange_capabilities(&self, _capabilities: Vec<String>) -> RpcResult<Vec<String>> {
         Ok(vec![
             "engine_exchangeCapabilities".to_string(),
+            "engine_exchangeTransitionConfigurationV1".to_string(),
             "engine_forkchoiceUpdatedV1".to_string(),
             "engine_forkchoiceUpdatedV2".to_string(),
+            "engine_forkchoiceUpdatedV3".to_string(),
+            "engine_forkchoiceUpdatedV4".to_string(),
+            "engine_getBlobsV1".to_string(),
+            "engine_getBlobsV2".to_string(),
+            "engine_getBlobsV3".to_string(),
+            "engine_getPayloadBodiesByHashV1".to_string(),
+            "engine_getPayloadBodiesByHashV2".to_string(),
+            "engine_getPayloadBodiesByRangeV1".to_string(),
+            "engine_getPayloadBodiesByRangeV2".to_string(),
             "engine_getPayloadV1".to_string(),
             "engine_getPayloadV2".to_string(),
+            "engine_getPayloadV3".to_string(),
+            "engine_getPayloadV4".to_string(),
+            "engine_getPayloadV5".to_string(),
+            "engine_getPayloadV6".to_string(),
             "engine_newPayloadV1".to_string(),
             "engine_newPayloadV2".to_string(),
+            "engine_newPayloadV3".to_string(),
+            "engine_newPayloadV4".to_string(),
+            "engine_newPayloadV5".to_string(),
         ])
+    }
+
+    pub async fn forkchoice_updated_v3(
+        &self,
+        forkchoice_state: ForkchoiceState,
+        payload_attributes: Option<PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated> {
+        self.forkchoice_updated(forkchoice_state, payload_attributes, 3).await
+    }
+
+    pub async fn forkchoice_updated_v4(
+        &self,
+        forkchoice_state: ForkchoiceState,
+        payload_attributes: Option<PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated> {
+        self.forkchoice_updated(forkchoice_state, payload_attributes, 4).await
+    }
+
+    pub async fn exchange_transition_configuration_v1(
+        &self,
+        config: TransitionConfiguration,
+    ) -> RpcResult<TransitionConfiguration> {
+        Ok(config)
+    }
+
+    pub async fn get_blobs_v1(&self, _indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
+        // Blobs are not yet supported in this execution engine.
+        // Returning a vector of None for the requested indices to indicate unavailability.
+        Ok(vec![None; _indices.len()])
+    }
+
+    pub async fn get_blobs_v2(&self, _indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
+        self.get_blobs_v1(_indices).await
+    }
+
+    pub async fn get_blobs_v3(&self, _indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
+        self.get_blobs_v1(_indices).await
+    }
+
+    pub async fn get_payload_bodies_by_hash_v1(
+        &self,
+        hashes: Vec<B256>,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        let storage = self.storage.read().await;
+        let mut bodies = Vec::new();
+        for hash in hashes {
+            let body = storage.get_block_by_hash(hash).map(|block| {
+                ExecutionPayloadBodyV1 {
+                    transactions: block.body.transactions.iter().map(|tx| alloy_rlp::encode(tx).into()).collect(),
+                    withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()),
+                }
+            });
+            bodies.push(body);
+        }
+        Ok(bodies)
+    }
+
+    pub async fn get_payload_bodies_by_hash_v2(
+        &self,
+        hashes: Vec<B256>,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        self.get_payload_bodies_by_hash_v1(hashes).await
+    }
+
+    pub async fn get_payload_bodies_by_range_v1(
+        &self,
+        start: u64,
+        count: u64,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        let storage = self.storage.read().await;
+        let mut bodies = Vec::new();
+        for i in 0..count {
+            let number = start + i;
+            let body = storage.get_block_by_number(number).map(|block| {
+                ExecutionPayloadBodyV1 {
+                    transactions: block.body.transactions.iter().map(|tx| alloy_rlp::encode(tx).into()).collect(),
+                    withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()),
+                }
+            });
+            bodies.push(body);
+        }
+        Ok(bodies)
+    }
+
+    pub async fn get_payload_bodies_by_range_v2(
+        &self,
+        start: u64,
+        count: u64,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        self.get_payload_bodies_by_range_v1(start, count).await
+    }
+
+    pub async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3> {
+        let payloads_lock = self.payloads.read().await;
+        let block = payloads_lock.get(&payload_id)
+            .ok_or_else(|| RpcError::Internal("Payload not found".to_string()))?;
+
+        Ok(ExecutionPayloadV3 {
+            payload_inner: ExecutionPayloadV2 {
+                payload_inner: ExecutionPayloadV1 {
+                    parent_hash: block.header.parent_hash,
+                    fee_recipient: block.header.beneficiary,
+                    state_root: block.header.state_root,
+                    receipts_root: block.header.receipts_root,
+                    logs_bloom: block.header.logs_bloom,
+                    prev_randao: block.header.mix_hash,
+                    block_number: block.header.number,
+                    gas_limit: block.header.gas_limit as u64,
+                    gas_used: block.header.gas_used as u64,
+                    timestamp: block.header.timestamp,
+                    extra_data: block.header.extra_data.clone(),
+                    base_fee_per_gas: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+                    block_hash: block.header.hash_slow(),
+                    transactions: block.body.transactions.iter().map(|tx| alloy_rlp::encode(tx).into()).collect(),
+                },
+                withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()).unwrap_or_default(),
+            },
+            blob_gas_used: 0,
+            excess_blob_gas: 0,
+        })
+    }
+
+    pub async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
+        let payloads_lock = self.payloads.read().await;
+        let block = payloads_lock.get(&payload_id)
+            .ok_or_else(|| RpcError::Internal("Payload not found".to_string()))?;
+
+        Ok(ExecutionPayloadV4 {
+            payload_inner: ExecutionPayloadV3 {
+                payload_inner: ExecutionPayloadV2 {
+                    payload_inner: ExecutionPayloadV1 {
+                        parent_hash: block.header.parent_hash,
+                        fee_recipient: block.header.beneficiary,
+                        state_root: block.header.state_root,
+                        receipts_root: block.header.receipts_root,
+                        logs_bloom: block.header.logs_bloom,
+                        prev_randao: block.header.mix_hash,
+                        block_number: block.header.number,
+                        gas_limit: block.header.gas_limit as u64,
+                        gas_used: block.header.gas_used as u64,
+                        timestamp: block.header.timestamp,
+                        extra_data: block.header.extra_data.clone(),
+                        base_fee_per_gas: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
+                        block_hash: block.header.hash_slow(),
+                        transactions: block.body.transactions.iter().map(|tx| alloy_rlp::encode(tx).into()).collect(),
+                    },
+                    withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()).unwrap_or_default(),
+                },
+                blob_gas_used: 0,
+                excess_blob_gas: 0,
+            },
+            block_access_list: vec![].into(),
+        })
+    }
+
+    pub async fn get_payload_v5(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
+        // V5/V6 currently use V4 structure in alloy-rpc-types but may have different semantics
+        // or additional context-dependent fields. For now, we return the V4 representation.
+        self.get_payload_v4(payload_id).await
+    }
+
+    pub async fn get_payload_v6(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
+        self.get_payload_v4(payload_id).await
+    }
+
+    pub async fn new_payload_v3(&self, payload: ExecutionPayloadV3) -> RpcResult<PayloadStatus> {
+        // V3 introduces withdrawals and blobs. We pass withdrawals to the internal executor.
+        self.new_payload(payload.payload_inner.payload_inner, Some(payload.payload_inner.withdrawals)).await
+    }
+
+    pub async fn new_payload_v4(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus> {
+        // V4 adds consolidation requests and other Cancun/Deneb features.
+        // We reuse the V3 execution logic which handles transactions and withdrawals.
+        self.new_payload(
+            payload.payload_inner.payload_inner.payload_inner,
+            Some(payload.payload_inner.payload_inner.withdrawals)
+        ).await
+    }
+
+    pub async fn new_payload_v5(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus> {
+        // V5 continues with V4 structure for now.
+        self.new_payload_v4(payload).await
     }
 
     pub async fn forkchoice_updated_v1(

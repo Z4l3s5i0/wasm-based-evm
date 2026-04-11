@@ -1,8 +1,10 @@
 use crate::error::RpcResult;
 use alloy_rpc_types::engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ForkchoiceState, ForkchoiceUpdated,
-    PayloadAttributes, PayloadId, PayloadStatus,
+    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, 
+    ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
+    TransitionConfiguration, ExecutionPayloadBodyV1,
 };
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use crate::rpc::engine_service::EngineService;
@@ -11,6 +13,12 @@ use crate::rpc::engine_service::EngineService;
 pub trait EngineRpc {
     #[method(name = "engine_exchangeCapabilities")]
     async fn exchange_capabilities(&self, capabilities: Vec<String>) -> RpcResult<Vec<String>>;
+
+    #[method(name = "engine_exchangeTransitionConfigurationV1")]
+    async fn exchange_transition_configuration_v1(
+        &self,
+        config: TransitionConfiguration,
+    ) -> RpcResult<TransitionConfiguration>;
 
     #[method(name = "engine_forkchoiceUpdatedV1")]
     async fn forkchoice_updated_v1(
@@ -26,17 +34,87 @@ pub trait EngineRpc {
         payload_attributes: Option<PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated>;
 
+    #[method(name = "engine_forkchoiceUpdatedV3")]
+    async fn forkchoice_updated_v3(
+        &self,
+        forkchoice_state: ForkchoiceState,
+        payload_attributes: Option<PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated>;
+
+    #[method(name = "engine_forkchoiceUpdatedV4")]
+    async fn forkchoice_updated_v4(
+        &self,
+        forkchoice_state: ForkchoiceState,
+        payload_attributes: Option<PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated>;
+
+    #[method(name = "engine_getBlobsV1")]
+    async fn get_blobs_v1(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>>;
+
+    #[method(name = "engine_getBlobsV2")]
+    async fn get_blobs_v2(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>>;
+
+    #[method(name = "engine_getBlobsV3")]
+    async fn get_blobs_v3(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>>;
+
+    #[method(name = "engine_getPayloadBodiesByHashV1")]
+    async fn get_payload_bodies_by_hash_v1(
+        &self,
+        hashes: Vec<B256>,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>>;
+
+    #[method(name = "engine_getPayloadBodiesByHashV2")]
+    async fn get_payload_bodies_by_hash_v2(
+        &self,
+        hashes: Vec<B256>,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>>;
+
+    #[method(name = "engine_getPayloadBodiesByRangeV1")]
+    async fn get_payload_bodies_by_range_v1(
+        &self,
+        start: u64,
+        count: u64,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>>;
+
+    #[method(name = "engine_getPayloadBodiesByRangeV2")]
+    async fn get_payload_bodies_by_range_v2(
+        &self,
+        start: u64,
+        count: u64,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>>;
+
     #[method(name = "engine_getPayloadV1")]
     async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1>;
 
     #[method(name = "engine_getPayloadV2")]
     async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV2>;
 
+    #[method(name = "engine_getPayloadV3")]
+    async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3>;
+
+    #[method(name = "engine_getPayloadV4")]
+    async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4>;
+
+    #[method(name = "engine_getPayloadV5")]
+    async fn get_payload_v5(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4>;
+
+    #[method(name = "engine_getPayloadV6")]
+    async fn get_payload_v6(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4>;
+
     #[method(name = "engine_newPayloadV1")]
     async fn new_payload_v1(&self, payload: ExecutionPayloadV1) -> RpcResult<PayloadStatus>;
 
     #[method(name = "engine_newPayloadV2")]
     async fn new_payload_v2(&self, payload: ExecutionPayloadV2) -> RpcResult<PayloadStatus>;
+
+    #[method(name = "engine_newPayloadV3")]
+    async fn new_payload_v3(&self, payload: ExecutionPayloadV3) -> RpcResult<PayloadStatus>;
+
+    #[method(name = "engine_newPayloadV4")]
+    async fn new_payload_v4(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus>;
+
+    #[method(name = "engine_newPayloadV5")]
+    async fn new_payload_v5(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus>;
 }
 
 pub struct EngineController {
@@ -65,6 +143,71 @@ impl EngineRpcServer for EngineController {
         self.service.forkchoice_updated_v2(forkchoice_state, payload_attributes).await
     }
 
+    async fn forkchoice_updated_v3(
+        &self,
+        forkchoice_state: ForkchoiceState,
+        payload_attributes: Option<PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated> {
+        self.service.forkchoice_updated_v3(forkchoice_state, payload_attributes).await
+    }
+
+    async fn forkchoice_updated_v4(
+        &self,
+        forkchoice_state: ForkchoiceState,
+        payload_attributes: Option<PayloadAttributes>,
+    ) -> RpcResult<ForkchoiceUpdated> {
+        self.service.forkchoice_updated_v4(forkchoice_state, payload_attributes).await
+    }
+
+    async fn exchange_transition_configuration_v1(
+        &self,
+        config: TransitionConfiguration,
+    ) -> RpcResult<TransitionConfiguration> {
+        self.service.exchange_transition_configuration_v1(config).await
+    }
+
+    async fn get_blobs_v1(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
+        self.service.get_blobs_v1(indices).await
+    }
+
+    async fn get_blobs_v2(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
+        self.service.get_blobs_v2(indices).await
+    }
+
+    async fn get_blobs_v3(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
+        self.service.get_blobs_v3(indices).await
+    }
+
+    async fn get_payload_bodies_by_hash_v1(
+        &self,
+        hashes: Vec<B256>,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        self.service.get_payload_bodies_by_hash_v1(hashes).await
+    }
+
+    async fn get_payload_bodies_by_hash_v2(
+        &self,
+        hashes: Vec<B256>,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        self.service.get_payload_bodies_by_hash_v2(hashes).await
+    }
+
+    async fn get_payload_bodies_by_range_v1(
+        &self,
+        start: u64,
+        count: u64,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        self.service.get_payload_bodies_by_range_v1(start, count).await
+    }
+
+    async fn get_payload_bodies_by_range_v2(
+        &self,
+        start: u64,
+        count: u64,
+    ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
+        self.service.get_payload_bodies_by_range_v2(start, count).await
+    }
+
     async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
         self.service.get_payload_v1(payload_id).await
     }
@@ -73,11 +216,39 @@ impl EngineRpcServer for EngineController {
         self.service.get_payload_v2(payload_id).await
     }
 
+    async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3> {
+        self.service.get_payload_v3(payload_id).await
+    }
+
+    async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
+        self.service.get_payload_v4(payload_id).await
+    }
+
+    async fn get_payload_v5(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
+        self.service.get_payload_v5(payload_id).await
+    }
+
+    async fn get_payload_v6(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
+        self.service.get_payload_v6(payload_id).await
+    }
+
     async fn new_payload_v1(&self, payload: ExecutionPayloadV1) -> RpcResult<PayloadStatus> {
         self.service.new_payload_v1(payload).await
     }
 
     async fn new_payload_v2(&self, payload: ExecutionPayloadV2) -> RpcResult<PayloadStatus> {
         self.service.new_payload_v2(payload).await
+    }
+
+    async fn new_payload_v3(&self, payload: ExecutionPayloadV3) -> RpcResult<PayloadStatus> {
+        self.service.new_payload_v3(payload).await
+    }
+
+    async fn new_payload_v4(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus> {
+        self.service.new_payload_v4(payload).await
+    }
+
+    async fn new_payload_v5(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus> {
+        self.service.new_payload_v5(payload).await
     }
 }

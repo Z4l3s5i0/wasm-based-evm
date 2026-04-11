@@ -4,8 +4,11 @@ This document provides a comprehensive list of Ethereum JSON-RPC methods, catego
 
 #### Summary of Implementation
 - **Total Standard Methods tracked:** 38
-- **Implemented:** 20
-- **Pending/Placeholder:** 18
+- **Total Engine Methods tracked:** 34
+- **Implemented Standard:** 20
+- **Implemented Engine:** 11
+- **Pending/Placeholder Standard:** 18
+- **Pending/Placeholder Engine:** 13
 
 ---
 
@@ -90,3 +93,35 @@ Advanced methods for state verification.
 | `eth_getWork` | ❌ Pending | Returns the hash of the current block, the seedHash, and the boundary condition to be met. |
 | `eth_submitWork` | ❌ Pending | Used for submitting a proof-of-work solution. |
 | `eth_submitHashrate` | ❌ Pending | Used for submitting mining hashrate. |
+
+---
+
+### 8. Engine API (`EngineController`)
+Methods for the consensus-execution separation (Engine API).
+
+| Method | Status        | Description |
+| :--- |:--------------| :--- |
+| `engine_exchangeCapabilities` | ✅ Implemented | Exchanges capabilities with the consensus client. |
+| `engine_exchangeTransitionConfigurationV1` | ❌ Pending | Exchanges transition configuration with the consensus client. |
+| `engine_forkchoiceUpdatedV1` | ✅ Implemented | Updates the forkchoice state and optionally triggers block building (V1). |
+| `engine_forkchoiceUpdatedV2` | ✅ Implemented | Updates the forkchoice state and optionally triggers block building (V2). |
+| `engine_forkchoiceUpdatedV3` | ❌ Pending     | Updates the forkchoice state and optionally triggers block building (V3). |
+| `engine_forkchoiceUpdatedV4` | ❌ Pending     | Updates the forkchoice state and optionally triggers block building (V4). |
+| `engine_getBlobsV1` | ❌ Pending | Retrieves blobs by their versioned hashes (V1). |
+| `engine_getBlobsV2` | ❌ Pending | Retrieves blobs by their versioned hashes (V2). |
+| `engine_getBlobsV3` | ❌ Pending | Retrieves blobs by their versioned hashes (V3). |
+| `engine_getPayloadBodiesByHashV1` | ✅ Implemented | Retrieves payload bodies by their hashes (V1). |
+| `engine_getPayloadBodiesByHashV2` | ✅ Implemented | Retrieves payload bodies by their hashes (V2). |
+| `engine_getPayloadBodiesByRangeV1` | ✅ Implemented | Retrieves payload bodies by range (V1). |
+| `engine_getPayloadBodiesByRangeV2` | ✅ Implemented | Retrieves payload bodies by range (V2). |
+| `engine_getPayloadV1` | ✅ Implemented | Retrieves an execution payload by ID (V1). |
+| `engine_getPayloadV2` | ✅ Implemented | Retrieves an execution payload by ID (V2). |
+| `engine_getPayloadV3` | ❌ Pending | Retrieves an execution payload by ID (V3). |
+| `engine_getPayloadV4` | ❌ Pending | Retrieves an execution payload by ID (V4). |
+| `engine_getPayloadV5` | ❌ Pending | Retrieves an execution payload by ID (V5). |
+| `engine_getPayloadV6` | ❌ Pending | Retrieves an execution payload by ID (V6). |
+| `engine_newPayloadV1` | ✅ Implemented | Validates and executes a new execution payload (V1). |
+| `engine_newPayloadV2` | ✅ Implemented | Validates and executes a new execution payload (V2). |
+| `engine_newPayloadV3` | ❌ Pending | Validates and executes a new execution payload (V3). |
+| `engine_newPayloadV4` | ❌ Pending | Validates and executes a new execution payload (V4). |
+| `engine_newPayloadV5` | ❌ Pending | Validates and executes a new execution payload (V5). |
