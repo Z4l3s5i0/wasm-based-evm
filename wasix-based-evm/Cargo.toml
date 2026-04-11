@@ -33,6 +33,7 @@ rand = { version = "=0.8.5", default-features = false }
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" , default-features = false}
 mio = { git = "https://github.com/wasix-org/mio", default-features = false }
 h2 = "0.4"
+
 serde_json = { version = "1.0.0", default-features = false, features = ["alloc", "std"] }
 discv5 = { version = "0.10.4" }
 async-trait = "0.1.89"

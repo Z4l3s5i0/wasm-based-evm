@@ -3,7 +3,7 @@ use discv5::enr::{CombinedKey, Enr as RawEnr, NodeId};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use crate::{info, error, debug};
-use anyhow::Result;
+use anyhow::{Result, anyhow};
 
 pub struct DiscoveryService {
     discv5: Arc<Discv5>,
@@ -11,18 +11,51 @@ pub struct DiscoveryService {
 
 impl DiscoveryService {
     pub async fn new(
-        identity_key: CombinedKey,
+        identity_key: &CombinedKey,
         local_enr: RawEnr<CombinedKey>,
         listen_port: u16,
         bootnodes: Vec<String>,
     ) -> Result<Self> {
-        let listen_addr = SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), listen_port);
-        let listen_config = ListenConfig::from(listen_addr);
+        let listen_config = if local_enr.ip4().is_some() || local_enr.ip6().is_some() {
+            // If the ENR has an IP, we can use it to determine the listen configuration.
+            // However, usually we want to listen on all interfaces to be reachable.
+            // Discv5 ListenConfig::from(SocketAddr) defaults to Ipv4 if it's an Ipv4 addr.
+            
+            if let Some(ip4) = local_enr.ip4() {
+                ListenConfig::Ipv4 {
+                    ip: std::net::Ipv4Addr::UNSPECIFIED,
+                    port: listen_port,
+                }
+            } else if let Some(ip6) = local_enr.ip6() {
+                ListenConfig::Ipv6 {
+                    ip: std::net::Ipv6Addr::UNSPECIFIED,
+                    port: listen_port,
+                }
+            } else {
+                ListenConfig::from(SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), listen_port))
+            }
+        } else {
+            ListenConfig::from(SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), listen_port))
+        };
         
         let config = ConfigBuilder::new(listen_config)
             .build();
 
-        let mut discv5 = Discv5::new(local_enr, identity_key, config)
+        // CombinedKey doesn't implement Clone, so we have to manually "clone" it by encoding and decoding
+        let encoded_key = identity_key.encode();
+        // The first byte of the encoded CombinedKey is the type (0 for secp256k1)
+        // If it's not 0, we check if it might be just the raw secret key (32 bytes)
+        let mut secret_bytes = if encoded_key.len() == 33 && encoded_key[0] == 0 {
+            encoded_key[1..].to_vec()
+        } else if encoded_key.len() == 32 {
+            encoded_key.to_vec()
+        } else {
+             return Err(anyhow!("Only secp256k1 is supported for cloning. Encoded length: {}, first byte: {}", encoded_key.len(), encoded_key[0]));
+        };
+        let cloned_key = CombinedKey::secp256k1_from_bytes(&mut secret_bytes)
+            .map_err(|e| anyhow::anyhow!("Failed to clone identity key: {:?}", e))?;
+
+        let mut discv5 = Discv5::new(local_enr, cloned_key, config)
             .map_err(|e| anyhow::anyhow!("Failed to initialize Discv5: {}", e))?;
 
         for enr_str in bootnodes {
@@ -83,6 +116,9 @@ impl DiscoveryService {
                     }
                     Event::SocketUpdated(addr) => {
                         info!("[Discovery] External socket updated: {}", addr);
+                        // Updating the ENR is usually handled internally by discv5 
+                        // if enr_update is enabled (which is default).
+                        // We just log it here.
                     }
                     _ => {}
                 }

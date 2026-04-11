@@ -10,6 +10,7 @@ use std::sync::Arc;
 use crate::mempool::Mempool;
 use crate::p2p::identity::Identity;
 use crate::p2p::discovery::DiscoveryService;
+use crate::p2p::swarm::SwarmService;
 use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
@@ -29,6 +30,7 @@ pub struct App {
     eth_module: jsonrpsee::RpcModule<()>,
     auth_module: jsonrpsee::RpcModule<()>,
     discovery: DiscoveryService,
+    swarm: SwarmService,
 }
 
 impl App {
@@ -40,6 +42,9 @@ impl App {
 
         // Start P2P discovery
         self.discovery.start().await?;
+
+        // Start libp2p swarm
+        self.swarm.start().await?;
 
         let eth_server = jsonrpsee::server::Server::builder()
             .build(self.eth_rpc_addr)
@@ -222,11 +227,17 @@ impl AppBuilder {
 
         // 6. Discovery Service
         let discovery = DiscoveryService::new(
-            p2p_identity.keypair,
+            &p2p_identity.keypair,
             p2p_identity.enr,
             args.discovery_port,
             args.bootnodes.clone(),
         ).await?;
+
+        // 7. Swarm Service
+        let swarm = SwarmService::new(
+            &p2p_identity.keypair,
+            args.p2p_port,
+        )?;
         
         Ok(App {
             eth_rpc_addr,
@@ -234,6 +245,7 @@ impl AppBuilder {
             eth_module: eth_facade.into_module(),
             auth_module: auth_facade.into_module(),
             discovery,
+            swarm,
         })
     }
 }
