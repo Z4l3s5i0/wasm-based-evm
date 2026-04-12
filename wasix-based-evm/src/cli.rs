@@ -8,10 +8,6 @@ pub struct Args {
     #[arg(long, default_value_t = 9001)]
     pub p2p_port: u16,
 
-    /// UDP port for Discv5
-    #[arg(long, default_value_t = 9000)]
-    pub discovery_port: u16,
-
     /// TCP port for Eth JSON-RPC
     #[arg(long, default_value_t = 8545)]
     pub eth_rpc_port: u16,
@@ -20,7 +16,7 @@ pub struct Args {
     #[arg(long, default_value_t = 8551)]
     pub auth_rpc_port: u16,
 
-    /// Comma-separated list of ENRs for bootstrapping
+    /// Comma-separated list of Multiaddrs for bootstrapping (must include /p2p/PeerId)
     #[arg(long, value_delimiter = ',')]
     pub bootnodes: Vec<String>,
 
@@ -28,7 +24,7 @@ pub struct Args {
     #[arg(long, default_value_t = 50)]
     pub max_peers: usize,
     
-    /// External IP to report in ENR (optional)
+    /// External IP (optional)
     #[arg(long)]
     pub ext_ip: Option<std::net::IpAddr>,
 

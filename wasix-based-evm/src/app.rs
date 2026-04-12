@@ -9,12 +9,11 @@ use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
 use crate::mempool::Mempool;
 use crate::p2p::identity::Identity;
-use crate::p2p::discovery::DiscoveryService;
 use crate::p2p::swarm::SwarmService;
 use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
-use crate::{debug, info};
+use crate::{debug, error, info};
 
 use crate::rpc::RpcServerFacade;
 use crate::rpc::eth_service::EthService;
@@ -29,7 +28,6 @@ pub struct App {
     auth_rpc_addr: std::net::SocketAddr,
     eth_module: jsonrpsee::RpcModule<()>,
     auth_module: jsonrpsee::RpcModule<()>,
-    discovery: DiscoveryService,
     swarm: SwarmService,
 }
 
@@ -37,12 +35,7 @@ impl App {
     pub fn builder() -> AppBuilder {
         AppBuilder::default()
     }
-    pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        info!("[App] Node ENR: {}", self.discovery.local_enr());
-
-        // Start P2P discovery
-        self.discovery.start().await?;
-
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         // Start libp2p swarm
         self.swarm.start().await?;
 
@@ -219,32 +212,27 @@ impl AppBuilder {
         // 5. P2P Identity
         let p2p_identity = Identity::new(
             args.data_dir.as_deref(),
-            args.p2p_port,
-            args.discovery_port,
-            args.ext_ip,
         )?;
-        info!("[App] P2P Identity generated: {}", p2p_identity.enr);
+        info!("[App] P2P Identity generated");
 
-        // 6. Discovery Service
-        let discovery = DiscoveryService::new(
-            &p2p_identity.keypair,
-            p2p_identity.enr,
-            args.discovery_port,
+        // 6. Swarm Service
+        let swarm = match SwarmService::new(
+            p2p_identity.keypair,
+            args.p2p_port,
             args.bootnodes.clone(),
-        ).await?;
-
-        // 7. Swarm Service
-        let swarm = SwarmService::new(
-            &p2p_identity.keypair,
-            args.p2p_port,
-        )?;
+        ) {
+            Ok(s) => s,
+            Err(e) => {
+                error!("[App] Failed to initialize Swarm Service: {:?}", e);
+                return Err(e.into());
+            }
+        };
         
         Ok(App {
             eth_rpc_addr,
             auth_rpc_addr,
             eth_module: eth_facade.into_module(),
             auth_module: auth_facade.into_module(),
-            discovery,
             swarm,
         })
     }
