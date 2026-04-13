@@ -3821,6 +3821,7 @@ dependencies = [
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-rlp-derive",
  "alloy-rpc-types",
  "alloy-serde",
  "alloy-signer",

@@ -1,18 +1,32 @@
+use std::sync::Arc;
 use crate::{error, info, debug};
 use anyhow::Result;
 use tokio::io::{AsyncReadExt, AsyncWriteExt, ReadHalf, WriteHalf};
-use tokio::net::TcpStream;
 use tokio::sync::mpsc;
-use alloy_rlp::{Encodable, Decodable};
+use alloy_rlp::{Encodable, Decodable, RlpEncodable, RlpDecodable};
+use alloy_rlp_derive::{RlpEncodable as _, RlpDecodable as _};
+use crate::p2p::swarm::PeerManager;
 
-/// Message types for our custom P2P protocol
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Message {
     Ping,
     Pong,
-    Hello { peer_id: String },
-    PeerList(Vec<(String, std::net::SocketAddr)>),
+    Hello(HelloMessage),
+    PeerList(Vec<PeerInfoRlp>),
     Gossip(Vec<u8>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+#[rlp(trailing)]
+pub struct HelloMessage {
+    pub peer_id: String,
+    pub listen_port: Option<u16>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, RlpEncodable, RlpDecodable)]
+pub struct PeerInfoRlp {
+    pub peer_id: String,
+    pub addr: String,
 }
 
 /// A connection to a peer, encapsulating TCP.
@@ -33,13 +47,14 @@ where
     pub async fn new_client(
         stream: T,
         local_peer_id: String,
+        listen_port: Option<u16>,
         send_queue: mpsc::Receiver<Message>,
-    ) -> Result<(Self, String)> {
+    ) -> Result<(Self, String, Option<u16>)> {
         debug!("[P2P] Starting handshake (TLS disabled)");
         let (mut reader, mut writer) = tokio::io::split(stream);
         
         // 1. Send Hello
-        Self::static_send_message(&mut writer, Message::Hello { peer_id: local_peer_id }).await?;
+        Self::static_send_message(&mut writer, Message::Hello(HelloMessage { peer_id: local_peer_id, listen_port })).await?;
         
         // 2. Wait for Hello from server
         let frame = Self::static_read_frame(&mut reader).await?
@@ -49,17 +64,20 @@ where
             return Err(anyhow::anyhow!("Expected Hello message, got type {}", if frame.is_empty() { 255 } else { frame[0] }));
         }
         
-        let remote_peer_id = String::decode(&mut &frame[1..])
+        let hello = HelloMessage::decode(&mut &frame[1..])
             .map_err(|e| anyhow::anyhow!("RLP decode error in handshake: {}", e))?;
+        let remote_peer_id = hello.peer_id;
+        let remote_listen_port = hello.listen_port;
             
-        Ok((Self { reader, writer, send_queue }, remote_peer_id))
+        Ok((Self { reader, writer, send_queue }, remote_peer_id, remote_listen_port))
     }
 
     pub async fn new_server(
         stream: T,
         local_peer_id: String,
+        listen_port: Option<u16>,
         send_queue: mpsc::Receiver<Message>,
-    ) -> Result<(Self, String)> {
+    ) -> Result<(Self, String, Option<u16>)> {
         debug!("[P2P] Starting handshake (TLS disabled)");
         let (mut reader, mut writer) = tokio::io::split(stream);
         
@@ -71,17 +89,19 @@ where
             return Err(anyhow::anyhow!("Expected Hello message, got type {}", if frame.is_empty() { 255 } else { frame[0] }));
         }
         
-        let remote_peer_id = String::decode(&mut &frame[1..])
+        let hello = HelloMessage::decode(&mut &frame[1..])
             .map_err(|e| anyhow::anyhow!("RLP decode error in handshake: {}", e))?;
+        let remote_peer_id = hello.peer_id;
+        let remote_listen_port = hello.listen_port;
             
         // 2. Send Hello back
-        Self::static_send_message(&mut writer, Message::Hello { peer_id: local_peer_id }).await?;
+        Self::static_send_message(&mut writer, Message::Hello(HelloMessage { peer_id: local_peer_id, listen_port })).await?;
         
-        Ok((Self { reader, writer, send_queue }, remote_peer_id))
+        Ok((Self { reader, writer, send_queue }, remote_peer_id, remote_listen_port))
     }
 
     /// Process the connection: read from network and write from the send queue.
-    pub async fn process(self) -> Result<()> {
+    pub async fn process(self, peer_manager: PeerManager) -> Result<()> {
         let mut reader = self.reader;
         let mut writer = self.writer;
         let mut send_queue = self.send_queue;
@@ -101,7 +121,7 @@ where
                 res = Self::static_read_frame(&mut reader) => {
                     match res {
                         Ok(Some(frame)) => {
-                            Self::static_handle_frame(&mut writer, frame).await?;
+                            Self::static_handle_frame(&mut writer, frame, &peer_manager).await?;
                         }
                         Ok(None) => {
                             info!("[P2P] Connection closed by remote");
@@ -127,18 +147,13 @@ where
         match msg {
             Message::Ping => buf.push(0),
             Message::Pong => buf.push(1),
-            Message::Hello { peer_id } => {
+            Message::Hello(hello) => {
                 buf.push(2);
-                peer_id.encode(&mut buf);
+                hello.encode(&mut buf);
             }
             Message::PeerList(peers) => {
                 buf.push(4);
-                // RLP doesn't naturally support tuples as Encodable.
-                // We'll encode each pair as a Vec of two strings.
-                let encoded_peers: Vec<Vec<String>> = peers.into_iter()
-                    .map(|(id, addr)| vec![id, addr.to_string()])
-                    .collect();
-                encoded_peers.encode(&mut buf);
+                peers.encode(&mut buf);
             }
             Message::Gossip(data) => {
                 buf.push(3);
@@ -157,22 +172,39 @@ where
         R: tokio::io::AsyncRead + Unpin,
     {
         let mut len_buf = [0u8; 4];
-        match reader.read_exact(&mut len_buf).await {
-            Ok(_) => {
+        let read_len = tokio::time::timeout(
+            tokio::time::Duration::from_secs(60), // Wait up to 60s for a new frame
+            reader.read_exact(&mut len_buf)
+        ).await;
+
+        match read_len {
+            Ok(Ok(_)) => {
                 let len = u32::from_be_bytes(len_buf) as usize;
                 if len > 10 * 1024 * 1024 { // 10MB limit
                     return Err(anyhow::anyhow!("Frame too large: {}", len));
                 }
                 let mut frame = vec![0u8; len];
-                reader.read_exact(&mut frame).await?;
+                // Once we have a length, we expect the payload quickly
+                tokio::time::timeout(
+                    tokio::time::Duration::from_secs(10),
+                    reader.read_exact(&mut frame)
+                ).await.map_err(|_| anyhow::anyhow!("Read payload timeout"))??;
                 Ok(Some(frame))
             }
-            Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
-            Err(e) => Err(e.into()),
+            Ok(Err(e)) if e.kind() == std::io::ErrorKind::UnexpectedEof => Ok(None),
+            Ok(Err(e)) => Err(e.into()),
+            Err(_) => {
+                // Read timeout
+                Err(anyhow::anyhow!("Read length timeout"))
+            }
         }
     }
 
-    async fn static_handle_frame<W>(writer: &mut W, frame: Vec<u8>) -> Result<()>
+    async fn static_handle_frame<W>(
+        writer: &mut W,
+        frame: Vec<u8>,
+        peer_manager: &PeerManager,
+    ) -> Result<()>
     where
         W: tokio::io::AsyncWrite + Unpin,
     {
@@ -189,26 +221,26 @@ where
             }
             1 => info!("[P2P] Received Pong"),
             2 => {
-                let peer_id = String::decode(&mut &payload[..])
-                    .map_err(|e| anyhow::anyhow!("RLP decode error: {}", e))?;
-                info!("[P2P] Received Hello from {}", peer_id);
+                let hello = HelloMessage::decode(&mut &payload[..])
+                    .map_err(|e| anyhow::anyhow!("RLP decode error for Hello: {}", e))?;
+                let peer_id = hello.peer_id;
+                let listen_port = hello.listen_port;
+                info!("[P2P] Received Hello from {} (listen port: {:?})", peer_id, listen_port);
             }
             3 => {
                 debug!("[P2P] Received Gossip message ({} bytes)", payload.len());
             }
             4 => {
-                let encoded_peers = Vec::<Vec<String>>::decode(&mut &payload[..])
+                let peers_rlp = Vec::<PeerInfoRlp>::decode(&mut &payload[..])
                     .map_err(|e| anyhow::anyhow!("RLP decode error for PeerList: {}", e))?;
-                let mut peers = Vec::new();
-                for pair in encoded_peers {
-                    if pair.len() == 2 {
-                        let id = pair[0].clone();
-                        if let Ok(addr) = pair[1].parse::<std::net::SocketAddr>() {
-                            peers.push((id, addr));
-                        }
+                
+                debug!("[P2P] Received PeerList with {} peers", peers_rlp.len());
+                let pm = peer_manager.clone();
+                for p_info in peers_rlp {
+                    if let Ok(addr) = p_info.addr.parse::<std::net::SocketAddr>() {
+                        Arc::new(pm.clone()).dial_peer(addr);
                     }
                 }
-                debug!("[P2P] Received PeerList with {} peers", peers.len());
             }
             _ => error!("[P2P] Unknown message type: {}", msg_type),
         }
@@ -223,7 +255,7 @@ where
         Self::static_read_frame(&mut self.reader).await
     }
 
-    async fn handle_frame(&mut self, frame: Vec<u8>) -> Result<()> {
-        Self::static_handle_frame(&mut self.writer, frame).await
+    async fn handle_frame(&mut self, frame: Vec<u8>, peer_manager: &crate::p2p::swarm::PeerManager) -> Result<()> {
+        Self::static_handle_frame(&mut self.writer, frame, peer_manager).await
     }
 }
