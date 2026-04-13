@@ -61,6 +61,14 @@ impl Identity {
         let mut params = CertificateParams::default();
         params.distinguished_name = DistinguishedName::new();
         params.distinguished_name.push(rcgen::DnType::CommonName, "wasix-p2p");
+        // We'll also add some standard cert extensions that might be expected.
+        params.not_before = rcgen::date_time_ymd(2020, 1, 1);
+        params.not_after = rcgen::date_time_ymd(2030, 1, 1);
+        params.subject_alt_names = vec![
+            rcgen::SanType::DnsName("localhost".to_string().parse()?),
+            rcgen::SanType::IpAddress("127.0.0.1".parse()?),
+            rcgen::SanType::IpAddress("0.0.0.0".parse()?),
+        ];
         
         let cert = params.self_signed(&keypair)
             .map_err(|e| anyhow::anyhow!("Failed to generate certificate: {}", e))?;

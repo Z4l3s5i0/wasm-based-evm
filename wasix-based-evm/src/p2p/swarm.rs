@@ -1,8 +1,7 @@
-use crate::{info, error};
+use crate::{info, error, debug};
 use crate::p2p::connection::{Connection, Message};
 use crate::p2p::identity::Identity;
 use anyhow::Result;
-use tokio_rustls::rustls::{ClientConfig, ServerConfig};
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
@@ -15,8 +14,6 @@ const MAX_PEERS: usize = 50;
 pub struct PeerManager {
     local_identity: Identity,
     peers: Arc<RwLock<HashMap<String, mpsc::Sender<Message>>>>,
-    server_config: Arc<ServerConfig>,
-    client_config: Arc<ClientConfig>,
     gossip_tx: mpsc::Sender<Vec<u8>>,
     pub port: u16,
     pub bootnodes: Vec<String>,
@@ -25,8 +22,6 @@ pub struct PeerManager {
 impl PeerManager {
     pub fn new(
         identity: Identity,
-        server_config: ServerConfig,
-        client_config: ClientConfig,
         port: u16,
         bootnodes: Vec<String>,
     ) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
@@ -34,8 +29,6 @@ impl PeerManager {
         Ok((Self {
             local_identity: identity,
             peers: Arc::new(RwLock::new(HashMap::new())),
-            server_config: Arc::new(server_config),
-            client_config: Arc::new(client_config),
             gossip_tx,
             port,
             bootnodes,
@@ -52,8 +45,6 @@ impl PeerManager {
         info!("[P2P] Listening on {}", addr);
 
         let peers = self.peers.clone();
-        let server_config = self.server_config.clone();
-        let client_config = self.client_config.clone();
 
         // Start listener loop
         let local_identity = self.local_identity.clone();
@@ -63,14 +54,13 @@ impl PeerManager {
                     Ok((stream, addr)) => {
                         info!("[P2P] Accepted connection from {}", addr);
                         let (tx, rx) = mpsc::channel(100);
-                        let config = server_config.clone();
                         let local_id = local_identity.peer_id();
                         let peers_inner = peers.clone();
                         
                         tokio::spawn(async move {
-                            match Connection::new_server(stream, config, local_id, rx).await {
+                            match Connection::new_server(stream, local_id, rx).await {
                                 Ok((conn, remote_id)) => {
-                                    info!("[P2P] Handshake successful with {} at {}", remote_id, addr);
+                                    info!("[P2P] Handshake successful (No TLS) with {} at {}", remote_id, addr);
                                     
                                     // Register peer
                                     {
@@ -101,16 +91,18 @@ impl PeerManager {
         // Connect to bootnodes
         for bootnode in bootnodes {
             let addr: SocketAddr = bootnode.parse()?;
-            let config = client_config.clone();
             let (tx, rx) = mpsc::channel(100);
             let local_id = self.local_identity.peer_id();
             let peers_inner = self.peers.clone();
             
             tokio::spawn(async move {
-                match TcpStream::connect(addr).await {
-                    Ok(stream) => {
-                        let server_name = "localhost".try_into().unwrap(); 
-                        match Connection::new_client(stream, config, server_name, local_id, rx).await {
+                debug!("[P2P] Attempting to connect to bootnode {}", addr);
+                match tokio::time::timeout(tokio::time::Duration::from_secs(30), TcpStream::connect(addr)).await {
+                    Ok(Ok(stream)) => {
+                        let local_addr = stream.local_addr().ok();
+                        debug!("[P2P] TCP connection established with bootnode {} from local {:?}", addr, local_addr);
+                        debug!("[P2P] Starting handshake (No TLS) with bootnode {}", addr);
+                        match Connection::new_client(stream, local_id, rx).await {
                             Ok((conn, remote_id)) => {
                                 info!("[P2P] Connected to bootnode {} with PeerId {}", addr, remote_id);
                                 
@@ -130,7 +122,8 @@ impl PeerManager {
                             Err(e) => error!("[P2P] Handshake failed with bootnode {}: {}", addr, e),
                         }
                     }
-                    Err(e) => error!("[P2P] Failed to connect to bootnode {}: {}", addr, e),
+                    Ok(Err(e)) => error!("[P2P] Failed to connect to bootnode {}: {}", addr, e),
+                    Err(_) => error!("[P2P] Connection timeout (TCP) with bootnode {}", addr),
                 }
             });
         }

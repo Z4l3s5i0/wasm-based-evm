@@ -10,27 +10,11 @@ use std::sync::Arc;
 use crate::mempool::Mempool;
 use crate::p2p::identity::Identity;
 use crate::p2p::swarm::PeerManager;
-use tokio_rustls::rustls::{ServerConfig, ClientConfig};
 use crate::{info, debug, error};
 
-struct NoVerifier;
-impl rustls::client::ServerCertVerifier for NoVerifier {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
-    }
-}
 use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
-use tokio_rustls::rustls;
 use crate::rpc::RpcServerFacade;
 use crate::rpc::eth_service::EthService;
 use crate::rpc::account_service::AccountService;
@@ -238,24 +222,8 @@ impl AppBuilder {
         )?;
         info!("[App] P2P Identity generated. PeerId: {}", p2p_identity.peer_id());
 
-        // 6. Peer Manager
-        let p2p_client_config = ClientConfig::builder()
-            .with_safe_defaults()
-            .with_custom_certificate_verifier(Arc::new(NoVerifier)) // Placeholder: needs actual verifier
-            .with_no_client_auth();
-
-        let (cert_der, key_der) = p2p_identity.generate_tls_config()?;
-
-        let server_config = ServerConfig::builder()
-            .with_safe_defaults()
-            .with_no_client_auth()
-            .with_single_cert(vec![rustls::Certificate(cert_der)], rustls::PrivateKey(key_der))
-            .map_err(|e| format!("Failed to configure TLS server: {}", e))?;
-
         let (peer_manager, _gossip_rx) = PeerManager::new(
             p2p_identity,
-            server_config,
-            p2p_client_config,
             args.p2p_port,
             args.bootnodes.clone(),
         )?;
