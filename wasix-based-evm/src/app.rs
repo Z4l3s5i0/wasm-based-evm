@@ -9,7 +9,7 @@ use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
 use crate::mempool::Mempool;
 use crate::p2p::identity::Identity;
-use crate::p2p::swarm::PeerManager;
+use crate::p2p::peer_manager::PeerManager;
 use crate::{info, debug, error};
 
 use crate::rpc::account_manager::AccountManager;
@@ -225,6 +225,7 @@ impl AppBuilder {
         let (peer_manager, _gossip_rx) = PeerManager::new(
             p2p_identity,
             args.p2p_port,
+            args.ext_ip,
             args.bootnodes.clone(),
         )?;
         let peer_manager = Arc::new(peer_manager);

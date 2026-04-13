@@ -3,7 +3,7 @@ use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 
 pub mod identity;
-pub mod swarm;
+pub mod peer_manager;
 pub mod connection;
 pub mod rpc_client;
 
@@ -17,7 +17,7 @@ pub struct HelloResponse {
 #[rpc(server, client)]
 pub trait P2pApi {
     #[method(name = "p2p_hello")]
-    async fn hello(&self, peer_id: String, listen_port: u16) -> RpcResult<HelloResponse>;
+    async fn hello(&self, peer_id: String, public_addr: String) -> RpcResult<HelloResponse>;
 
     #[method(name = "p2p_ping")]
     async fn ping(&self) -> RpcResult<String>;

@@ -24,13 +24,30 @@ pub struct PeerManager {
     peers: Arc<RwLock<HashMap<String, PeerInfo>>>,
     gossip_tx: mpsc::Sender<Vec<u8>>,
     pub port: u16,
+    pub ext_ip: Option<std::net::IpAddr>,
     pub bootnodes: Vec<String>,
 }
 
 #[async_trait::async_trait]
 impl P2pApiServer for PeerManager {
-    async fn hello(&self, peer_id: String, listen_port: u16) -> RpcResult<HelloResponse> {
-        info!("[P2P] Received hello from {} (port: {})", peer_id, listen_port);
+    async fn hello(&self, peer_id: String, public_addr: String) -> RpcResult<HelloResponse> {
+        info!("[P2P] Received hello from {} (addr: {})", peer_id, public_addr);
+        
+        let peers_lock = self.peers.read().await;
+        let is_already_bonded = peers_lock.contains_key(&peer_id);
+        drop(peers_lock);
+
+        if !is_already_bonded {
+            if let Ok(addr) = public_addr.parse::<SocketAddr>() {
+                let pm = self.clone();
+                tokio::spawn(async move {
+                    Arc::new(pm).dial_peer(addr);
+                });
+            }
+        } else {
+            debug!("[P2P] Already bonded to peer {}, skipping reciprocal dial", peer_id);
+        }
+        
         Ok(HelloResponse {
             peer_id: self.local_identity.peer_id(),
         })
@@ -66,6 +83,7 @@ impl PeerManager {
     pub fn new(
         identity: Identity,
         port: u16,
+        ext_ip: Option<std::net::IpAddr>,
         bootnodes: Vec<String>,
     ) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
         let (gossip_tx, gossip_rx) = mpsc::channel(100);
@@ -74,6 +92,7 @@ impl PeerManager {
             peers: Arc::new(RwLock::new(HashMap::new())),
             gossip_tx,
             port,
+            ext_ip,
             bootnodes,
         }, gossip_rx))
     }
@@ -115,7 +134,7 @@ impl PeerManager {
     }
 
     async fn discover_peers(&self) {
-        debug!("[P2P] Starting peer discovery cycle...");
+        info!("[P2P] Starting peer discovery cycle...");
         let peers_lock = self.peers.read().await;
         let peer_list: Vec<(String, String)> = peers_lock.iter()
             .map(|(id, info)| (id.clone(), info.rpc_url.clone()))
@@ -123,16 +142,16 @@ impl PeerManager {
         drop(peers_lock);
         
         if peer_list.is_empty() {
-             debug!("[P2P] No peers currently known, cannot discover more.");
+             info!("[P2P] No peers currently known, cannot discover more.");
              return;
         }
 
         for (id, url) in peer_list {
             let client = RpcClient::new(url.clone());
-            debug!("[P2P] Requesting peer list from {} ({})", id, url);
+            info!("[P2P] Requesting peer list from {} ({})", id, url);
             match client.get_peers().await {
                 Ok(new_peers) => {
-                    debug!("[P2P] Received {} peers from {}", new_peers.len(), id);
+                    info!("[P2P] Received {} peers from {}", new_peers.len(), id);
                     for p in new_peers {
                         if let Ok(addr) = p.addr.parse::<SocketAddr>() {
                             if p.peer_id != self.local_identity.peer_id() {
@@ -144,13 +163,13 @@ impl PeerManager {
                         }
                     }
                 }
-                Err(e) => debug!("[P2P] Failed to get peers from {}: {}", id, e),
+                Err(e) => info!("[P2P] Failed to get peers from {}: {}", id, e),
             }
         }
     }
 
     async fn cleanup_stale_peers(&self) {
-        debug!("[P2P] Starting health check / cleanup cycle...");
+        info!("[P2P] Starting health check / cleanup cycle...");
         let peers_lock = self.peers.read().await;
         let peer_list: Vec<(String, String)> = peers_lock.iter()
             .map(|(id, info)| (id.clone(), info.rpc_url.clone()))
@@ -164,7 +183,7 @@ impl PeerManager {
             match client.ping().await {
                 Ok(res) => {
                     if res == "pong" {
-                        debug!("[P2P] Peer {} is active (received pong)", id);
+                        info!("[P2P] Peer {} is active (received pong)", id);
                     } else {
                         info!("[P2P] Peer {} returned unexpected response: {}", id, res);
                         to_remove.push(id);
@@ -185,7 +204,7 @@ impl PeerManager {
             }
             info!("[P2P] Current active peer count: {}", peers_lock.len());
         } else {
-            debug!("[P2P] All peers are healthy.");
+            info!("[P2P] All peers are healthy.");
         }
     }
 
@@ -193,20 +212,35 @@ impl PeerManager {
         let local_id = self.local_identity.peer_id();
         let peers_inner = self.peers.clone();
         let listen_port = self.port;
+        let ext_ip = self.ext_ip;
         
         tokio::spawn(async move {
+            // Pre-check: Is this address already in our peer pool?
+            let peers_lock = peers_inner.read().await;
+            for (id, info) in peers_lock.iter() {
+                if info.addr == addr {
+                    debug!("[P2P] Already bonded to peer at {} (ID: {}), skipping dial", addr, id);
+                    return;
+                }
+            }
+            drop(peers_lock);
+
             info!("[P2P] Attempting to bond with peer at {}", addr);
             let rpc_url = format!("http://{}", addr);
             
+            // Determine our own public address to share
+            let my_public_ip = ext_ip.unwrap_or_else(|| "127.0.0.1".parse().unwrap());
+            let my_public_addr = format!("{}:{}", my_public_ip, listen_port);
+
             let client = RpcClient::new(rpc_url.clone());
-            match client.hello(local_id, listen_port).await {
+            match client.hello(local_id, my_public_addr).await {
                 Ok(resp) => {
                     let remote_id = resp.peer_id;
                     info!("[P2P] Bonding successful with {} (PeerId: {})", addr, remote_id);
                     
                     let mut peers_lock = peers_inner.write().await;
                     if peers_lock.contains_key(&remote_id) {
-                        debug!("[P2P] Already bonded to peer {}", remote_id);
+                        info!("[P2P] Already bonded to peer {}", remote_id);
                         return;
                     }
                     if peers_lock.len() >= MAX_PEERS {
