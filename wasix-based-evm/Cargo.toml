@@ -77,9 +77,9 @@ libp2p = {path="../rust-libp2p/libp2p", default-features = false, features = [
     "tls",
     "tokio",
 #    "uds",
-    "wasm-bindgen",
-    "webrtc-websys",
-    "websocket-websys",
+#    "wasm-bindgen",
+#    "webrtc-websys",
+#    "websocket-websys",
     "websocket",
     "yamux",
 #    "upnp",
@@ -95,6 +95,7 @@ socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", 
 
 
 [patch.crates-io]
+wasm-bindgen = {path = "../wasm-bindgen"}
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
 mio = { git = "https://github.com/wasix-org/mio" }
 #parking_lot = { path = "../parking_lot" }
