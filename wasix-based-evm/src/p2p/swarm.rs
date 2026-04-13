@@ -1,135 +1,113 @@
-use libp2p::{identify, ping, kad, swarm::{NetworkBehaviour, SwarmEvent}, Multiaddr, PeerId, Transport};
-use anyhow::{Result, Context};
-use crate::{info, debug};
-use libp2p::futures::StreamExt;
-use std::pin::Pin;
-use std::future::Future;
+use crate::{info, error};
+use crate::p2p::connection::{Connection, Message};
+use crate::p2p::identity::Identity;
+use anyhow::Result;
+use tokio_rustls::rustls::{ClientConfig, ServerConfig};
+use std::collections::HashMap;
+use std::net::SocketAddr;
+use std::sync::Arc;
+use tokio::net::{TcpListener, TcpStream};
+use tokio::sync::{mpsc, RwLock};
 
-#[derive(Clone, Copy, Debug, Default)]
-struct TokioExecutor;
-
-impl libp2p::swarm::Executor for TokioExecutor {
-    fn exec(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        tokio::spawn(future);
-    }
+#[derive(Clone)]
+pub struct PeerManager {
+    local_identity: Identity,
+    peers: Arc<RwLock<HashMap<String, mpsc::Sender<Message>>>>,
+    server_config: Arc<ServerConfig>,
+    client_config: Arc<ClientConfig>,
+    gossip_tx: mpsc::Sender<Vec<u8>>,
+    pub port: u16,
+    pub bootnodes: Vec<String>,
 }
 
-#[derive(NetworkBehaviour)]
-pub struct EthNetworkBehaviour {
-    pub identify: identify::Behaviour,
-    pub ping: ping::Behaviour,
-    pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
-}
-
-pub struct SwarmService {
-    swarm: libp2p::Swarm<EthNetworkBehaviour>,
-}
-
-impl SwarmService {
-    pub fn new(libp2p_keypair: libp2p::identity::Keypair, listen_port: u16, bootnodes: Vec<String>) -> Result<Self> {
-        let local_peer_id = PeerId::from(libp2p_keypair.public());
-        info!("[Swarm] Local PeerId: {}", local_peer_id);
-
-        // 2. Transport setup
-        let tcp_config = libp2p_tcp::Config::default().nodelay(true);
-        let transport = libp2p_tcp::tokio::Transport::new(tcp_config)
-            .upgrade(libp2p::core::upgrade::Version::V1Lazy)
-            .authenticate(libp2p::noise::Config::new(&libp2p_keypair)?)
-            .multiplex(libp2p::yamux::Config::default())
-            .map(|(p, c), _| (p, libp2p::core::muxing::StreamMuxerBox::new(c)))
-            .boxed();
-
-        let kad_config = kad::Config::default();
-        let store = kad::store::MemoryStore::new(local_peer_id);
-        let kademlia = kad::Behaviour::with_config(local_peer_id, store, kad_config);
-
-        let behaviour = EthNetworkBehaviour {
-            identify: identify::Behaviour::new(identify::Config::new(
-                "/eth/1.0.0".into(),
-                libp2p_keypair.public(),
-            )),
-            ping: ping::Behaviour::default(),
-            kademlia,
-        };
-
-        let mut swarm = libp2p::Swarm::new(
-            transport,
-            behaviour,
-            local_peer_id,
-            libp2p::swarm::Config::with_executor(TokioExecutor),
-        );
-
-        // Add bootnodes to Kademlia
-        for addr_str in bootnodes {
-            let addr: Multiaddr = addr_str.parse().context(format!("Failed to parse bootnode address: {}", addr_str))?;
-            let peer_id = addr.iter().find_map(|p| match p {
-                libp2p::multiaddr::Protocol::P2p(hash) => Some(hash),
-                _ => None,
-            }).context(format!("Bootnode address must include PeerId: {}", addr_str))?;
-            swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
-        }
-
-        // Bootstrap Kademlia
-        if let Err(e) = swarm.behaviour_mut().kademlia.bootstrap() {
-            debug!("[Swarm] Kademlia bootstrap skipped: {}", e);
-        }
-
-        let listen_addr = format!("/ip4/127.0.0.1/tcp/{}", listen_port).parse()?;
-        match swarm.listen_on(listen_addr) {
-            Ok(_) => {}
-            Err(e) => {
-                return Err(e.into());
-            }
-        }
-
-        Ok(Self { swarm })
+impl PeerManager {
+    pub fn new(
+        identity: Identity,
+        server_config: ServerConfig,
+        client_config: ClientConfig,
+        port: u16,
+        bootnodes: Vec<String>,
+    ) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
+        let (gossip_tx, gossip_rx) = mpsc::channel(100);
+        Ok((Self {
+            local_identity: identity,
+            peers: Arc::new(RwLock::new(HashMap::new())),
+            server_config: Arc::new(server_config),
+            client_config: Arc::new(client_config),
+            gossip_tx,
+            port,
+            bootnodes,
+        }, gossip_rx))
     }
 
-    pub async fn start(mut self) -> Result<()> {
-        info!("[Swarm] Starting background tasks...");
-        
+    pub async fn start(
+        &self,
+        listen_port: u16,
+        bootnodes: Vec<String>,
+    ) -> Result<()> {
+        let addr: SocketAddr = format!("0.0.0.0:{}", listen_port).parse()?;
+        let listener = TcpListener::bind(addr).await?;
+        info!("[P2P] Listening on {}", addr);
+
+        let peers = self.peers.clone();
+        let server_config = self.server_config.clone();
+        let client_config = self.client_config.clone();
+
+        // Start listener loop
         tokio::spawn(async move {
             loop {
-                match self.swarm.next().await {
-                    Some(event) => {
-                        match event {
-                            SwarmEvent::NewListenAddr { address, .. } => {
-                                info!("[Swarm] Listening on {}", address);
-                            }
-                            SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
-                                info!("[Swarm] Connection established with {} via {:?}", peer_id, endpoint);
-                            }
-                            SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                                info!("[Swarm] Connection closed with {}: {:?}", peer_id, cause);
-                            }
-                            SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error, .. } => {
-                                debug!("[Swarm] Incoming connection error from {}: {} (local: {})", send_back_addr, error, local_addr);
-                            }
-                            SwarmEvent::Behaviour(EthNetworkBehaviourEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, .. })) => {
-                                match result {
-                                    kad::QueryResult::Bootstrap(Ok(ok)) => {
-                                        debug!("[Swarm] Kademlia bootstrap progress: {:?}", ok);
-                                    }
-                                    kad::QueryResult::Bootstrap(Err(e)) => {
-                                        debug!("[Swarm] Kademlia bootstrap error: {:?}", e);
-                                    }
-                                    _ => {}
+                match listener.accept().await {
+                    Ok((stream, addr)) => {
+                        info!("[P2P] Accepted connection from {}", addr);
+                        let (_tx, rx) = mpsc::channel(100);
+                        let config = server_config.clone();
+                        
+                        tokio::spawn(async move {
+                            if let Ok(conn) = Connection::new_server(stream, config, rx).await {
+                                // For now, we don't have the peer_id yet, but we'll add it in the handshake
+                                // This is a placeholder
+                                if let Err(e) = conn.process().await {
+                                    error!("[P2P] Connection error with {}: {}", addr, e);
                                 }
                             }
-                            SwarmEvent::Behaviour(EthNetworkBehaviourEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
-                                debug!("[Swarm] Identify received from {}: {:?}", peer_id, info);
-                                for addr in info.listen_addrs {
-                                    self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
-                                }
-                            }
-                            _ => {}
-                        }
+                        });
                     }
-                    None => break,
+                    Err(e) => error!("[P2P] Accept error: {}", e),
                 }
             }
         });
 
+        // Connect to bootnodes
+        for bootnode in bootnodes {
+            let addr: SocketAddr = bootnode.parse()?;
+            let config = client_config.clone();
+            let (_tx, rx) = mpsc::channel(100);
+            
+            tokio::spawn(async move {
+                match TcpStream::connect(addr).await {
+                    Ok(stream) => {
+                        // In a real system, we'd need the server name for TLS SNI
+                        let server_name = "localhost".try_into().unwrap(); 
+                        if let Ok(conn) = Connection::new_client(stream, config, server_name, rx).await {
+                            if let Err(e) = conn.process().await {
+                                error!("[P2P] Connection error with bootnode {}: {}", addr, e);
+                            }
+                        }
+                    }
+                    Err(e) => error!("[P2P] Failed to connect to bootnode {}: {}", addr, e),
+                }
+            });
+        }
+
         Ok(())
+    }
+
+    pub async fn broadcast_gossip(&self, data: Vec<u8>) {
+        let peers = self.peers.read().await;
+        for (peer_id, tx) in peers.iter() {
+            if let Err(e) = tx.send(Message::Gossip(data.clone())).await {
+                error!("[P2P] Failed to send gossip to {}: {}", peer_id, e);
+            }
+        }
     }
 }

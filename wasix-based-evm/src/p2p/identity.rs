@@ -1,10 +1,12 @@
-use libp2p::identity::secp256k1;
 use std::fs;
 use std::path::Path;
 use anyhow::{Context, Result};
+use k256::ecdsa::SigningKey;
+use rcgen::{Certificate, CertificateParams, DistinguishedName, KeyPair};
 
+#[derive(Clone)]
 pub struct Identity {
-    pub keypair: libp2p::identity::Keypair,
+    pub keypair: SigningKey,
 }
 
 impl Identity {
@@ -19,33 +21,47 @@ impl Identity {
                         .context("Failed to read p2p_key file")?;
                     let bytes = hex::decode(hex_key.trim())
                         .context("Failed to decode hex p2p_key")?;
-                    let secret = secp256k1::SecretKey::try_from_bytes(bytes)
-                        .map_err(|_| anyhow::anyhow!("Invalid p2p_key bytes"))?;
-                    libp2p::identity::Keypair::from(secp256k1::Keypair::from(secret))
+                    SigningKey::from_slice(&bytes)
+                        .map_err(|_| anyhow::anyhow!("Invalid p2p_key bytes"))?
                 } else {
-                    use rand::RngCore;
                     let mut bytes = [0u8; 32];
-                    rand::thread_rng().fill_bytes(&mut bytes);
-                    let secret = secp256k1::SecretKey::try_from_bytes(bytes)
+                    getrandom::getrandom(&mut bytes)?;
+                    let secret = SigningKey::from_slice(&bytes)
                         .expect("32 bytes is valid secret key length");
                     let hex_key = hex::encode(secret.to_bytes());
                     if let Some(parent) = key_path.parent() {
                         fs::create_dir_all(parent)?;
                     }
                     fs::write(&key_path, hex_key)?;
-                    libp2p::identity::Keypair::from(secp256k1::Keypair::from(secret))
+                    secret
                 }
             }
             None => {
-                use rand::RngCore;
                 let mut bytes = [0u8; 32];
-                rand::thread_rng().fill_bytes(&mut bytes);
-                let secret = secp256k1::SecretKey::try_from_bytes(bytes)
-                    .expect("32 bytes is valid secret key length");
-                libp2p::identity::Keypair::from(secp256k1::Keypair::from(secret))
+                getrandom::getrandom(&mut bytes)?;
+                SigningKey::from_slice(&bytes)
+                    .expect("32 bytes is valid secret key length")
             }
         };
 
         Ok(Self { keypair })
+    }
+
+    /// Generate a self-signed certificate and private key for TLS
+    pub fn generate_tls_config(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+        let keypair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
+            .map_err(|e| anyhow::anyhow!("Failed to generate rcgen KeyPair: {}", e))?;
+
+        let mut params = CertificateParams::default();
+        params.distinguished_name = DistinguishedName::new();
+        params.distinguished_name.push(rcgen::DnType::CommonName, "wasix-p2p");
+        
+        let cert = params.self_signed(&keypair)
+            .map_err(|e| anyhow::anyhow!("Failed to generate certificate: {}", e))?;
+        
+        let cert_der = cert.der().to_vec();
+        let key_der = keypair.serialize_der();
+
+        Ok((cert_der, key_der))
     }
 }

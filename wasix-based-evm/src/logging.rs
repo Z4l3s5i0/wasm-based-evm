@@ -21,7 +21,7 @@ pub fn get_log_level() -> LogLevel {
 macro_rules! info {
     ($($arg:tt)*) => {
         if $crate::logging::get_log_level() >= $crate::logging::LogLevel::Info {
-            println!($($arg)*);
+            println!($($arg)*)
         }
     };
 }
@@ -30,7 +30,7 @@ macro_rules! info {
 macro_rules! debug {
     ($($arg:tt)*) => {
         if $crate::logging::get_log_level() >= $crate::logging::LogLevel::Debug {
-            println!($($arg)*);
+            println!($($arg)*)
         }
     };
 }
@@ -38,6 +38,6 @@ macro_rules! debug {
 #[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
-        eprintln!($($arg)*);
+        eprintln!($($arg)*)
     };
 }

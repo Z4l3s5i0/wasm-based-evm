@@ -37,6 +37,7 @@ clap = { version = "4.5.4", features = ["derive"] }
 thiserror = "2.0.18"
 hex = "0.4.3"
 anyhow = "1.0.102"
+rcgen = "0.13"
 #parking_lot = { path = "../parking_lot", default-features = false, features = ["deadlock_detection", "nightly", "default"] }
 
 # When using something different than wasix
@@ -46,52 +47,38 @@ anyhow = "1.0.102"
 
 #  WASIX dependencies
 
-libp2p = {path="../rust-libp2p/libp2p", default-features = false, features = [
-    "autonat",
+#libp2p = {path="../rust-libp2p/libp2p", default-features = false, features = [ "autonat",
  #   "cbor",
- #   "dcutr",
-    "dns",
+ #   "dcutr", "dns",
  #   "ecdsa",
  #   "ed25519",
-#    "floodsub",
-    "gossipsub",
-    "identify",
-    "json",
-    "kad",
-    "macros",
+#    "floodsub","gossipsub", "identify", "json", "kad", "macros",
     # "mdns",
 #    "memory-connection-limits",
-#    "metrics",
-    "noise",
-    "ping",
+#    "metrics","noise","ping",
 #    "plaintext",
 #    "pnet",
-#    "quic",
-    "relay",
-    "rendezvous",
-    "request-response",
-#    "rsa",
-    "secp256k1",
+#    "quic","relay", "rendezvous", "request-response",
+#    "rsa", "secp256k1",
 #    "serde",
-#    "tcp",
-    "tls",
-    "tokio",
+#    "tcp", "tls", "tokio",
 #    "uds",
 #    "wasm-bindgen",
 #    "webrtc-websys",
-#    "websocket-websys",
-    "websocket",
-    "yamux",
+#    "websocket-websys", "websocket", "yamux",
 #    "upnp",
-]}
+#]}
 jsonrpsee = {path = "../jsonrpsee/jsonrpsee", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core"]}
-libp2p-tcp = { path = "../rust-libp2p/transports/tcp", default-features = false, features = ["tokio"] }
+#libp2p-tcp = { path = "../rust-libp2p/transports/tcp", default-features = false, features = ["tokio"] }
 
 # When using wasix
 wasix = { version = "0.13.1" }
 
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net", "parking_lot" ] }
+tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
+k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic"] }
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31", default-features = false, features = [ "tls12"] }
 
 
 [patch.crates-io]
@@ -102,9 +89,9 @@ mio = { git = "https://github.com/wasix-org/mio" }
 
 h2 = { git = "https://github.com/wasix-org/h2", branch = "wasix-0.4.12" }
 hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.28" }
-
-rustls = { git = "https://github.com/wasix-org/rustls", branch = "v0.21.5" }
-#sct = { git = "https://github.com/wasix-org/sct", branch = "v0.7.0" }
+ring = {git = "https://github.com/wasix-org/ring", branch = "0.17.7"}
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31" }
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0" }
 socket2 = { git = "https://github.com/wasix-org/socket2", branch = "wasix" }
+tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main" }
 libc = { git = "https://github.com/john-sharratt/libc.git", rev = "682f9e91" }
