@@ -2,5 +2,6 @@
 runner = "wasmer run"
 rustflags = [
     "-C", "target-feature=+bulk-memory",
-    "-C", "panic=abort"
+    "-C", "panic=abort",
+    "-C", "atomics"
 ]
