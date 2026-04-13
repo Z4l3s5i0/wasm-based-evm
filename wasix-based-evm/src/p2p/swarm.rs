@@ -107,6 +107,7 @@ impl PeerManager {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
                 pm.discover_peers().await;
+                pm.cleanup_stale_peers().await;
             }
         });
 
@@ -114,16 +115,24 @@ impl PeerManager {
     }
 
     async fn discover_peers(&self) {
+        debug!("[P2P] Starting peer discovery cycle...");
         let peers_lock = self.peers.read().await;
         let peer_list: Vec<(String, String)> = peers_lock.iter()
             .map(|(id, info)| (id.clone(), info.rpc_url.clone()))
             .collect();
         drop(peers_lock);
+        
+        if peer_list.is_empty() {
+             debug!("[P2P] No peers currently known, cannot discover more.");
+             return;
+        }
 
         for (id, url) in peer_list {
             let client = RpcClient::new(url.clone());
+            debug!("[P2P] Requesting peer list from {} ({})", id, url);
             match client.get_peers().await {
                 Ok(new_peers) => {
+                    debug!("[P2P] Received {} peers from {}", new_peers.len(), id);
                     for p in new_peers {
                         if let Ok(addr) = p.addr.parse::<SocketAddr>() {
                             if p.peer_id != self.local_identity.peer_id() {
@@ -140,36 +149,79 @@ impl PeerManager {
         }
     }
 
+    async fn cleanup_stale_peers(&self) {
+        debug!("[P2P] Starting health check / cleanup cycle...");
+        let peers_lock = self.peers.read().await;
+        let peer_list: Vec<(String, String)> = peers_lock.iter()
+            .map(|(id, info)| (id.clone(), info.rpc_url.clone()))
+            .collect();
+        drop(peers_lock);
+
+        let mut to_remove = Vec::new();
+        for (id, url) in peer_list {
+            let client = RpcClient::new(url.clone());
+            debug!("[P2P] Pinging peer {} ({}) to check health", id, url);
+            match client.ping().await {
+                Ok(res) => {
+                    if res == "pong" {
+                        debug!("[P2P] Peer {} is active (received pong)", id);
+                    } else {
+                        info!("[P2P] Peer {} returned unexpected response: {}", id, res);
+                        to_remove.push(id);
+                    }
+                }
+                Err(e) => {
+                    info!("[P2P] Peer {} is unreachable: {}. Removing from active pool.", id, e);
+                    to_remove.push(id);
+                }
+            }
+        }
+
+        if !to_remove.is_empty() {
+            let mut peers_lock = self.peers.write().await;
+            for id in to_remove {
+                peers_lock.remove(&id);
+                info!("[P2P] Successfully removed stale peer {}", id);
+            }
+            info!("[P2P] Current active peer count: {}", peers_lock.len());
+        } else {
+            debug!("[P2P] All peers are healthy.");
+        }
+    }
+
     pub fn dial_peer(self: Arc<Self>, addr: SocketAddr) {
         let local_id = self.local_identity.peer_id();
         let peers_inner = self.peers.clone();
         let listen_port = self.port;
         
         tokio::spawn(async move {
-            debug!("[P2P] Attempting to connect to peer {}", addr);
+            info!("[P2P] Attempting to bond with peer at {}", addr);
             let rpc_url = format!("http://{}", addr);
             
             let client = RpcClient::new(rpc_url.clone());
             match client.hello(local_id, listen_port).await {
                 Ok(resp) => {
                     let remote_id = resp.peer_id;
-                    info!("[P2P] Connected to {} with PeerId {}", addr, remote_id);
+                    info!("[P2P] Bonding successful with {} (PeerId: {})", addr, remote_id);
                     
                     let mut peers_lock = peers_inner.write().await;
                     if peers_lock.contains_key(&remote_id) {
-                        debug!("[P2P] Already connected to {}", remote_id);
+                        debug!("[P2P] Already bonded to peer {}", remote_id);
                         return;
                     }
                     if peers_lock.len() >= MAX_PEERS {
-                        info!("[P2P] Max peers reached, dropping discovered {}", remote_id);
+                        info!("[P2P] Max peers reached ({}), dropping bonded peer {}", MAX_PEERS, remote_id);
                         return;
                     }
+                    
+                    info!("[P2P] Saving peer record: ID={}, Addr={}", remote_id, addr);
                     peers_lock.insert(remote_id.clone(), PeerInfo { 
                         addr, 
                         rpc_url: rpc_url.clone() 
                     });
+                    info!("[P2P] Active peer pool size: {}", peers_lock.len());
                 }
-                Err(e) => error!("[P2P] Handshake (hello) failed with {}: {}", addr, e),
+                Err(e) => error!("[P2P] Bonding failed with {}: {}", addr, e),
             }
         });
     }
