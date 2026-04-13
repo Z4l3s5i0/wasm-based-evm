@@ -21,10 +21,9 @@ impl Mempool {
         }
     }
 
-    /// Add a transaction to the mempool.
-    pub fn add_transaction(&mut self, tx: Transaction) {
+    /// Add a transaction to the mempool. Returns true if the transaction was newly added or replaced an existing one.
+    pub fn add_transaction(&mut self, tx: Transaction) -> bool {
         let hash = tx.hash();
-        info!("[Mempool] Adding transaction {:?} to mempool", hash);
         let from = tx.recover_signer().unwrap_or_default();
         let queue = self.pending_transactions
             .entry(from)
@@ -36,14 +35,19 @@ impl Mempool {
             .unwrap_or_else(|e| e);
 
         // If a transaction with the same nonce exists, we might want to replace it
-        // if the new one has a higher gas price. For now, let's just insert it.
+        // if the new one has a higher gas price.
         let gas_price = tx.gas_price().unwrap_or_default();
         if pos < queue.len() && queue[pos].nonce() == nonce {
             if gas_price > queue[pos].gas_price().unwrap_or_default() {
+                info!("[Mempool] Replacing transaction {:?} (nonce: {}) in mempool (higher gas price)", hash, nonce);
                 queue[pos] = tx;
+                return true;
             }
+            false
         } else {
+            info!("[Mempool] Adding transaction {:?} (nonce: {}) to mempool", hash, nonce);
             queue.insert(pos, tx);
+            true
         }
     }
 

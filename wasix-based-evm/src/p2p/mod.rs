@@ -1,17 +1,21 @@
-use serde::{Deserialize, Serialize};
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
+use serde::{Deserialize, Serialize};
 
 pub mod identity;
 pub mod peer_manager;
-pub mod connection;
 pub mod rpc_client;
+pub mod gossip_handler;
 
-pub use crate::p2p::connection::PeerInfoRlp;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HelloResponse {
     pub peer_id: String,
+}
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct PeerInfoRlp {
+    pub peer_id: String,
+    pub addr: String,
 }
 
 #[rpc(server, client)]

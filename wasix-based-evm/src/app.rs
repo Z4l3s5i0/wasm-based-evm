@@ -17,11 +17,13 @@ use tokio::sync::RwLock;
 use std::path::PathBuf;
 use crate::rpc::RpcServerFacade;
 use crate::rpc::eth_service::EthService;
+use crate::rpc::debug_service::DebugService;
 use crate::rpc::account_service::AccountService;
 use crate::rpc::block_service::BlockService;
 use crate::rpc::transaction_service::TransactionService;
 use crate::rpc::log_service::LogService;
 use crate::rpc::engine_service::EngineService;
+use crate::p2p::gossip_handler::GossipHandler;
 
 pub struct App {
     eth_rpc_addr: std::net::SocketAddr,
@@ -29,13 +31,15 @@ pub struct App {
     eth_module: jsonrpsee::RpcModule<()>,
     auth_module: jsonrpsee::RpcModule<()>,
     swarm: Arc<PeerManager>,
+    gossip_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
+    mempool: Arc<RwLock<Mempool>>,
 }
 
 impl App {
     pub fn builder() -> AppBuilder {
         AppBuilder::default()
     }
-    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Start Peer Manager
         let bootnodes = self.swarm.bootnodes.clone();
         let port = self.swarm.port;
@@ -45,6 +49,18 @@ impl App {
                 error!("[App] Peer Manager error: {}", e);
             }
         });
+
+        // Start Gossip Handler if we have a receiver
+        if let Some(gossip_rx) = self.gossip_rx.take() {
+            let handler = GossipHandler::new(
+                self.mempool.clone(),
+                self.swarm.clone(),
+                gossip_rx,
+            );
+            tokio::spawn(async move {
+                handler.start().await;
+            });
+        }
 
         let eth_server = jsonrpsee::server::Server::builder()
             .build(self.eth_rpc_addr)
@@ -190,7 +206,21 @@ impl AppBuilder {
             Arc::new(AccountManager::new_with_dev_keys())
         };
 
-        // 4. RPC Setup
+        // 4. P2P Identity
+        let p2p_identity = Identity::new(
+            args.data_dir.as_deref(),
+        )?;
+        info!("[App] P2P Identity generated. PeerId: {}", p2p_identity.peer_id());
+
+        let (peer_manager, gossip_rx) = PeerManager::new(
+            p2p_identity,
+            args.p2p_port,
+            args.ext_ip,
+            args.bootnodes.clone(),
+        )?;
+        let peer_manager = Arc::new(peer_manager);
+
+        // 5. RPC Setup
         let mut eth_facade = RpcServerFacade::new();
         let mut auth_facade = RpcServerFacade::new();
         
@@ -199,10 +229,12 @@ impl AppBuilder {
         let provider = Arc::new(StorageProvider::new(storage.clone()));
 
         eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
+        eth_facade.register_debug(DebugService { mempool: mempool.clone() })?;
         eth_facade.register_eth(EthService { 
             block_storage: provider.clone(),
             state_storage: provider.clone(),
             mempool: mempool.clone(),
+            peer_manager: peer_manager.clone(),
             executor: executor.clone(),
             storage: storage.clone(),
             account_manager: account_manager.clone(),
@@ -216,19 +248,6 @@ impl AppBuilder {
         eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
         eth_facade.register_logs(LogService { storage: provider.clone() })?;
 
-        // 5. P2P Identity
-        let p2p_identity = Identity::new(
-            args.data_dir.as_deref(),
-        )?;
-        info!("[App] P2P Identity generated. PeerId: {}", p2p_identity.peer_id());
-
-        let (peer_manager, _gossip_rx) = PeerManager::new(
-            p2p_identity,
-            args.p2p_port,
-            args.ext_ip,
-            args.bootnodes.clone(),
-        )?;
-        let peer_manager = Arc::new(peer_manager);
 
         Ok(App {
             eth_rpc_addr,
@@ -236,6 +255,8 @@ impl AppBuilder {
             eth_module: eth_facade.into_module(),
             auth_module: auth_facade.into_module(),
             swarm: peer_manager,
+            gossip_rx: Some(gossip_rx),
+            mempool: mempool.clone(),
         })
     }
 }

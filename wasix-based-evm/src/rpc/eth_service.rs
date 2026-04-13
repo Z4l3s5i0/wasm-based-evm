@@ -7,17 +7,20 @@ use alloy_eips::{BlockId, BlockNumberOrTag};
 use tokio::sync::RwLock;
 use crate::mempool::Mempool;
 use crate::rpc::account_manager::AccountManager;
+use crate::p2p::peer_manager::PeerManager;
 use crate::executor::Executor;
 use alloy_consensus::{TxEnvelope as Transaction, TxLegacy};
+use alloy_rlp::Encodable;
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
 
-use crate::info;
+use crate::{info, error};
 
 pub struct EthService {
     pub block_storage: Arc<dyn BlockProvider>,
     pub state_storage: Arc<dyn StateProvider>,
     pub mempool: Arc<RwLock<Mempool>>,
+    pub peer_manager: Arc<PeerManager>,
     pub executor: Executor,
     pub storage: Arc<RwLock<InMemoryStorage>>,
     pub account_manager: Arc<AccountManager>,
@@ -77,7 +80,17 @@ impl EthService {
         let hash = signed_tx.hash().clone();
 
         info!("[EthService] Adding signed transaction {:?} to mempool", hash);
-        self.mempool.write().await.add_transaction(signed_tx);
+        self.mempool.write().await.add_transaction(signed_tx.clone());
+
+        // Gossip the transaction to the P2P network
+        let mut rlp_data = Vec::new();
+        signed_tx.encode(&mut rlp_data);
+        if !rlp_data.is_empty() {
+            info!("[EthService] Gossiping transaction {:?}", hash);
+            self.peer_manager.broadcast_gossip(rlp_data).await;
+        } else {
+            error!("[EthService] Failed to RLP-encode transaction {:?}", hash);
+        }
 
         Ok(hash)
     }
