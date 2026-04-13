@@ -48,30 +48,8 @@ rcgen = "0.13"
 
 #  WASIX dependencies
 
-#libp2p = {path="../rust-libp2p/libp2p", default-features = false, features = [ "autonat",
- #   "cbor",
- #   "dcutr", "dns",
- #   "ecdsa",
- #   "ed25519",
-#    "floodsub","gossipsub", "identify", "json", "kad", "macros",
-    # "mdns",
-#    "memory-connection-limits",
-#    "metrics","noise","ping",
-#    "plaintext",
-#    "pnet",
-#    "quic","relay", "rendezvous", "request-response",
-#    "rsa", "secp256k1",
-#    "serde",
-#    "tcp", "tls", "tokio",
-#    "uds",
-#    "wasm-bindgen",
-#    "webrtc-websys",
-#    "websocket-websys", "websocket", "yamux",
-#    "upnp",
-#]}
-jsonrpsee = {path = "../jsonrpsee/jsonrpsee", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core"]}
-#libp2p-tcp = { path = "../rust-libp2p/transports/tcp", default-features = false, features = ["tokio"] }
-
+jsonrpsee = {path = "../jsonrpsee/jsonrpsee", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
+reqwest = {git = "https://github.com/wasix-org/reqwest.git", branch = "rustls-0.21.8", default-features = false, features = ["json", "serde_json"]}
 # When using wasix
 wasix = { version = "0.13.1" }
 

@@ -1,3 +1,25 @@
+use alloy_consensus::private::serde::{Deserialize, Serialize};
+use jsonrpsee::core::{RpcResult};
+use jsonrpsee::proc_macros::rpc;
+use crate::p2p::connection::PeerInfoRlp;
+
 pub mod identity;
 pub mod swarm;
 pub mod connection;
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct HelloResponse {
+    pub peer_id: String,
+}
+
+#[rpc(server, client)]
+pub trait P2pApi {
+    #[method(name = "p2p_hello")]
+    async fn hello(&self, peer_id: String, listen_port: u16) -> RpcResult<HelloResponse>;
+
+    #[method(name = "p2p_getPeers")]
+    async fn get_peers(&self) -> RpcResult<Vec<PeerInfoRlp>>;
+
+    #[method(name = "p2p_gossip")]
+    async fn gossip(&self, topic: String, data: Vec<u8>) -> RpcResult<()>;
+}
