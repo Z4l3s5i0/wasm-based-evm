@@ -58,6 +58,7 @@ tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch =
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic"] }
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31", default-features = false, features = [ "tls12"] }
+serde = { version = "1.0.228", features = ["derive"] }
 
 
 [patch.crates-io]
@@ -72,5 +73,6 @@ ring = {git = "https://github.com/wasix-org/ring", branch = "0.17.7"}
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31" }
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0" }
 socket2 = { git = "https://github.com/wasix-org/socket2", branch = "wasix" }
+
 tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main" }
 libc = { git = "https://github.com/john-sharratt/libc.git", rev = "682f9e91" }

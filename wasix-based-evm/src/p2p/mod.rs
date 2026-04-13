@@ -1,11 +1,13 @@
-use alloy_consensus::private::serde::{Deserialize, Serialize};
-use jsonrpsee::core::{RpcResult};
+use serde::{Deserialize, Serialize};
+use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
-use crate::p2p::connection::PeerInfoRlp;
 
 pub mod identity;
 pub mod swarm;
 pub mod connection;
+pub mod rpc_client;
+
+pub use crate::p2p::connection::PeerInfoRlp;
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct HelloResponse {

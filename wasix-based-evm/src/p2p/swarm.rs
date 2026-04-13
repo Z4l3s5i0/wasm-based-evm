@@ -1,6 +1,6 @@
-use crate::p2p::connection::PeerInfoRlp;
+use crate::p2p::{P2pApiServer, HelloResponse, P2pApiClient, PeerInfoRlp};
+use crate::p2p::rpc_client::RpcClient;
 use crate::p2p::identity::Identity;
-use crate::p2p::{P2pApiServer, HelloResponse, P2pApiClient};
 use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -8,7 +8,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use jsonrpsee::server::ServerBuilder;
 use jsonrpsee::core::RpcResult;
-use jsonrpsee::http_client::HttpClientBuilder;
 use crate::{info, error, debug};
 use tokio::sync::mpsc;
 
@@ -32,9 +31,8 @@ pub struct PeerManager {
 impl P2pApiServer for PeerManager {
     async fn hello(&self, peer_id: String, listen_port: u16) -> RpcResult<HelloResponse> {
         info!("[P2P] Received hello from {} (port: {})", peer_id, listen_port);
-        // In the new model, we might not need to keep an mpsc::Sender if we use reqwest for outbound.
-        // However, the current PeerInfo struct uses it. For now, we'll keep it as is, 
-        // but note that the client implementation will eventually replace how we communicate back.
+        // Extract sender address if possible, though jsonrpsee-server doesn't provide it easily here.
+        // For now, we'll just rely on the peer_id and later discovery if needed.
         
         Ok(HelloResponse {
             peer_id: self.local_identity.peer_id(),
@@ -45,12 +43,10 @@ impl P2pApiServer for PeerManager {
         let peers_lock = self.peers.read().await;
         let mut list = Vec::new();
         for (id, peer_info) in peers_lock.iter() {
-            if let Some(addr) = peer_info.addr {
-                list.push(PeerInfoRlp {
-                    peer_id: id.clone(),
-                    addr: addr.to_string(),
-                });
-            }
+            list.push(PeerInfoRlp {
+                peer_id: id.clone(),
+                addr: peer_info.addr.to_string(),
+            });
             if list.len() >= 16 {
                 break;
             }
@@ -94,21 +90,6 @@ impl PeerManager {
         // Keep the server running in a separate task
         tokio::spawn(handle.stopped());
 
-        // Start Heartbeat loop
-        let peers_hb = self.peers.clone();
-        tokio::spawn(async move {
-            loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
-                let peers_lock = peers_hb.read().await;
-                debug!("[P2P] Sending heartbeats to {} peers", peers_lock.len());
-                for (peer_id, info) in peers_lock.iter() {
-                    if let Err(_) = info.tx.send(Message::Ping).await {
-                        debug!("[P2P] Failed to send Ping to {}", peer_id);
-                    }
-                }
-            }
-        });
-
         // Connect to bootnodes
         let self_cloned = self.clone();
         for bootnode in bootnodes {
@@ -119,116 +100,100 @@ impl PeerManager {
             }
         }
 
+        // Start Discovery & Cleanup loop
+        let pm = self.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
+                pm.discover_peers().await;
+            }
+        });
+
         Ok(())
     }
 
+    async fn discover_peers(&self) {
+        let peers_lock = self.peers.read().await;
+        let peer_list: Vec<(String, String)> = peers_lock.iter()
+            .map(|(id, info)| (id.clone(), info.rpc_url.clone()))
+            .collect();
+        drop(peers_lock);
+
+        for (id, url) in peer_list {
+            let client = RpcClient::new(url.clone());
+            match client.get_peers().await {
+                Ok(new_peers) => {
+                    for p in new_peers {
+                        if let Ok(addr) = p.addr.parse::<SocketAddr>() {
+                            if p.peer_id != self.local_identity.peer_id() {
+                                let pm = self.clone();
+                                tokio::spawn(async move {
+                                    Arc::new(pm).dial_peer(addr);
+                                });
+                            }
+                        }
+                    }
+                }
+                Err(e) => debug!("[P2P] Failed to get peers from {}: {}", id, e),
+            }
+        }
+    }
+
     pub fn dial_peer(self: Arc<Self>, addr: SocketAddr) {
-        let (tx, rx) = mpsc::channel(100);
         let local_id = self.local_identity.peer_id();
         let peers_inner = self.peers.clone();
         let listen_port = self.port;
-        let pm_inner = self.clone();
         
         tokio::spawn(async move {
             debug!("[P2P] Attempting to connect to peer {}", addr);
-            match tokio::time::timeout(tokio::time::Duration::from_secs(30), TcpStream::connect(addr)).await {
-                Ok(Ok(stream)) => {
-                    let local_addr = stream.local_addr().ok();
-                    debug!("[P2P] TCP connection established with {} from local {:?}", addr, local_addr);
-                    debug!("[P2P] Starting handshake (No TLS) with {}", addr);
-                    let pm_for_conn = pm_inner.clone();
-                    match Connection::new_client(stream, local_id, Some(listen_port), rx).await {
-                        Ok((conn, remote_id, remote_listen_port)) => {
-                            info!("[P2P] Connected to {} with PeerId {}", addr, remote_id);
-                            
-                            let mut remote_addr = Some(addr);
-                            if let Some(port) = remote_listen_port {
-                                remote_addr.as_mut().unwrap().set_port(port);
-                            }
-
-                            // Register peer
-                            {
-                                let mut peers_lock = peers_inner.write().await;
-                                if peers_lock.contains_key(&remote_id) {
-                                    debug!("[P2P] Already connected to {}", remote_id);
-                                    return;
-                                }
-                                if peers_lock.len() >= MAX_PEERS {
-                                    info!("[P2P] Max peers reached, dropping discovered {}", remote_id);
-                                    return;
-                                }
-                                peers_lock.insert(remote_id.clone(), PeerInfo { tx, addr: remote_addr });
-                            }
-                            
-                            // Send our peer list to the new peer
-                            let list = {
-                                let peers_lock = peers_inner.read().await;
-                                let mut list = Vec::new();
-                                for (id, peer_info) in peers_lock.iter() {
-                                    if id != &remote_id {
-                                        if let Some(a) = peer_info.addr {
-                                            list.push(PeerInfoRlp { peer_id: id.clone(), addr: a.to_string() });
-                                        }
-                                    }
-                                    if list.len() >= 16 { break; }
-                                }
-                                list
-                            };
-
-                            if !list.is_empty() {
-                                let peers_lock = peers_inner.read().await;
-                                if let Some(info) = peers_lock.get(&remote_id) {
-                                    let _ = info.tx.send(Message::PeerList(list)).await;
-                                }
-                            }
-
-                            if let Err(e) = conn.process(pm_for_conn).await {
-                                error!("[P2P] Connection error with {}: {}", remote_id, e);
-                            }
-                            
-                            // Cleanup peer
-                            peers_inner.write().await.remove(&remote_id);
-                        }
-                        Err(e) => error!("[P2P] Handshake failed with {}: {}", addr, e),
+            let rpc_url = format!("http://{}", addr);
+            
+            let client = RpcClient::new(rpc_url.clone());
+            match client.hello(local_id, listen_port).await {
+                Ok(resp) => {
+                    let remote_id = resp.peer_id;
+                    info!("[P2P] Connected to {} with PeerId {}", addr, remote_id);
+                    
+                    let mut peers_lock = peers_inner.write().await;
+                    if peers_lock.contains_key(&remote_id) {
+                        debug!("[P2P] Already connected to {}", remote_id);
+                        return;
                     }
+                    if peers_lock.len() >= MAX_PEERS {
+                        info!("[P2P] Max peers reached, dropping discovered {}", remote_id);
+                        return;
+                    }
+                    peers_lock.insert(remote_id.clone(), PeerInfo { 
+                        addr, 
+                        rpc_url: rpc_url.clone() 
+                    });
                 }
-                Ok(Err(e)) => error!("[P2P] Failed to connect to {}: {}", addr, e),
-                Err(_) => error!("[P2P] Connection timeout (TCP) with {}", addr),
+                Err(e) => error!("[P2P] Handshake (hello) failed with {}: {}", addr, e),
             }
         });
     }
 
     pub async fn broadcast_gossip(&self, data: Vec<u8>) {
         let peers = self.peers.read().await;
-        for (peer_id, info) in peers.iter() {
-            if let Err(e) = info.tx.send(Message::Gossip(data.clone())).await {
-                error!("[P2P] Failed to send gossip to {}: {}", peer_id, e);
-            }
+        let mut target_urls = Vec::new();
+        for (id, info) in peers.iter() {
+            target_urls.push((id.clone(), info.rpc_url.clone()));
+        }
+        drop(peers);
+
+        for (id, url) in target_urls {
+            let data_clone = data.clone();
+            tokio::spawn(async move {
+                let client = RpcClient::new(url);
+                if let Err(e) = client.gossip("gossip".to_string(), data_clone).await {
+                    error!("[P2P] Failed to send gossip to {}: {}", id, e);
+                }
+            });
         }
     }
 
-    pub async fn send_peer_list(&self, peer_id: &str) {
-        let list = {
-            let peers_lock = self.peers.read().await;
-            let mut list = Vec::new();
-            for (id, info) in peers_lock.iter() {
-                if id != peer_id {
-                    if let Some(addr) = info.addr {
-                        list.push(PeerInfoRlp { peer_id: id.clone(), addr: addr.to_string() });
-                    }
-                }
-                if list.len() >= 16 {
-                    break;
-                }
-            }
-            list
-        };
-
-        if !list.is_empty() {
-            let peers_lock = self.peers.read().await;
-            if let Some(info) = peers_lock.get(peer_id) {
-                let _ = info.tx.send(Message::PeerList(list)).await;
-            }
-        }
+    pub async fn send_peer_list(&self, _peer_id: &str) {
+        // In RPC model, peers poll for lists, or we could push them.
+        // For now, we rely on discover_peers polling.
     }
 }

@@ -2,7 +2,7 @@ use std::fs;
 use std::path::Path;
 use anyhow::{Context, Result};
 use k256::ecdsa::SigningKey;
-use rcgen::{Certificate, CertificateParams, DistinguishedName, KeyPair};
+use rcgen::{CertificateParams, DistinguishedName, KeyPair};
 
 #[derive(Clone)]
 pub struct Identity {
