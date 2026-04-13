@@ -19,6 +19,9 @@ pub trait P2pApi {
     #[method(name = "p2p_hello")]
     async fn hello(&self, peer_id: String, listen_port: u16) -> RpcResult<HelloResponse>;
 
+    #[method(name = "p2p_ping")]
+    async fn ping(&self) -> RpcResult<String>;
+
     #[method(name = "p2p_getPeers")]
     async fn get_peers(&self) -> RpcResult<Vec<PeerInfoRlp>>;
 

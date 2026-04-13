@@ -31,12 +31,13 @@ pub struct PeerManager {
 impl P2pApiServer for PeerManager {
     async fn hello(&self, peer_id: String, listen_port: u16) -> RpcResult<HelloResponse> {
         info!("[P2P] Received hello from {} (port: {})", peer_id, listen_port);
-        // Extract sender address if possible, though jsonrpsee-server doesn't provide it easily here.
-        // For now, we'll just rely on the peer_id and later discovery if needed.
-        
         Ok(HelloResponse {
             peer_id: self.local_identity.peer_id(),
         })
+    }
+
+    async fn ping(&self) -> RpcResult<String> {
+        Ok("pong".to_string())
     }
 
     async fn get_peers(&self) -> RpcResult<Vec<PeerInfoRlp>> {
