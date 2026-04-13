@@ -14,7 +14,7 @@ pub enum Message {
     Ping,
     Pong,
     Hello { peer_id: String },
-    // Add more message types as needed
+    PeerList(Vec<(String, std::net::SocketAddr)>),
     Gossip(Vec<u8>),
 }
 
@@ -35,23 +35,55 @@ impl Connection {
         stream: TcpStream,
         config: Arc<ClientConfig>,
         server_name: rustls::ServerName,
+        local_peer_id: String,
         send_queue: mpsc::Receiver<Message>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, String)> {
         let connector = TlsConnector::from(config);
         let tls_stream = connector.connect(server_name, stream).await?;
-        let (reader, writer) = tokio::io::split(TlsStream::Client(tls_stream));
-        Ok(Self { reader, writer, send_queue })
+        let (mut reader, mut writer) = tokio::io::split(TlsStream::Client(tls_stream));
+        
+        // 1. Send Hello
+        Self::static_send_message(&mut writer, Message::Hello { peer_id: local_peer_id }).await?;
+        
+        // 2. Wait for Hello from server
+        let frame = Self::static_read_frame(&mut reader).await?
+            .ok_or_else(|| anyhow::anyhow!("Connection closed during handshake"))?;
+        
+        if frame.is_empty() || frame[0] != 2 {
+            return Err(anyhow::anyhow!("Expected Hello message, got type {}", if frame.is_empty() { 255 } else { frame[0] }));
+        }
+        
+        let remote_peer_id = String::decode(&mut &frame[1..])
+            .map_err(|e| anyhow::anyhow!("RLP decode error in handshake: {}", e))?;
+            
+        Ok((Self { reader, writer, send_queue }, remote_peer_id))
     }
 
     pub async fn new_server(
         stream: TcpStream,
         config: Arc<ServerConfig>,
+        local_peer_id: String,
         send_queue: mpsc::Receiver<Message>,
-    ) -> Result<Self> {
+    ) -> Result<(Self, String)> {
         let acceptor = TlsAcceptor::from(config);
         let tls_stream = acceptor.accept(stream).await?;
-        let (reader, writer) = tokio::io::split(TlsStream::Server(tls_stream));
-        Ok(Self { reader, writer, send_queue })
+        let (mut reader, mut writer) = tokio::io::split(TlsStream::Server(tls_stream));
+        
+        // 1. Wait for Hello from client
+        let frame = Self::static_read_frame(&mut reader).await?
+            .ok_or_else(|| anyhow::anyhow!("Connection closed during handshake"))?;
+        
+        if frame.is_empty() || frame[0] != 2 {
+            return Err(anyhow::anyhow!("Expected Hello message, got type {}", if frame.is_empty() { 255 } else { frame[0] }));
+        }
+        
+        let remote_peer_id = String::decode(&mut &frame[1..])
+            .map_err(|e| anyhow::anyhow!("RLP decode error in handshake: {}", e))?;
+            
+        // 2. Send Hello back
+        Self::static_send_message(&mut writer, Message::Hello { peer_id: local_peer_id }).await?;
+        
+        Ok((Self { reader, writer, send_queue }, remote_peer_id))
     }
 
     /// Process the connection: read from network and write from the send queue.
@@ -102,6 +134,15 @@ impl Connection {
                 buf.push(2);
                 peer_id.encode(&mut buf);
             }
+            Message::PeerList(peers) => {
+                buf.push(4);
+                // RLP doesn't naturally support tuples as Encodable.
+                // We'll encode each pair as a Vec of two strings.
+                let encoded_peers: Vec<Vec<String>> = peers.into_iter()
+                    .map(|(id, addr)| vec![id, addr.to_string()])
+                    .collect();
+                encoded_peers.encode(&mut buf);
+            }
             Message::Gossip(data) => {
                 buf.push(3);
                 buf.extend_from_slice(&data);
@@ -151,6 +192,20 @@ impl Connection {
             }
             3 => {
                 debug!("[P2P] Received Gossip message ({} bytes)", payload.len());
+            }
+            4 => {
+                let encoded_peers = Vec::<Vec<String>>::decode(&mut &payload[..])
+                    .map_err(|e| anyhow::anyhow!("RLP decode error for PeerList: {}", e))?;
+                let mut peers = Vec::new();
+                for pair in encoded_peers {
+                    if pair.len() == 2 {
+                        let id = pair[0].clone();
+                        if let Ok(addr) = pair[1].parse::<std::net::SocketAddr>() {
+                            peers.push((id, addr));
+                        }
+                    }
+                }
+                debug!("[P2P] Received PeerList with {} peers", peers.len());
             }
             _ => error!("[P2P] Unknown message type: {}", msg_type),
         }

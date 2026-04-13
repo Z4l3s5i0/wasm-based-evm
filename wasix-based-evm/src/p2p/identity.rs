@@ -47,6 +47,12 @@ impl Identity {
         Ok(Self { keypair })
     }
 
+    /// Get the PeerId as a hex string (from public key)
+    pub fn peer_id(&self) -> String {
+        let pubkey = self.keypair.verifying_key();
+        hex::encode(pubkey.to_sec1_bytes())
+    }
+
     /// Generate a self-signed certificate and private key for TLS
     pub fn generate_tls_config(&self) -> Result<(Vec<u8>, Vec<u8>)> {
         let keypair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)

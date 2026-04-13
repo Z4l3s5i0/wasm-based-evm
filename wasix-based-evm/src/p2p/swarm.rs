@@ -9,6 +9,8 @@ use std::sync::Arc;
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{mpsc, RwLock};
 
+const MAX_PEERS: usize = 50;
+
 #[derive(Clone)]
 pub struct PeerManager {
     local_identity: Identity,
@@ -54,21 +56,40 @@ impl PeerManager {
         let client_config = self.client_config.clone();
 
         // Start listener loop
+        let local_identity = self.local_identity.clone();
         tokio::spawn(async move {
             loop {
                 match listener.accept().await {
                     Ok((stream, addr)) => {
                         info!("[P2P] Accepted connection from {}", addr);
-                        let (_tx, rx) = mpsc::channel(100);
+                        let (tx, rx) = mpsc::channel(100);
                         let config = server_config.clone();
+                        let local_id = local_identity.peer_id();
+                        let peers_inner = peers.clone();
                         
                         tokio::spawn(async move {
-                            if let Ok(conn) = Connection::new_server(stream, config, rx).await {
-                                // For now, we don't have the peer_id yet, but we'll add it in the handshake
-                                // This is a placeholder
-                                if let Err(e) = conn.process().await {
-                                    error!("[P2P] Connection error with {}: {}", addr, e);
+                            match Connection::new_server(stream, config, local_id, rx).await {
+                                Ok((conn, remote_id)) => {
+                                    info!("[P2P] Handshake successful with {} at {}", remote_id, addr);
+                                    
+                                    // Register peer
+                                    {
+                                        let mut peers_lock = peers_inner.write().await;
+                                        if peers_lock.len() >= MAX_PEERS {
+                                            info!("[P2P] Max peers reached, dropping {}", remote_id);
+                                            return;
+                                        }
+                                        peers_lock.insert(remote_id.clone(), tx);
+                                    }
+                                    
+                                    if let Err(e) = conn.process().await {
+                                        error!("[P2P] Connection error with {}: {}", remote_id, e);
+                                    }
+                                    
+                                    // Cleanup peer
+                                    peers_inner.write().await.remove(&remote_id);
                                 }
+                                Err(e) => error!("[P2P] Handshake failed with {}: {}", addr, e),
                             }
                         });
                     }
@@ -81,17 +102,32 @@ impl PeerManager {
         for bootnode in bootnodes {
             let addr: SocketAddr = bootnode.parse()?;
             let config = client_config.clone();
-            let (_tx, rx) = mpsc::channel(100);
+            let (tx, rx) = mpsc::channel(100);
+            let local_id = self.local_identity.peer_id();
+            let peers_inner = self.peers.clone();
             
             tokio::spawn(async move {
                 match TcpStream::connect(addr).await {
                     Ok(stream) => {
-                        // In a real system, we'd need the server name for TLS SNI
                         let server_name = "localhost".try_into().unwrap(); 
-                        if let Ok(conn) = Connection::new_client(stream, config, server_name, rx).await {
-                            if let Err(e) = conn.process().await {
-                                error!("[P2P] Connection error with bootnode {}: {}", addr, e);
+                        match Connection::new_client(stream, config, server_name, local_id, rx).await {
+                            Ok((conn, remote_id)) => {
+                                info!("[P2P] Connected to bootnode {} with PeerId {}", addr, remote_id);
+                                
+                                // Register peer
+                                {
+                                    let mut peers_lock = peers_inner.write().await;
+                                    peers_lock.insert(remote_id.clone(), tx);
+                                }
+                                
+                                if let Err(e) = conn.process().await {
+                                    error!("[P2P] Connection error with bootnode {}: {}", remote_id, e);
+                                }
+                                
+                                // Cleanup peer
+                                peers_inner.write().await.remove(&remote_id);
                             }
+                            Err(e) => error!("[P2P] Handshake failed with bootnode {}: {}", addr, e),
                         }
                     }
                     Err(e) => error!("[P2P] Failed to connect to bootnode {}: {}", addr, e),
@@ -107,6 +143,25 @@ impl PeerManager {
         for (peer_id, tx) in peers.iter() {
             if let Err(e) = tx.send(Message::Gossip(data.clone())).await {
                 error!("[P2P] Failed to send gossip to {}: {}", peer_id, e);
+            }
+        }
+    }
+
+    /// Broadcast known peers to a specific peer (PEX)
+    pub async fn send_peer_list(&self, peer_id: &str, _listen_port: u16) {
+        let peers_to_send = {
+            let _peers = self.peers.read().await;
+            let list = Vec::new();
+            // In a real system, we'd need to know the public address of these peers.
+            // For now, we only have their PeerId. We'll skip for this simplified version
+            // or send a dummy list if we had actual addresses.
+            list
+        };
+
+        if !peers_to_send.is_empty() {
+            let peers = self.peers.read().await;
+            if let Some(tx) = peers.get(peer_id) {
+                let _ = tx.send(Message::PeerList(peers_to_send)).await;
             }
         }
     }

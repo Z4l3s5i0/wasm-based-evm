@@ -236,7 +236,7 @@ impl AppBuilder {
         let p2p_identity = Identity::new(
             args.data_dir.as_deref(),
         )?;
-        info!("[App] P2P Identity generated");
+        info!("[App] P2P Identity generated. PeerId: {}", p2p_identity.peer_id());
 
         // 6. Peer Manager
         let p2p_client_config = ClientConfig::builder()
