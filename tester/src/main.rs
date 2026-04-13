@@ -1,6 +1,6 @@
 use alloy_primitives::{Address, Bytes, B256};
 use alloy_consensus::Transaction as _;
-use alloy_rpc_types::{Block, Transaction, TransactionReceipt, Filter, Log};
+use alloy_rpc_types::{Block, Transaction, TransactionReceipt, Filter, Log, TransactionRequest};
 use alloy_rpc_types::engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ForkchoiceState, ForkchoiceUpdated,
     PayloadAttributes, PayloadId, PayloadStatus,
@@ -26,8 +26,10 @@ struct CommandCli {
 #[command(name = "evm-tester")]
 #[command(about = "A CLI tool to test the WASIX-based EVM JSON-RPC server", long_about = None)]
 struct Cli {
-    #[arg(short, long, default_value = "http://127.0.0.1:50051")]
+    #[arg(short, long, default_value = "http://127.0.0.1:8545")]
     server: String,
+    #[arg(long)]
+    ex: Option<u8>,
 }
 
 #[derive(Subcommand)]
@@ -107,6 +109,63 @@ enum Commands {
     GetBlockTransactionCountByHash {
         #[arg(short, long)]
         hash: String,
+    },
+    #[command(about = "Get all transactions in the mempool")]
+    GetMempool,
+    #[command(about = "Send a transaction")]
+    SendTransaction {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        gas: Option<u64>,
+        #[arg(long)]
+        gas_price: Option<u128>,
+        #[arg(long)]
+        value: Option<u128>,
+        #[arg(long)]
+        data: Option<String>,
+        #[arg(long)]
+        nonce: Option<u64>,
+    },
+    #[command(about = "Call a transaction")]
+    Call {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        gas: Option<u64>,
+        #[arg(long)]
+        gas_price: Option<u128>,
+        #[arg(long)]
+        value: Option<u128>,
+        #[arg(long)]
+        data: Option<String>,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(short, long, default_value = "latest")]
+        block_tag: String,
+    },
+    #[command(about = "Estimate gas for a transaction")]
+    EstimateGas {
+        #[arg(long)]
+        from: Option<String>,
+        #[arg(long)]
+        to: Option<String>,
+        #[arg(long)]
+        gas: Option<u64>,
+        #[arg(long)]
+        gas_price: Option<u128>,
+        #[arg(long)]
+        value: Option<u128>,
+        #[arg(long)]
+        data: Option<String>,
+        #[arg(long)]
+        nonce: Option<u64>,
+        #[arg(short, long, default_value = "latest")]
+        block_tag: String,
     },
     /// Returns a list of addresses owned by client
     Accounts,
@@ -260,6 +319,45 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("Connecting to server at {}...", cli.server);
     let mut client = HttpClientBuilder::default().build(&cli.server)?;
 
+    if let Some(ex_num) = cli.ex {
+        println!("Executing example call #{}...", ex_num);
+        match ex_num {
+            1 => {
+                // Example 1: Simple transfer
+                let mut req = TransactionRequest::default();
+                req.from = Some(Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")?);
+                req.to = Some(Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")?.into());
+                req.value = Some(alloy_primitives::U256::from(1000000000000000000u128)); // 1 ETH
+                let res: String = client.request("eth_sendTransaction", rpc_params![req]).await?;
+                println!("Example 1 (Transfer) Hash: {}", res);
+            }
+            2 => {
+                // Example 2: Contract call (WETH balance)
+                let mut req = TransactionRequest::default();
+                req.to = Some(Address::from_str("0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2")?.into()); // WETH
+                req.input.input = Some(Bytes::from_str("0x70a08231000000000000000000000000f39Fd6e51aad88F6F4ce6aB8827279cffFb92266")?); // balanceOf(0xf39Fd...)
+                let res: String = client.request("eth_call", rpc_params![req, BlockId::latest()]).await?;
+                println!("Example 2 (Call) Result: {}", res);
+            }
+            3 => {
+                // Example 3: Estimate gas for a transfer
+                let mut req = TransactionRequest::default();
+                req.from = Some(Address::from_str("0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266")?);
+                req.to = Some(Address::from_str("0x70997970C51812dc3A010C7d01b50e0d17dc79C8")?.into());
+                req.value = Some(alloy_primitives::U256::from(100u128));
+                let res: String = client.request("eth_estimateGas", rpc_params![req, BlockId::latest()]).await?;
+                println!("Example 3 (EstimateGas) result: {}", res);
+            }
+            4 => {
+                // Example 4: Get mempool
+                let res: Vec<Transaction> = client.request("debug_getMempool", rpc_params![]).await?;
+                println!("Example 4 (GetMempool) Result: {:#?}", res);
+            }
+            _ => println!("Example #{} not found. Available: 1, 2, 3, 4", ex_num),
+        }
+        return Ok(());
+    }
+
     let mut rl = DefaultEditor::new()?;
     loop {
         let readline = rl.readline("evm> ");
@@ -359,6 +457,47 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                     Commands::GetBlockTransactionCountByHash { hash } => {
                         let res: Option<String> = client.request("eth_getBlockTransactionCountByHash", rpc_params![hash]).await?;
                         println!("Transaction count: {:?}", res);
+                    }
+                    Commands::GetMempool => {
+                        let res: Vec<Transaction> = client.request("debug_getMempool", rpc_params![]).await?;
+                        println!("Mempool Transactions ({}):", res.len());
+                        println!("{:#?}", res);
+                    }
+                    Commands::SendTransaction { from, to, gas, gas_price, value, data, nonce } => {
+                        let mut req = TransactionRequest::default();
+                        if let Some(f) = from { req.from = Some(Address::from_str(&f)?); }
+                        if let Some(t) = to { req.to = Some(Address::from_str(&t)?.into()); }
+                        if let Some(g) = gas { req.gas = Some(g); }
+                        if let Some(gp) = gas_price { req.gas_price = Some(gp); }
+                        if let Some(v) = value { req.value = Some(alloy_primitives::U256::from(v)); }
+                        if let Some(d) = data { req.input.input = Some(Bytes::from_str(&d)?); }
+                        if let Some(n) = nonce { req.nonce = Some(n); }
+                        let res: String = client.request("eth_sendTransaction", rpc_params![req]).await?;
+                        println!("Transaction hash: {}", res);
+                    }
+                    Commands::Call { from, to, gas, gas_price, value, data, nonce, block_tag } => {
+                        let mut req = TransactionRequest::default();
+                        if let Some(f) = from { req.from = Some(Address::from_str(&f)?); }
+                        if let Some(t) = to { req.to = Some(Address::from_str(&t)?.into()); }
+                        if let Some(g) = gas { req.gas = Some(g); }
+                        if let Some(gp) = gas_price { req.gas_price = Some(gp); }
+                        if let Some(v) = value { req.value = Some(alloy_primitives::U256::from(v)); }
+                        if let Some(d) = data { req.input.input = Some(Bytes::from_str(&d)?); }
+                        if let Some(n) = nonce { req.nonce = Some(n); }
+                        let res: String = client.request("eth_call", rpc_params![req, parse_block_id(&block_tag)]).await?;
+                        println!("Result: {}", res);
+                    }
+                    Commands::EstimateGas { from, to, gas, gas_price, value, data, nonce, block_tag } => {
+                        let mut req = TransactionRequest::default();
+                        if let Some(f) = from { req.from = Some(Address::from_str(&f)?); }
+                        if let Some(t) = to { req.to = Some(Address::from_str(&t)?.into()); }
+                        if let Some(g) = gas { req.gas = Some(g); }
+                        if let Some(gp) = gas_price { req.gas_price = Some(gp); }
+                        if let Some(v) = value { req.value = Some(alloy_primitives::U256::from(v)); }
+                        if let Some(d) = data { req.input.input = Some(Bytes::from_str(&d)?); }
+                        if let Some(n) = nonce { req.nonce = Some(n); }
+                        let res: String = client.request("eth_estimateGas", rpc_params![req, parse_block_id(&block_tag)]).await?;
+                        println!("Estimated gas: {}", res);
                     }
                     Commands::Accounts => {
                         let res: Vec<String> = client.request("eth_accounts", rpc_params![]).await?;

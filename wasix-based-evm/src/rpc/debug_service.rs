@@ -1,0 +1,15 @@
+use std::sync::Arc;
+use tokio::sync::RwLock;
+use crate::error::RpcResult;
+use crate::mempool::Mempool;
+use alloy_consensus::TxEnvelope as Transaction;
+
+pub struct DebugService {
+    pub mempool: Arc<RwLock<Mempool>>,
+}
+
+impl DebugService {
+    pub async fn get_mempool(&self) -> RpcResult<Vec<Transaction>> {
+        Ok(self.mempool.read().await.get_all_transactions())
+    }
+}
