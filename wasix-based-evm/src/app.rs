@@ -36,13 +36,14 @@ pub struct App {
     gossip_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
     mempool: Arc<RwLock<Mempool>>,
     storage: Arc<RwLock<InMemoryStorage>>,
+    data_dir: PathBuf,
 }
 
 impl App {
     pub fn builder() -> AppBuilder {
         AppBuilder::default()
     }
-    pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn run(self) -> Result<(), Box<dyn std::error::Error>> {
         let bootnodes = self.swarm.bootnodes.clone();
         let discovery_port = self.swarm.discovery_port;
         let swarm = self.swarm.clone();
@@ -66,6 +67,19 @@ impl App {
         
         let _eth_handle = eth_server.start(self.eth_module);
         let _auth_handle = auth_server.start(self.auth_module);
+
+        let storage = self.storage.clone();
+        let data_dir = self.data_dir.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                debug!("[App] Periodic state dump...");
+                let storage_inner = storage.read().await;
+                if let Err(e) = storage_inner.save_to_file(data_dir.join("state.json")) {
+                    error!("[App] Failed to dump state: {}", e);
+                }
+            }
+        });
         
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
@@ -145,6 +159,9 @@ impl AppBuilder {
         let auth_rpc_addr = format!("127.0.0.1:{}", args.auth_rpc_port).parse()?;
 
         let data_dir = if let Some(ref dir) = args.data_dir {
+            if !dir.exists() {
+                std::fs::create_dir_all(dir)?;
+            }
             dir.clone()
         } else if cfg!(target_os = "wasi") {
             std::env::current_dir()?
@@ -152,19 +169,23 @@ impl AppBuilder {
             PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
         };
 
-        let genesis = if self.genesis_configured {
-            self.genesis.clone().ok_or("Genesis marked as configured but not provided")?
-        } else {
-            let genesis_path = data_dir.join("genesis/genesis.json");
-            info!("[App] Loading genesis from {:?}", genesis_path);
-            let genesis_file = std::fs::File::open(genesis_path)?;
-            let alloy_genesis: AlloyGenesis = serde_json::from_reader(genesis_file)?;
-            Genesis::from(alloy_genesis)
-        };
-
+        let storage_path = data_dir.join("storage/state.json");
         let storage = if self.storage_configured {
             self.storage.clone().ok_or("Storage marked as configured but not provided")?
+        } else if storage_path.exists() {
+            info!("[App] Loading existing state from {:?}", storage_path);
+            let storage_inner = InMemoryStorage::load_from_file(storage_path)?;
+            Arc::new(RwLock::new(storage_inner))
         } else {
+            let genesis = if self.genesis_configured {
+                self.genesis.clone().ok_or("Genesis marked as configured but not provided")?
+            } else {
+                let genesis_path = data_dir.join("genesis/genesis.json");
+                info!("[App] Loading genesis from {:?}", genesis_path);
+                let genesis_file = std::fs::File::open(genesis_path)?;
+                let alloy_genesis: AlloyGenesis = serde_json::from_reader(genesis_file)?;
+                Genesis::from(alloy_genesis)
+            };
             let chain_id = alloy_u256_to_evm_u256(U256::from(genesis.chain_id));
             let storage_inner = InMemoryStorage::new_with_genesis(chain_id, genesis);
             Arc::new(RwLock::new(storage_inner))
@@ -260,6 +281,7 @@ impl AppBuilder {
             gossip_rx: None, // Moved to GossipHandler
             mempool: mempool.clone(),
             storage: storage.clone(),
+            data_dir,
         })
     }
 }

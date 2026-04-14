@@ -1,8 +1,9 @@
 use std::collections::BTreeMap;
 use alloy_primitives::{Address, B256, U256};
 use alloy_genesis::Genesis as AlloyGenesis;
+use serde::{Serialize, Deserialize};
 
-#[derive(Default, Clone)]
+#[derive(Default, Clone, Serialize, Deserialize)]
 pub struct GenesisAccount {
     pub address: Address,
     pub balance: U256,
@@ -58,7 +59,7 @@ impl GenesisAccountBuilder {
     }
 }
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct Genesis {
     pub accounts: Vec<GenesisAccount>,
     pub timestamp: u64,

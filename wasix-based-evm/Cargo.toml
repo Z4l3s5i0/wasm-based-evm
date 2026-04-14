@@ -10,7 +10,7 @@ panic = "abort"
 panic = "abort"
 
 [dependencies]
-evm = { path = "../evm", default-features = false }
+evm = { path = "../evm", default-features = false, features = ["serde"] }
 evm-precompile = { path = "../evm/precompile", default-features = false }
 evm-interpreter = { path = "../evm/interpreter", default-features = false }
 alloy-primitives = { version = "1.5.7", default-features = false, features = ["serde"] }
@@ -58,7 +58,7 @@ tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch =
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic"] }
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31", default-features = false, features = [ "tls12"] }
-serde = { version = "1.0.228", features = ["derive"] }
+serde = { version = "1.0.228", features = ["derive", "std"] }
 
 
 [patch.crates-io]

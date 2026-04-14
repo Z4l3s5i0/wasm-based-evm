@@ -13,8 +13,11 @@ use anyhow::{Result, anyhow};
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use std::sync::Arc;
+use serde::{Serialize, Deserialize};
+use std::fs::File;
+use std::path::Path;
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 pub struct InMemoryStorage {
     pub backend: InMemoryBackend,
     pub blocks: BTreeMap<u64, Block<Transaction>>,
@@ -287,6 +290,18 @@ impl InMemoryStorage {
     pub fn update_forkchoice(&mut self, hash: B256) {
         info!("[Storage] Updating forkchoice: head={:?}", hash);
         self.head_block_hash = hash;
+    }
+
+    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let file = File::create(path)?;
+        serde_json::to_writer_pretty(file, self)?;
+        Ok(())
+    }
+
+    pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let file = File::open(path)?;
+        let storage = serde_json::from_reader(file)?;
+        Ok(storage)
     }
 }
 

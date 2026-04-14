@@ -1513,6 +1513,7 @@ name = "evm"
 version = "1.1.1"
 dependencies = [
  "evm-interpreter",
+ "serde",
  "sha3",
 ]
 
@@ -1524,6 +1525,8 @@ dependencies = [
  "paste",
  "primitive-types",
  "rlp",
+ "ruint",
+ "serde",
  "sha3",
 ]
 
@@ -2196,6 +2199,15 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "f28220f89297a075ddc7245cd538076ee98b01f2a9c23a53a4f1105d5a322808"
 dependencies = [
  "rlp",
+]
+
+[[package]]
+name = "impl-serde"
+version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ebc88fc67028ae3db0c853baa36269d398d5f45b6982f95549ff5def78c935cd"
+dependencies = [
+ "serde",
 ]
 
 [[package]]
@@ -2876,6 +2888,7 @@ dependencies = [
  "fixed-hash",
  "impl-codec",
  "impl-rlp",
+ "impl-serde",
  "uint",
 ]
 
