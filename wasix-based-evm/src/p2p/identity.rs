@@ -25,7 +25,8 @@ impl Identity {
                         .map_err(|_| anyhow::anyhow!("Invalid p2p_key bytes"))?
                 } else {
                     let mut bytes = [0u8; 32];
-                    getrandom::getrandom(&mut bytes)?;
+                    getrandom::getrandom(&mut bytes)
+                        .map_err(|e| anyhow::anyhow!("getrandom failed: {:?}", e))?;;
                     let secret = SigningKey::from_slice(&bytes)
                         .expect("32 bytes is valid secret key length");
                     let hex_key = hex::encode(secret.to_bytes());
@@ -38,7 +39,8 @@ impl Identity {
             }
             None => {
                 let mut bytes = [0u8; 32];
-                getrandom::getrandom(&mut bytes)?;
+                getrandom::getrandom(&mut bytes)
+                    .map_err(|e| anyhow::anyhow!("getrandom failed: {:?}", e))?;;
                 SigningKey::from_slice(&bytes)
                     .expect("32 bytes is valid secret key length")
             }

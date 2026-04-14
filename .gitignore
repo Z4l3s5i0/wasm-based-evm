@@ -17,3 +17,4 @@ target/
 .idea/
 /evm/
 /tester/Cargo.lock
+/node_modules/

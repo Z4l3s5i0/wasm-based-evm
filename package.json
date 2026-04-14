@@ -1,0 +1,18 @@
+{
+  "name": "Wasix-Based-EVM",
+  "version": "0.0.1",
+  "scripts": {
+    "build-wasm": "cd wasix-based-evm && cargo wasix build --release",
+    "dev": "vite",
+    "build": "npm run build-wasm && vite build"
+  },
+  "type": "module",
+  "main": "index.ts",
+  "author": "",
+  "devDependencies": {
+    "vite": "^5.4.0"
+  },
+  "dependencies": {
+    "@wasmer/sdk": "^0.10.0"
+  }
+}

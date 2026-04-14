@@ -5,9 +5,15 @@ edition = "2024"
 
 [profile.dev]
 panic = "abort"
+lto = true
 
 [profile.release]
 panic = "abort"
+lto = true
+codegen-units = 1
+[[bin]]
+name = "wasix-based-evm"
+path = "src/main.rs"
 
 [dependencies]
 evm = { path = "../evm", default-features = false, features = ["serde"] }
@@ -39,26 +45,30 @@ thiserror = "2.0.18"
 hex = "0.4.3"
 anyhow = "1.0.102"
 rcgen = "0.13"
+k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic"] }
+serde = { version = "1.0.228", features = ["derive", "std", "serde_derive"] }
 #parking_lot = { path = "../parking_lot", default-features = false, features = ["deadlock_detection", "nightly", "default"] }
 
 # When using something different than wasix
 #socket2 = { version="0.4.5" , default-features = false, features = ["all"]}
 #tokio = { version = "1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
+#tokio-rustls = { version = "0.24.1", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
+#reqwest = {version = "0.11.8", default-features = false, features = ["json", "serde_json"]}
+#jsonrpsee = {version = "0.26.0", default-features = false, features = ["tracing", "server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
+#rustls = { version = "0.23.31", default-features = false, features = [ "tls12"] }
 
 
 #  WASIX dependencies
 
-jsonrpsee = {git = "https://github.com/Z4l3s5i0/jsonrpsee", branch = "fix", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
-reqwest = {git = "https://github.com/wasix-org/reqwest.git", branch = "rustls-0.21.8", default-features = false, features = ["json", "serde_json"]}
 # When using wasix
 wasix = { version = "0.13.1" }
 
+reqwest = {git = "https://github.com/wasix-org/reqwest.git", branch = "rustls-0.21.8", default-features = false, features = ["json", "serde_json"]}
+jsonrpsee = {git = "https://github.com/Z4l3s5i0/jsonrpsee", branch = "fix", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
 tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net", "parking_lot" ] }
 tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
-k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic"] }
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31", default-features = false, features = [ "tls12"] }
-serde = { version = "1.0.228", features = ["derive", "std"] }
 
 
 [patch.crates-io]

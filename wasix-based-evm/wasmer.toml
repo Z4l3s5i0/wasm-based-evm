@@ -13,7 +13,14 @@ abi = "wasi"
 [module.interfaces]
 wasix = "0.1.0"
 
+[fs]
+"./data-dir" = "./data-dir"
+
 [[command]]
 name = "wasix-based-evm"
 module = "wasix-based-evm"
 runner = "https://webc.org/runner/wasi"
+
+[command.annotations.wasi]
+args = ["--verbose", "2", "--data-dir", "data-dir"]
+env = ["RUST_LOG=info"]
