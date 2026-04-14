@@ -5,6 +5,7 @@ use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
 use std::sync::Arc;
+use alloy_primitives::B256;
 use tokio::sync::RwLock;
 use jsonrpsee::server::ServerBuilder;
 use jsonrpsee::core::RpcResult;
@@ -95,6 +96,11 @@ impl P2pApiServer for PeerManager {
         } else {
             Ok(None)
         }
+    }
+
+    async fn get_block_hash(&self, number: u64) -> RpcResult<Option<B256>> {
+        let storage = self.storage.read().await;
+        Ok(storage.get_block_hash(number))
     }
 
     async fn gossip(&self, _topic: String, data: Vec<u8>) -> RpcResult<()> {

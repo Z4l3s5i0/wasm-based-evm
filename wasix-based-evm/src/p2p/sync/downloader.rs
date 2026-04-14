@@ -1,12 +1,13 @@
 use std::sync::Arc;
 use crate::p2p::peer_manager::PeerManager;
 use crate::p2p::rpc_client::RpcClient;
-use crate::p2p::P2pApiClient;
+use crate::p2p::{P2pApiClient};
 use crate::debug;
 use jsonrpsee::core::client::ClientT;
 use alloy_consensus::Block as ConsensusBlock;
 use alloy_consensus::TxEnvelope as Transaction;
 use alloy_rlp::Decodable;
+use alloy_primitives::B256;
 
 pub struct Downloader {
     peer_manager: Arc<PeerManager>,
@@ -52,5 +53,10 @@ impl Downloader {
             }
             None => Err(anyhow::anyhow!("Peer returned None for block {}", block_num)),
         }
+    }
+
+    pub async fn get_block_hash(&self, rpc_url: &str, block_num: u64) -> anyhow::Result<Option<B256>> {
+        let client = RpcClient::new(rpc_url.to_string());
+        Ok(client.get_block_hash(block_num).await?)
     }
 }

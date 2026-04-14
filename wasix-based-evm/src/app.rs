@@ -214,6 +214,17 @@ impl AppBuilder {
         )?;
         let peer_manager = Arc::new(peer_manager);
 
+        let sync_engine = Arc::new(SyncEngine::new(
+            storage.clone(),
+            mempool.clone(),
+            peer_manager.clone(),
+            executor.clone(),
+        ));
+        let sync_handle = sync_engine.clone();
+        tokio::spawn(async move {
+            sync_handle.start().await;
+        });
+
         let mut eth_facade = RpcServerFacade::new();
         let mut auth_facade = RpcServerFacade::new();
         let provider = Arc::new(StorageProvider::new(storage.clone()));
@@ -228,6 +239,7 @@ impl AppBuilder {
             executor: (*executor).clone(),
             storage: storage.clone(),
             account_manager: account_manager.clone(),
+            sync_engine: sync_engine.clone(),
         })?;
         auth_facade.register_engine(EngineService::new(
             storage.clone(),
@@ -237,16 +249,6 @@ impl AppBuilder {
         eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
         eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
         eth_facade.register_logs(LogService { storage: provider.clone() })?;
-
-        let sync_engine = SyncEngine::new(
-            storage.clone(),
-            peer_manager.clone(),
-            executor.clone(),
-        );
-        let sync_handle = Arc::new(sync_engine);
-        tokio::spawn(async move {
-            sync_handle.start().await;
-        });
 
         Ok(App {
             eth_rpc_addr,

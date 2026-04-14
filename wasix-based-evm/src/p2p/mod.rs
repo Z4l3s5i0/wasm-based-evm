@@ -1,6 +1,7 @@
 use jsonrpsee::core::RpcResult;
 use jsonrpsee::proc_macros::rpc;
 use serde::{Deserialize, Serialize};
+use alloy_primitives::B256;
 
 pub mod identity;
 pub mod peer_manager;
@@ -38,6 +39,9 @@ pub trait DiscoveryApi {
 pub trait P2pApi {
     #[method(name = "p2p_getBlockByNumber")]
     async fn get_block_by_number(&self, number: u64) -> RpcResult<Option<Vec<u8>>>;
+
+    #[method(name = "p2p_getBlockHash")]
+    async fn get_block_hash(&self, number: u64) -> RpcResult<Option<B256>>;
 
     #[method(name = "p2p_gossip")]
     async fn gossip(&self, topic: String, data: Vec<u8>) -> RpcResult<()>;

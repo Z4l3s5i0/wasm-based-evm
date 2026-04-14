@@ -16,6 +16,8 @@ use evm::standard::TransactValueCallCreate;
 
 use crate::{info, error};
 
+use crate::p2p::sync::SyncEngine;
+
 pub struct EthService {
     pub block_storage: Arc<dyn BlockProvider>,
     pub state_storage: Arc<dyn StateProvider>,
@@ -24,6 +26,7 @@ pub struct EthService {
     pub executor: Executor,
     pub storage: Arc<RwLock<InMemoryStorage>>,
     pub account_manager: Arc<AccountManager>,
+    pub sync_engine: Arc<SyncEngine>,
 }
 
 impl EthService {
@@ -39,28 +42,28 @@ impl EthService {
     }
 
     pub async fn accounts(&self) -> RpcResult<Vec<Address>> {
-        self.state_storage.accounts().await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))
+        self.state_storage.accounts().await.map_err(|e| error::RpcError::Internal(e.to_string()))
     }
 
     pub async fn syncing(&self) -> RpcResult<SyncStatus> {
-        Ok(SyncStatus::None)
+        Ok(self.sync_engine.status().await)
     }
 
     pub async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<alloy_primitives::B256> {
         info!("[EthService] eth_sendTransaction from: {:?}", request.from);
         
-        let from = request.from.ok_or_else(|| crate::error::RpcError::InvalidParams("from address is required".to_string()))?;
+        let from = request.from.ok_or_else(|| error::RpcError::InvalidParams("from address is required".to_string()))?;
         
         if !self.account_manager.is_managed(&from) {
-            return Err(crate::error::RpcError::AccountNotFound(from));
+            return Err(error::RpcError::AccountNotFound(from));
         }
 
-        let chain_id = self.block_storage.chain_id().await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))?;
+        let chain_id = self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?;
         let nonce = if let Some(n) = request.nonce {
             n
         } else {
             self.state_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest)).await
-                .map_err(|e| crate::error::RpcError::Internal(e.to_string()))?
+                .map_err(|e| error::RpcError::Internal(e.to_string()))?
         };
 
         let gas_price = request.gas_price.unwrap_or(1_000_000_000u128);
@@ -100,13 +103,13 @@ impl EthService {
         // TODO: Implement eth_call
         let block_id = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let block = self.block_storage.block(block_id).await
-            .map_err(|e| crate::error::RpcError::Internal(e.to_string()))?
-            .ok_or(crate::error::RpcError::BlockNotFound(block_id))?;
+            .map_err(|e| error::RpcError::Internal(e.to_string()))?
+            .ok_or(error::RpcError::BlockNotFound(block_id))?;
         
         // Convert TransactionRequest to TxEnvelope
         // This is simplified, we need a way to create a TxEnvelope from a request for simulation
         let tx = TxLegacy {
-            chain_id: Some(self.block_storage.chain_id().await.map_err(|e| crate::error::RpcError::Internal(e.to_string()))?),
+            chain_id: Some(self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?),
             nonce: request.nonce.unwrap_or_default(),
             gas_price: request.gas_price.unwrap_or(1_000_000_000u128),
             gas_limit: request.gas.unwrap_or(1_000_000),
@@ -120,7 +123,7 @@ impl EthService {
         // In a real implementation, we should execute on top of the state of the given block.
         // InMemoryStorage currently only has the latest state easily accessible for execution.
         let result = self.executor.call(&storage_lock, tx_envelope, block)
-            .map_err(|e| crate::error::RpcError::Internal(e))?;
+            .map_err(|e| error::RpcError::Internal(e))?;
         
         match result.call_create {
             TransactValueCallCreate::Call { retval, .. } => Ok(retval.into()),

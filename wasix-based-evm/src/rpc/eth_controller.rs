@@ -13,7 +13,7 @@ pub trait EthRpc {
     #[method(name = "eth_accounts")]
     async fn accounts(&self) -> RpcResult<Vec<String>>;
     #[method(name = "eth_syncing")]
-    async fn syncing(&self) -> RpcResult<jsonrpsee::core::RpcResult<SyncStatus>>;
+    async fn syncing(&self) -> RpcResult<SyncStatus>;
     #[method(name = "eth_mining")]
     async fn mining(&self) -> RpcResult<bool>;
     #[method(name = "eth_sendTransaction")]
@@ -40,9 +40,9 @@ impl EthRpcServer for EthController {
         Ok(AccountMapper::addresses_to_rpc(accounts))
     }
 
-    async fn syncing(&self) -> RpcResult<jsonrpsee::core::RpcResult<SyncStatus>> {
+    async fn syncing(&self) -> RpcResult<SyncStatus> {
         let status = self.service.syncing().await?;
-        Ok(Ok(status))
+        Ok(status)
     }
 
     async fn mining(&self) -> RpcResult<bool> {

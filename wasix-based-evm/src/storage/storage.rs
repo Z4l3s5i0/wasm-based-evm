@@ -1,5 +1,5 @@
 use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
-use crate::{info, debug};
+use crate::{info, debug, error};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, B256, U256, keccak256, Bytes};
 use alloy_trie::TrieAccount;
@@ -24,6 +24,7 @@ pub struct InMemoryStorage {
     pub head_block_hash: B256,
     pub safe_block_hash: B256,
     pub finalized_block_hash: B256,
+    pub snapshots: BTreeMap<u64, InMemoryBackend>,
 }
 
 impl InMemoryStorage {
@@ -58,6 +59,7 @@ impl InMemoryStorage {
             head_block_hash: B256::ZERO,
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
+            snapshots: BTreeMap::new(),
         };
 
         // Create genesis block
@@ -105,6 +107,7 @@ impl InMemoryStorage {
         storage.head_block_hash = genesis_hash;
         storage.safe_block_hash = genesis_hash;
         storage.finalized_block_hash = genesis_hash;
+        storage.snapshots.insert(0, storage.backend.clone());
 
         storage
     }
@@ -123,6 +126,44 @@ impl InMemoryStorage {
 
         self.blocks.insert(block_number, block);
         self.head_block_hash = block_hash;
+        
+        // Take snapshot after adding block
+        self.snapshots.insert(block_number, self.backend.clone());
+        // Keep only last 100 snapshots
+        if self.snapshots.len() > 100 {
+            if let Some(&first) = self.snapshots.keys().next() {
+                self.snapshots.remove(&first);
+            }
+        }
+    }
+
+    pub fn revert_to_height(&mut self, height: u64) -> Vec<Transaction> {
+        info!("[Storage] Reverting to height {}", height);
+        let mut reverted_txs = Vec::new();
+        
+        let keys_to_remove: Vec<u64> = self.blocks.range((height + 1)..).map(|(k, _)| *k).collect();
+        for k in keys_to_remove {
+            if let Some(block) = self.blocks.remove(&k) {
+                for tx in block.body.transactions {
+                    let hash = tx.hash();
+                    self.tx_location.remove(hash);
+                    // We don't necessarily remove from self.transactions if we want to keep them for mempool
+                    reverted_txs.push(tx);
+                }
+            }
+        }
+        
+        if let Some(snapshot) = self.snapshots.get(&height) {
+            self.backend = snapshot.clone();
+        } else {
+            error!("[Storage] No snapshot found for height {}, state might be inconsistent!", height);
+        }
+        
+        if let Some(block) = self.blocks.get(&height) {
+            self.head_block_hash = block.header.hash_slow();
+        }
+        
+        reverted_txs
     }
 
     pub fn add_transaction(&mut self, tx: Transaction) {

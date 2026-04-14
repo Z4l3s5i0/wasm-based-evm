@@ -1,24 +1,41 @@
+use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::storage::storage::InMemoryStorage;
 use crate::p2p::peer_manager::PeerManager;
 use crate::executor::Executor;
+use crate::mempool::Mempool;
 use crate::p2p::sync::downloader::Downloader;
 use crate::p2p::sync::processor::BlockProcessor;
 use crate::{info, error, debug};
+use alloy_primitives::{U256};
+use alloy_rpc_types::{SyncStatus, SyncInfo};
 
 pub struct SyncController {
     storage: Arc<RwLock<InMemoryStorage>>,
+    mempool: Arc<RwLock<Mempool>>,
     downloader: Downloader,
     processor: BlockProcessor,
+    is_syncing: AtomicBool,
+    current_block: AtomicU64,
+    highest_block: AtomicU64,
 }
 
 impl SyncController {
-    pub fn new(storage: Arc<RwLock<InMemoryStorage>>, peer_manager: Arc<PeerManager>, executor: Arc<Executor>) -> Self {
+    pub fn new(
+        storage: Arc<RwLock<InMemoryStorage>>,
+        mempool: Arc<RwLock<Mempool>>,
+        peer_manager: Arc<PeerManager>,
+        executor: Arc<Executor>
+    ) -> Self {
         Self {
             storage: storage.clone(),
+            mempool,
             downloader: Downloader::new(peer_manager),
             processor: BlockProcessor::new(storage, executor),
+            is_syncing: AtomicBool::new(false),
+            current_block: AtomicU64::new(0),
+            highest_block: AtomicU64::new(0),
         }
     }
 
@@ -32,35 +49,112 @@ impl SyncController {
         }
     }
 
+    pub async fn status(&self) -> SyncStatus {
+        if self.is_syncing.load(Ordering::SeqCst) {
+            let starting_block = {
+                let storage_read = self.storage.read().await;
+                storage_read.get_latest_block_number()
+            };
+            SyncStatus::Info(Box::new(SyncInfo {
+                current_block: U256::from(self.current_block.load(Ordering::SeqCst)),
+                highest_block: U256::from(self.highest_block.load(Ordering::SeqCst)),
+                starting_block: U256::from(starting_block),
+                warp_chunks_amount: None,
+                warp_chunks_processed: None,
+                stages: None,
+            }))
+        } else {
+            SyncStatus::None
+        }
+    }
+
     async fn sync_step(&self) -> anyhow::Result<()> {
-        let local_height = {
+        let (local_height, local_hash) = {
             let storage_read = self.storage.read().await;
-            storage_read.get_latest_block_number()
+            let height = storage_read.get_latest_block_number();
+            let hash = storage_read.get_block_hash(height).unwrap_or_default();
+            (height, hash)
         };
 
         if let Some((best_peer_url, best_height)) = self.downloader.get_best_peer(local_height).await {
-            if best_height > local_height {
-                info!("[Sync] Found better peer with height {} (local: {})", best_height, local_height);
-                for next_block_num in (local_height + 1)..=best_height {
-                    debug!("[Sync] Fetching block {}", next_block_num);
-                    match self.downloader.download_block(&best_peer_url, next_block_num).await {
-                        Ok(block) => {
-                            if let Err(e) = self.processor.process_block(block).await {
-                                error!("[Sync] Failed to process block {}: {}", next_block_num, e);
-                                break;
+            // Check for divergence
+            if local_height > 0 {
+                match self.downloader.get_block_hash(&best_peer_url, local_height).await {
+                    Ok(Some(peer_hash)) if peer_hash != local_hash => {
+                        info!("[Sync] Divergence detected at height {}. Local hash: {:?}, Peer hash: {:?}", local_height, local_hash, peer_hash);
+                        // Find common ancestor
+                        let mut ancestor_height = local_height - 1;
+                        while ancestor_height > 0 {
+                            let local_ancestor_hash = self.storage.read().await.get_block_hash(ancestor_height).unwrap_or_default();
+                            match self.downloader.get_block_hash(&best_peer_url, ancestor_height).await {
+                                Ok(Some(peer_ancestor_hash)) if peer_ancestor_hash == local_ancestor_hash => {
+                                    info!("[Sync] Common ancestor found at height {}", ancestor_height);
+                                    break;
+                                }
+                                _ => ancestor_height -= 1,
                             }
                         }
-                        Err(e) => {
-                            error!("[Sync] Failed to download block {}: {}", next_block_num, e);
-                            break;
+                        
+                        // Reorg
+                        let reverted_txs = {
+                            let mut storage_write = self.storage.write().await;
+                            storage_write.revert_to_height(ancestor_height)
+                        };
+                        
+                        info!("[Sync] Reverted {} blocks. Re-adding {} transactions to mempool", local_height - ancestor_height, reverted_txs.len());
+                        {
+                            let mut mempool_write = self.mempool.write().await;
+                            for tx in reverted_txs {
+                                mempool_write.add_transaction(tx);
+                            }
                         }
+                        
+                        // Now sync from ancestor_height + 1
+                        self.sync_range(&best_peer_url, ancestor_height + 1, best_height).await?;
+                        return Ok(());
                     }
+                    Err(e) => {
+                        error!("[Sync] Failed to fetch hash from peer for divergence check: {}", e);
+                    }
+                    _ => {} // No divergence or peer missing block
                 }
+            }
+
+            if best_height > local_height {
+                info!("[Sync] Found better peer with height {} (local: {})", best_height, local_height);
+                self.sync_range(&best_peer_url, local_height + 1, best_height).await?;
             }
         } else {
             debug!("[Sync] No peers found with height greater than local {}", local_height);
         }
 
+        Ok(())
+    }
+
+    async fn sync_range(&self, peer_url: &str, start: u64, end: u64) -> anyhow::Result<()> {
+        self.is_syncing.store(true, Ordering::SeqCst);
+        self.highest_block.store(end, Ordering::SeqCst);
+        
+        for next_block_num in start..=end {
+            self.current_block.store(next_block_num, Ordering::SeqCst);
+            debug!("[Sync] Fetching block {}", next_block_num);
+            match self.downloader.download_block(peer_url, next_block_num).await {
+                Ok(block) => {
+                    if let Err(e) = self.processor.process_block(block).await {
+                        error!("[Sync] Failed to process block {}: {}", next_block_num, e);
+                        self.is_syncing.store(false, Ordering::SeqCst);
+                        return Err(anyhow::anyhow!("Block processing failed"));
+                    }
+                }
+                Err(e) => {
+                    error!("[Sync] Failed to download block {}: {}", next_block_num, e);
+                    self.is_syncing.store(false, Ordering::SeqCst);
+                    return Err(e);
+                }
+            }
+        }
+        
+        self.is_syncing.store(false, Ordering::SeqCst);
         Ok(())
     }
 }
