@@ -25,6 +25,8 @@ use crate::rpc::log_service::LogService;
 use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
 
+use crate::p2p::sync_engine::SyncEngine;
+
 pub struct App {
     eth_rpc_addr: std::net::SocketAddr,
     auth_rpc_addr: std::net::SocketAddr,
@@ -33,6 +35,7 @@ pub struct App {
     swarm: Arc<PeerManager>,
     gossip_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
     mempool: Arc<RwLock<Mempool>>,
+    storage: Arc<RwLock<InMemoryStorage>>,
 }
 
 impl App {
@@ -42,10 +45,10 @@ impl App {
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
         // Start Peer Manager
         let bootnodes = self.swarm.bootnodes.clone();
-        let port = self.swarm.port;
+        let discovery_port = self.swarm.discovery_port;
         let swarm = self.swarm.clone();
         tokio::spawn(async move {
-            if let Err(e) = swarm.start(port, bootnodes).await {
+            if let Err(e) = swarm.start(discovery_port, bootnodes).await {
                 error!("[App] Peer Manager error: {}", e);
             }
         });
@@ -214,6 +217,8 @@ impl AppBuilder {
 
         let (peer_manager, gossip_rx) = PeerManager::new(
             p2p_identity,
+            storage.clone(),
+            args.discovery_port,
             args.p2p_port,
             args.ext_ip,
             args.bootnodes.clone(),
@@ -249,6 +254,16 @@ impl AppBuilder {
         eth_facade.register_logs(LogService { storage: provider.clone() })?;
 
 
+        // 6. Sync Engine
+        let sync_engine = SyncEngine::new(
+            storage.clone(),
+            peer_manager.clone(),
+        );
+        let sync_handle = Arc::new(sync_engine);
+        tokio::spawn(async move {
+            sync_handle.start().await;
+        });
+
         Ok(App {
             eth_rpc_addr,
             auth_rpc_addr,
@@ -257,6 +272,7 @@ impl AppBuilder {
             swarm: peer_manager,
             gossip_rx: Some(gossip_rx),
             mempool: mempool.clone(),
+            storage: storage.clone(),
         })
     }
 }

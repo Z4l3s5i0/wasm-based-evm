@@ -62,7 +62,7 @@ serde = { version = "1.0.228", features = ["derive"] }
 
 
 [patch.crates-io]
-wasm-bindgen = {path = "../wasm-bindgen"}
+wasm-bindgen = {git = "https://github.com/wasix-org/wasm-bindgen.git" , branch = "wasi"}
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
 mio = { git = "https://github.com/wasix-org/mio" }
 #parking_lot = { path = "../parking_lot" }

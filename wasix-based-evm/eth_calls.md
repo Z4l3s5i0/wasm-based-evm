@@ -125,3 +125,9 @@ Methods for the consensus-execution separation (Engine API).
 | `engine_newPayloadV3` | ❌ Pending | Validates and executes a new execution payload (V3). |
 | `engine_newPayloadV4` | ❌ Pending | Validates and executes a new execution payload (V4). |
 | `engine_newPayloadV5` | ❌ Pending | Validates and executes a new execution payload (V5). |
+
+### 9. Debugging (`DebugController`)
+Methods for debugging and testing.
+| Method | Status        | Description |
+| :--- |:--------------| :--- |
+| `debug_getMempool` | ✅ Implemented | Gets the active mempool contents. |

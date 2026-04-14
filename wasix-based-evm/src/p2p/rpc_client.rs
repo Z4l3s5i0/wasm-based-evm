@@ -1,6 +1,6 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::fmt;
-use jsonrpsee::core::{Serialize, DeserializeOwned};
+use jsonrpsee::core::DeserializeOwned;
 use jsonrpsee::core::traits::ToRpcParams;
 use jsonrpsee::core::client::{ClientT, BatchResponse};
 use jsonrpsee::core::params::BatchRequestBuilder as CoreBatchRequestBuilder;

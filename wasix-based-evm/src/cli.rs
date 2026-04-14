@@ -4,8 +4,12 @@ use std::path::PathBuf;
 #[derive(Parser, Debug, Clone)]
 #[command(author, version, about, long_about = None)]
 pub struct Args {
-    /// TCP port for RLPx/Tentacle
+    /// TCP port for discovery
     #[arg(long, default_value_t = 9001)]
+    pub discovery_port: u16,
+
+    /// TCP port for P2P (gossip, blocks)
+    #[arg(long, default_value_t = 9002)]
     pub p2p_port: u16,
 
     /// TCP port for Eth JSON-RPC

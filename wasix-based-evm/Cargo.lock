@@ -4866,3 +4866,4 @@ source = "git+https://github.com/wasix-org/ring?branch=0.17.7#be27e9a6daa1bdae89
 [[patch.unused]]
 name = "wasm-bindgen"
 version = "0.2.84"
+source = "git+https://github.com/wasix-org/wasm-bindgen.git?branch=wasi#945c535f2e481b97565014c3bad7c24ad2f38c90"

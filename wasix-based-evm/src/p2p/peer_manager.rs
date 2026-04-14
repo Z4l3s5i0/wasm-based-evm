@@ -1,4 +1,4 @@
-use crate::p2p::{P2pApiServer, HelloResponse, P2pApiClient, PeerInfoRlp};
+use crate::p2p::{DiscoveryApiServer, P2pApiServer, HelloResponse, PeerInfoRlp, DiscoveryApiClient, P2pApiClient};
 use crate::p2p::rpc_client::RpcClient;
 use crate::p2p::identity::Identity;
 use anyhow::Result;
@@ -11,11 +11,17 @@ use jsonrpsee::core::RpcResult;
 use crate::{info, error, debug};
 use tokio::sync::mpsc;
 
+use crate::storage::storage::InMemoryStorage;
+use alloy_rlp::Encodable;
+
 const MAX_PEERS: usize = 50;
 
+#[derive(Clone)]
 pub struct PeerInfo {
-    pub addr: SocketAddr,
-    pub rpc_url: String,
+    pub discovery_addr: SocketAddr,
+    pub p2p_addr: SocketAddr,
+    pub discovery_url: String,
+    pub p2p_url: String,
 }
 
 #[derive(Clone)]
@@ -23,22 +29,24 @@ pub struct PeerManager {
     local_identity: Identity,
     peers: Arc<RwLock<HashMap<String, PeerInfo>>>,
     gossip_tx: mpsc::Sender<Vec<u8>>,
-    pub port: u16,
+    storage: Arc<RwLock<InMemoryStorage>>,
+    pub discovery_port: u16,
+    pub p2p_port: u16,
     pub ext_ip: Option<std::net::IpAddr>,
     pub bootnodes: Vec<String>,
 }
 
 #[async_trait::async_trait]
-impl P2pApiServer for PeerManager {
-    async fn hello(&self, peer_id: String, public_addr: String) -> RpcResult<HelloResponse> {
-        info!("[P2P] Received hello from {} (addr: {})", peer_id, public_addr);
+impl DiscoveryApiServer for PeerManager {
+    async fn hello(&self, peer_id: String, discovery_addr: String, p2p_addr: String) -> RpcResult<HelloResponse> {
+        info!("[P2P] Received hello from {} (discovery_addr: {}, p2p_addr: {})", peer_id, discovery_addr, p2p_addr);
         
         let peers_lock = self.peers.read().await;
         let is_already_bonded = peers_lock.contains_key(&peer_id);
         drop(peers_lock);
 
         if !is_already_bonded {
-            if let Ok(addr) = public_addr.parse::<SocketAddr>() {
+            if let Ok(addr) = discovery_addr.parse::<SocketAddr>() {
                 let pm = self.clone();
                 tokio::spawn(async move {
                     Arc::new(pm).dial_peer(addr);
@@ -50,6 +58,8 @@ impl P2pApiServer for PeerManager {
         
         Ok(HelloResponse {
             peer_id: self.local_identity.peer_id(),
+            discovery_addr: format!("{}:{}", self.ext_ip.unwrap_or_else(|| "127.0.0.1".parse().unwrap()), self.discovery_port),
+            p2p_addr: format!("{}:{}", self.ext_ip.unwrap_or_else(|| "127.0.0.1".parse().unwrap()), self.p2p_port),
         })
     }
 
@@ -63,13 +73,28 @@ impl P2pApiServer for PeerManager {
         for (id, peer_info) in peers_lock.iter() {
             list.push(PeerInfoRlp {
                 peer_id: id.clone(),
-                addr: peer_info.addr.to_string(),
+                discovery_addr: peer_info.discovery_addr.to_string(),
+                p2p_addr: peer_info.p2p_addr.to_string(),
             });
             if list.len() >= 16 {
                 break;
             }
         }
         Ok(list)
+    }
+}
+
+#[async_trait::async_trait]
+impl P2pApiServer for PeerManager {
+    async fn get_block_by_number(&self, number: u64) -> RpcResult<Option<Vec<u8>>> {
+        let storage = self.storage.read().await;
+        if let Some(block) = storage.get_block_by_number(number) {
+            let mut out = Vec::new();
+            block.encode(&mut out);
+            Ok(Some(out))
+        } else {
+            Ok(None)
+        }
     }
 
     async fn gossip(&self, _topic: String, data: Vec<u8>) -> RpcResult<()> {
@@ -82,7 +107,9 @@ impl P2pApiServer for PeerManager {
 impl PeerManager {
     pub fn new(
         identity: Identity,
-        port: u16,
+        storage: Arc<RwLock<InMemoryStorage>>,
+        discovery_port: u16,
+        p2p_port: u16,
         ext_ip: Option<std::net::IpAddr>,
         bootnodes: Vec<String>,
     ) -> Result<(Self, mpsc::Receiver<Vec<u8>>)> {
@@ -91,24 +118,36 @@ impl PeerManager {
             local_identity: identity,
             peers: Arc::new(RwLock::new(HashMap::new())),
             gossip_tx,
-            port,
+            storage,
+            discovery_port,
+            p2p_port,
             ext_ip,
             bootnodes,
         }, gossip_rx))
     }
 
+    pub async fn get_active_peers(&self) -> HashMap<String, PeerInfo> {
+        self.peers.read().await.clone()
+    }
+
     pub async fn start(
         &self,
-        listen_port: u16,
+        discovery_port: u16,
         bootnodes: Vec<String>,
     ) -> Result<()> {
-        let addr: SocketAddr = format!("0.0.0.0:{}", listen_port).parse()?;
-        let server = ServerBuilder::default().build(addr).await?;
-        let handle = server.start(self.clone().into_rpc());
-        info!("[P2P] RPC Server started on {}", addr);
+        // Start Discovery Server
+        let discovery_addr: SocketAddr = format!("0.0.0.0:{}", discovery_port).parse()?;
+        let discovery_server = ServerBuilder::default().build(discovery_addr).await?;
+        let discovery_handle = discovery_server.start(DiscoveryApiServer::into_rpc(self.clone()));
+        info!("[P2P] Discovery RPC Server started on {}", discovery_addr);
+        tokio::spawn(discovery_handle.stopped());
 
-        // Keep the server running in a separate task
-        tokio::spawn(handle.stopped());
+        // Start P2P Server
+        let p2p_addr: SocketAddr = format!("0.0.0.0:{}", self.p2p_port).parse()?;
+        let p2p_server = ServerBuilder::default().build(p2p_addr).await?;
+        let p2p_handle = p2p_server.start(P2pApiServer::into_rpc(self.clone()));
+        info!("[P2P] P2P RPC Server started on {}", p2p_addr);
+        tokio::spawn(p2p_handle.stopped());
 
         // Connect to bootnodes
         let self_cloned = self.clone();
@@ -137,7 +176,7 @@ impl PeerManager {
         info!("[P2P] Starting peer discovery cycle...");
         let peers_lock = self.peers.read().await;
         let peer_list: Vec<(String, String)> = peers_lock.iter()
-            .map(|(id, info)| (id.clone(), info.rpc_url.clone()))
+            .map(|(id, info)| (id.clone(), info.discovery_url.clone()))
             .collect();
         drop(peers_lock);
         
@@ -153,7 +192,7 @@ impl PeerManager {
                 Ok(new_peers) => {
                     info!("[P2P] Received {} peers from {}", new_peers.len(), id);
                     for p in new_peers {
-                        if let Ok(addr) = p.addr.parse::<SocketAddr>() {
+                        if let Ok(addr) = p.discovery_addr.parse::<SocketAddr>() {
                             if p.peer_id != self.local_identity.peer_id() {
                                 let pm = self.clone();
                                 tokio::spawn(async move {
@@ -172,7 +211,7 @@ impl PeerManager {
         info!("[P2P] Starting health check / cleanup cycle...");
         let peers_lock = self.peers.read().await;
         let peer_list: Vec<(String, String)> = peers_lock.iter()
-            .map(|(id, info)| (id.clone(), info.rpc_url.clone()))
+            .map(|(id, info)| (id.clone(), info.discovery_url.clone()))
             .collect();
         drop(peers_lock);
 
@@ -211,14 +250,15 @@ impl PeerManager {
     pub fn dial_peer(self: Arc<Self>, addr: SocketAddr) {
         let local_id = self.local_identity.peer_id();
         let peers_inner = self.peers.clone();
-        let listen_port = self.port;
+        let discovery_port = self.discovery_port;
+        let p2p_port = self.p2p_port;
         let ext_ip = self.ext_ip;
         
         tokio::spawn(async move {
             // Pre-check: Is this address already in our peer pool?
             let peers_lock = peers_inner.read().await;
             for (id, info) in peers_lock.iter() {
-                if info.addr == addr {
+                if info.discovery_addr == addr {
                     debug!("[P2P] Already bonded to peer at {} (ID: {}), skipping dial", addr, id);
                     return;
                 }
@@ -226,14 +266,15 @@ impl PeerManager {
             drop(peers_lock);
 
             info!("[P2P] Attempting to bond with peer at {}", addr);
-            let rpc_url = format!("http://{}", addr);
+            let discovery_url = format!("http://{}", addr);
             
             // Determine our own public address to share
             let my_public_ip = ext_ip.unwrap_or_else(|| "127.0.0.1".parse().unwrap());
-            let my_public_addr = format!("{}:{}", my_public_ip, listen_port);
+            let my_discovery_addr = format!("{}:{}", my_public_ip, discovery_port);
+            let my_p2p_addr = format!("{}:{}", my_public_ip, p2p_port);
 
-            let client = RpcClient::new(rpc_url.clone());
-            match client.hello(local_id, my_public_addr).await {
+            let client = RpcClient::new(discovery_url.clone());
+            match client.hello(local_id, my_discovery_addr, my_p2p_addr).await {
                 Ok(resp) => {
                     let remote_id = resp.peer_id;
                     info!("[P2P] Bonding successful with {} (PeerId: {})", addr, remote_id);
@@ -248,10 +289,20 @@ impl PeerManager {
                         return;
                     }
                     
-                    info!("[P2P] Saving peer record: ID={}, Addr={}", remote_id, addr);
+                    let discovery_addr = addr;
+                    let p2p_addr: SocketAddr = resp.p2p_addr.parse().unwrap_or_else(|_| {
+                         let mut a = addr;
+                         a.set_port(9002); // fallback
+                         a
+                    });
+                    let p2p_url = format!("http://{}", p2p_addr);
+
+                    info!("[P2P] Saving peer record: ID={}, DiscoveryAddr={}, P2pAddr={}", remote_id, discovery_addr, p2p_addr);
                     peers_lock.insert(remote_id.clone(), PeerInfo { 
-                        addr, 
-                        rpc_url: rpc_url.clone() 
+                        discovery_addr,
+                        p2p_addr,
+                        discovery_url: discovery_url.clone(),
+                        p2p_url,
                     });
                     info!("[P2P] Active peer pool size: {}", peers_lock.len());
                 }
@@ -264,7 +315,7 @@ impl PeerManager {
         let peers = self.peers.read().await;
         let mut target_urls = Vec::new();
         for (id, info) in peers.iter() {
-            target_urls.push((id.clone(), info.rpc_url.clone()));
+            target_urls.push((id.clone(), info.p2p_url.clone()));
         }
         drop(peers);
 
