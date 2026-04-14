@@ -48,7 +48,7 @@ rcgen = "0.13"
 
 #  WASIX dependencies
 
-jsonrpsee = {path = "../jsonrpsee/jsonrpsee", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
+jsonrpsee = {git = "https://github.com/Z4l3s5i0/jsonrpsee", branch = "fix", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
 reqwest = {git = "https://github.com/wasix-org/reqwest.git", branch = "rustls-0.21.8", default-features = false, features = ["json", "serde_json"]}
 # When using wasix
 wasix = { version = "0.13.1" }

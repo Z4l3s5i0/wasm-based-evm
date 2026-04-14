@@ -2303,6 +2303,7 @@ dependencies = [
 [[package]]
 name = "jsonrpsee"
 version = "0.26.0"
+source = "git+https://github.com/Z4l3s5i0/jsonrpsee?branch=fix#e04e1e21ea46676099b131900cc0222b09e04ab4"
 dependencies = [
  "jsonrpsee-core",
  "jsonrpsee-proc-macros",
@@ -2314,6 +2315,7 @@ dependencies = [
 [[package]]
 name = "jsonrpsee-core"
 version = "0.26.0"
+source = "git+https://github.com/Z4l3s5i0/jsonrpsee?branch=fix#e04e1e21ea46676099b131900cc0222b09e04ab4"
 dependencies = [
  "async-trait",
  "bytes",
@@ -2337,6 +2339,7 @@ dependencies = [
 [[package]]
 name = "jsonrpsee-proc-macros"
 version = "0.26.0"
+source = "git+https://github.com/Z4l3s5i0/jsonrpsee?branch=fix#e04e1e21ea46676099b131900cc0222b09e04ab4"
 dependencies = [
  "heck",
  "proc-macro-crate",
@@ -2348,6 +2351,7 @@ dependencies = [
 [[package]]
 name = "jsonrpsee-server"
 version = "0.26.0"
+source = "git+https://github.com/Z4l3s5i0/jsonrpsee?branch=fix#e04e1e21ea46676099b131900cc0222b09e04ab4"
 dependencies = [
  "futures-util",
  "http 1.4.0",
@@ -2385,6 +2389,7 @@ dependencies = [
 [[package]]
 name = "jsonrpsee-types"
 version = "0.26.0"
+source = "git+https://github.com/Z4l3s5i0/jsonrpsee?branch=fix#e04e1e21ea46676099b131900cc0222b09e04ab4"
 dependencies = [
  "http 1.4.0",
  "serde",
