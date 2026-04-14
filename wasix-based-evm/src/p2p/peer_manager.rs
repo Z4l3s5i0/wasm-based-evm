@@ -330,8 +330,4 @@ impl PeerManager {
         }
     }
 
-    pub async fn send_peer_list(&self, _peer_id: &str) {
-        // In RPC model, peers poll for lists, or we could push them.
-        // For now, we rely on discover_peers polling.
-    }
 }

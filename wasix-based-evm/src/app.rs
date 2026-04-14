@@ -25,7 +25,7 @@ use crate::rpc::log_service::LogService;
 use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
 
-use crate::p2p::sync_engine::SyncEngine;
+use crate::p2p::sync::SyncEngine;
 
 pub struct App {
     eth_rpc_addr: std::net::SocketAddr,
@@ -43,7 +43,6 @@ impl App {
         AppBuilder::default()
     }
     pub async fn run(mut self) -> Result<(), Box<dyn std::error::Error>> {
-        // Start Peer Manager
         let bootnodes = self.swarm.bootnodes.clone();
         let discovery_port = self.swarm.discovery_port;
         let swarm = self.swarm.clone();
@@ -53,7 +52,6 @@ impl App {
             }
         });
 
-        // Start Gossip Handler if we have a receiver
         if let Some(gossip_rx) = self.gossip_rx.take() {
             let handler = GossipHandler::new(
                 self.mempool.clone(),
@@ -79,7 +77,6 @@ impl App {
         let _eth_handle = eth_server.start(self.eth_module);
         let _auth_handle = auth_server.start(self.auth_module);
         
-        // Keep the app running
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
@@ -145,7 +142,6 @@ impl AppBuilder {
     pub async fn build(self) -> Result<App, Box<dyn std::error::Error>> {
         let args = self.args.clone().ok_or("Args not provided")?;
 
-        // 1. Logging
         if !self.logging_configured {
             let level = match args.verbose {
                 0 => LogLevel::None,
@@ -158,7 +154,6 @@ impl AppBuilder {
         let eth_rpc_addr = format!("127.0.0.1:{}", args.eth_rpc_port).parse()?;
         let auth_rpc_addr = format!("127.0.0.1:{}", args.auth_rpc_port).parse()?;
 
-        // 2. Data Dir & Genesis
         let data_dir = if let Some(ref dir) = args.data_dir {
             dir.clone()
         } else if cfg!(target_os = "wasi") {
@@ -177,16 +172,11 @@ impl AppBuilder {
             Genesis::from(alloy_genesis)
         };
 
-        // 3. Storage, Mempool & Executor
         let storage = if self.storage_configured {
             self.storage.clone().ok_or("Storage marked as configured but not provided")?
         } else {
             let chain_id = alloy_u256_to_evm_u256(U256::from(genesis.chain_id));
             let storage_inner = InMemoryStorage::new_with_genesis(chain_id, genesis);
-            // Log pre-funded accounts for clarity
-            for (h160, account) in &storage_inner.backend.state {
-                debug!("[App] Pre-funded account: 0x{:x}, balance: {} wei", h160, account.balance);
-            }
             Arc::new(RwLock::new(storage_inner))
         };
 
@@ -201,15 +191,14 @@ impl AppBuilder {
         } else {
             Executor::new()
         };
+        let executor = Arc::new(executor);
 
         let account_manager = if let Some(manager) = self.account_manager {
             manager
         } else {
-            // By default, enable dev keys for easier testing if we are in dev mode/debug
             Arc::new(AccountManager::new_with_dev_keys())
         };
 
-        // 4. P2P Identity
         let p2p_identity = Identity::new(
             args.data_dir.as_deref(),
         )?;
@@ -225,12 +214,8 @@ impl AppBuilder {
         )?;
         let peer_manager = Arc::new(peer_manager);
 
-        // 5. RPC Setup
         let mut eth_facade = RpcServerFacade::new();
         let mut auth_facade = RpcServerFacade::new();
-        
-        // Use the StorageProvider wrapper to handle the Arc<RwLock<InMemoryStorage>>
-        // This allows RPC services to see live updates from the Executor.
         let provider = Arc::new(StorageProvider::new(storage.clone()));
 
         eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
@@ -240,24 +225,23 @@ impl AppBuilder {
             state_storage: provider.clone(),
             mempool: mempool.clone(),
             peer_manager: peer_manager.clone(),
-            executor: executor.clone(),
+            executor: (*executor).clone(),
             storage: storage.clone(),
             account_manager: account_manager.clone(),
         })?;
         auth_facade.register_engine(EngineService::new(
             storage.clone(),
             mempool.clone(),
-            executor.clone(),
+            (*executor).clone(),
         ))?;
         eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
         eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
         eth_facade.register_logs(LogService { storage: provider.clone() })?;
 
-
-        // 6. Sync Engine
         let sync_engine = SyncEngine::new(
             storage.clone(),
             peer_manager.clone(),
+            executor.clone(),
         );
         let sync_handle = Arc::new(sync_engine);
         tokio::spawn(async move {
