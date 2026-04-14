@@ -45,4 +45,7 @@ pub trait P2pApi {
 
     #[method(name = "p2p_gossip")]
     async fn gossip(&self, topic: String, data: Vec<u8>) -> RpcResult<()>;
+
+    #[method(name = "eth_blockNumber")]
+    async fn block_number(&self) -> RpcResult<String>;
 }

@@ -108,6 +108,12 @@ impl P2pApiServer for PeerManager {
         let _ = self.gossip_tx.send(data).await;
         Ok(())
     }
+
+    async fn block_number(&self) -> RpcResult<String> {
+        let storage = self.storage.read().await;
+        let num = storage.get_latest_block_number();
+        Ok(format!("0x{:x}", num))
+    }
 }
 
 impl PeerManager {
