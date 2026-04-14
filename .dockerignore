@@ -1,8 +1,6 @@
-# Exclude large, unnecessary folders from Docker build context
-.git
-.idea
-js
-smart-contracts
-tester
-**/node_modules
-**/*.log
+*
+!wasix-based-evm/
+!evm/
+!hive/clients/wasix-evm/
+!Cargo.toml
+!Cargo.lock
