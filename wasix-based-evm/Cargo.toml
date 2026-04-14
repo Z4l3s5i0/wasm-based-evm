@@ -45,7 +45,7 @@ thiserror = "2.0.18"
 hex = "0.4.3"
 anyhow = "1.0.102"
 rcgen = "0.13"
-axum = { version = "0.7.5", default-features = false, features = ["http1", "json", "query", "tokio"] }
+axum = { version = "0.7.5", default-features = false, features = ["http1", "json", "query", "tokio", "form"] }
 tower = { version = "0.4.13", default-features = false, features = ["util"] }
 tower-http = { version = "0.5.2", default-features = false, features = ["fs", "cors"] }
 maud = "0.26.0"

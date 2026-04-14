@@ -31,6 +31,7 @@ pub struct App {
     eth_rpc_addr: std::net::SocketAddr,
     auth_rpc_addr: std::net::SocketAddr,
     frontend_addr: std::net::SocketAddr,
+    eth_rpc_port: u16,
     eth_module: jsonrpsee::RpcModule<()>,
     auth_module: jsonrpsee::RpcModule<()>,
     swarm: Arc<PeerManager>,
@@ -67,8 +68,9 @@ impl App {
         info!("[App] Auth Engine JSON-RPC Server listening on {}", self.auth_rpc_addr);
         
         let frontend_addr = self.frontend_addr;
+        let eth_rpc_port = self.eth_rpc_port;
         tokio::spawn(async move {
-            if let Err(e) = crate::frontend::start_frontend(frontend_addr).await {
+            if let Err(e) = crate::frontend::start_frontend(frontend_addr, eth_rpc_port).await {
                 error!("[App] Frontend error: {}", e);
             }
         });
@@ -285,6 +287,7 @@ impl AppBuilder {
             eth_rpc_addr,
             auth_rpc_addr,
             frontend_addr,
+            eth_rpc_port: args.eth_rpc_port,
             eth_module: eth_facade.into_module(),
             auth_module: auth_facade.into_module(),
             swarm: peer_manager,

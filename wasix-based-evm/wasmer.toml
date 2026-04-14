@@ -13,8 +13,8 @@ abi = "wasi"
 [module.interfaces]
 wasix = "0.1.0"
 
-[fs]
-"./data-dir" = "./data-dir"
+#[fs]
+#"./data-dir" = "./data-dir"
 
 [[command]]
 name = "wasix-based-evm"
