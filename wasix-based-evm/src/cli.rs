@@ -20,6 +20,10 @@ pub struct Args {
     #[arg(long, default_value_t = 8551)]
     pub auth_rpc_port: u16,
 
+    /// TCP port for Frontend (logs)
+    #[arg(long, default_value_t = 3000)]
+    pub frontend_port: u16,
+
     /// Comma-separated list of Multiaddrs for bootstrapping (must include /p2p/PeerId)
     #[arg(long, value_delimiter = ',')]
     pub bootnodes: Vec<String>,

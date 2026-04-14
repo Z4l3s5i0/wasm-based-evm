@@ -93,7 +93,7 @@ async function runClient(module: WebAssembly.Module) {
     const instance = await runWasix(module, {
         program: "wasix-based-evm",
         args: [
-            "--verbose", "2", 
+            "--verbose", "2",
             "--data-dir", "/data-dir",
             "--p2p-port", "9002",
             "--discovery-port", "9001",
@@ -108,6 +108,11 @@ async function runClient(module: WebAssembly.Module) {
         mount: {
             "/data-dir": {},
         },
+        capabilities: {
+            net: true,        // equivalent to --net
+        },
+        threading: true,
+        async: true,
     });
 
     // Pipe stdout and stderr to the screen

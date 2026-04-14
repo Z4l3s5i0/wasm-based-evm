@@ -45,6 +45,11 @@ thiserror = "2.0.18"
 hex = "0.4.3"
 anyhow = "1.0.102"
 rcgen = "0.13"
+axum = { version = "0.7.5", default-features = false, features = ["http1", "json", "query", "tokio"] }
+tower = { version = "0.4.13", default-features = false, features = ["util"] }
+tower-http = { version = "0.5.2", default-features = false, features = ["fs", "cors"] }
+maud = "0.26.0"
+once_cell = "1.19.0"
 k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic"] }
 serde = { version = "1.0.228", features = ["derive", "std", "serde_derive"] }
 #parking_lot = { path = "../parking_lot", default-features = false, features = ["deadlock_detection", "nightly", "default"] }

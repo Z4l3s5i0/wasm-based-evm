@@ -8,6 +8,7 @@ mod cli;
 mod logging;
 mod app;
 mod p2p;
+mod frontend;
 // mod network;
 
 use clap::Parser;

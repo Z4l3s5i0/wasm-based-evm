@@ -30,6 +30,7 @@ use crate::p2p::sync::SyncEngine;
 pub struct App {
     eth_rpc_addr: std::net::SocketAddr,
     auth_rpc_addr: std::net::SocketAddr,
+    frontend_addr: std::net::SocketAddr,
     eth_module: jsonrpsee::RpcModule<()>,
     auth_module: jsonrpsee::RpcModule<()>,
     swarm: Arc<PeerManager>,
@@ -65,6 +66,13 @@ impl App {
         info!("[App] Eth JSON-RPC Server listening on {}", self.eth_rpc_addr);
         info!("[App] Auth Engine JSON-RPC Server listening on {}", self.auth_rpc_addr);
         
+        let frontend_addr = self.frontend_addr;
+        tokio::spawn(async move {
+            if let Err(e) = crate::frontend::start_frontend(frontend_addr).await {
+                error!("[App] Frontend error: {}", e);
+            }
+        });
+
         let _eth_handle = eth_server.start(self.eth_module);
         let _auth_handle = auth_server.start(self.auth_module);
 
@@ -157,6 +165,7 @@ impl AppBuilder {
 
         let eth_rpc_addr = format!("127.0.0.1:{}", args.eth_rpc_port).parse()?;
         let auth_rpc_addr = format!("127.0.0.1:{}", args.auth_rpc_port).parse()?;
+        let frontend_addr = format!("127.0.0.1:{}", args.frontend_port).parse()?;
 
         let data_dir = if let Some(ref dir) = args.data_dir {
             if !dir.exists() {
@@ -275,6 +284,7 @@ impl AppBuilder {
         Ok(App {
             eth_rpc_addr,
             auth_rpc_addr,
+            frontend_addr,
             eth_module: eth_facade.into_module(),
             auth_module: auth_facade.into_module(),
             swarm: peer_manager,
