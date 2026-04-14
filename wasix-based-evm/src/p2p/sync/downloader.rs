@@ -59,4 +59,17 @@ impl Downloader {
         let client = RpcClient::new(rpc_url.to_string());
         Ok(client.get_block_hash(block_num).await?)
     }
+
+    pub async fn download_block_by_hash(&self, rpc_url: &str, hash: B256) -> anyhow::Result<ConsensusBlock<Transaction>> {
+        let client = RpcClient::new(rpc_url.to_string());
+        match client.get_block_by_hash(hash).await? {
+            Some(block_rlp) => {
+                let mut rlp_slice = block_rlp.as_slice();
+                let block = ConsensusBlock::<Transaction>::decode(&mut rlp_slice)
+                    .map_err(|e| anyhow::anyhow!("Failed to decode block: {}", e))?;
+                Ok(block)
+            }
+            None => Err(anyhow::anyhow!("Peer returned None for block hash {:?}", hash)),
+        }
+    }
 }

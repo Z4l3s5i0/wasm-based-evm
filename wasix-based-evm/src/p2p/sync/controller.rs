@@ -49,6 +49,16 @@ impl SyncController {
         }
     }
 
+    pub async fn trigger_sync(&self) -> anyhow::Result<()> {
+        info!("[Sync] Manual sync trigger received");
+        self.sync_step().await
+    }
+
+    pub async fn has_block(&self, hash: alloy_primitives::B256) -> bool {
+        let storage = self.storage.read().await;
+        storage.get_block_by_hash(hash).is_some()
+    }
+
     pub async fn status(&self) -> SyncStatus {
         if self.is_syncing.load(Ordering::SeqCst) {
             let starting_block = {
@@ -138,23 +148,73 @@ impl SyncController {
         for next_block_num in start..=end {
             self.current_block.store(next_block_num, Ordering::SeqCst);
             debug!("[Sync] Fetching block {}", next_block_num);
-            match self.downloader.download_block(peer_url, next_block_num).await {
-                Ok(block) => {
-                    if let Err(e) = self.processor.process_block(block).await {
-                        error!("[Sync] Failed to process block {}: {}", next_block_num, e);
-                        self.is_syncing.store(false, Ordering::SeqCst);
-                        return Err(anyhow::anyhow!("Block processing failed"));
-                    }
-                }
+            
+            let block = match self.downloader.download_block(peer_url, next_block_num).await {
+                Ok(block) => block,
                 Err(e) => {
                     error!("[Sync] Failed to download block {}: {}", next_block_num, e);
                     self.is_syncing.store(false, Ordering::SeqCst);
                     return Err(e);
                 }
+            };
+
+            // Check if parent exists in storage
+            let parent_hash = block.header.parent_hash;
+            let parent_exists = {
+                let storage = self.storage.read().await;
+                storage.get_block_by_hash(parent_hash).is_some()
+            };
+
+            if !parent_exists && next_block_num > 0 {
+                info!("[Sync] Parent block {:?} for {} missing, fetching ancestors", parent_hash, next_block_num);
+                self.fetch_ancestors(peer_url, parent_hash).await?;
+            }
+
+            if let Err(e) = self.processor.process_block(block).await {
+                error!("[Sync] Failed to process block {}: {}", next_block_num, e);
+                self.is_syncing.store(false, Ordering::SeqCst);
+                return Err(anyhow::anyhow!("Block processing failed"));
             }
         }
         
         self.is_syncing.store(false, Ordering::SeqCst);
+        Ok(())
+    }
+
+    async fn fetch_ancestors(&self, peer_url: &str, hash: alloy_primitives::B256) -> anyhow::Result<()> {
+        let mut current_hash = hash;
+        let mut to_process = Vec::new();
+
+        while current_hash != alloy_primitives::B256::ZERO {
+            // Check if we already have it
+            {
+                let storage = self.storage.read().await;
+                if storage.get_block_by_hash(current_hash).is_some() {
+                    break;
+                }
+            }
+
+            debug!("[Sync] Fetching ancestor block {:?}", current_hash);
+            let block = self.downloader.download_block_by_hash(peer_url, current_hash).await?;
+            let parent_hash = block.header.parent_hash;
+            to_process.push(block);
+            current_hash = parent_hash;
+
+            if to_process.len() > 100 {
+                debug!("[Sync] Ancestor chain too long, processing current batch");
+                break;
+            }
+        }
+
+        // Process in reverse order (oldest to newest)
+        for block in to_process.into_iter().rev() {
+            let block_num = block.header.number;
+            if let Err(e) = self.processor.process_block(block).await {
+                error!("[Sync] Failed to process ancestor block {}: {}", block_num, e);
+                return Err(anyhow::anyhow!("Ancestor block processing failed"));
+            }
+        }
+
         Ok(())
     }
 }

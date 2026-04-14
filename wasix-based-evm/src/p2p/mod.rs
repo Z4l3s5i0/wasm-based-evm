@@ -43,6 +43,9 @@ pub trait P2pApi {
     #[method(name = "p2p_getBlockHash")]
     async fn get_block_hash(&self, number: u64) -> RpcResult<Option<B256>>;
 
+    #[method(name = "p2p_getBlockByHash")]
+    async fn get_block_by_hash(&self, hash: B256) -> RpcResult<Option<Vec<u8>>>;
+
     #[method(name = "p2p_gossip")]
     async fn gossip(&self, topic: String, data: Vec<u8>) -> RpcResult<()>;
 

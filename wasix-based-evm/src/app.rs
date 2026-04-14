@@ -52,16 +52,6 @@ impl App {
             }
         });
 
-        if let Some(gossip_rx) = self.gossip_rx.take() {
-            let handler = GossipHandler::new(
-                self.mempool.clone(),
-                self.swarm.clone(),
-                gossip_rx,
-            );
-            tokio::spawn(async move {
-                handler.start().await;
-            });
-        }
 
         let eth_server = jsonrpsee::server::Server::builder()
             .build(self.eth_rpc_addr)
@@ -225,6 +215,16 @@ impl AppBuilder {
             sync_handle.start().await;
         });
 
+        let gossip_handler = GossipHandler::new(
+            mempool.clone(),
+            peer_manager.clone(),
+            sync_engine.clone(),
+            gossip_rx,
+        );
+        tokio::spawn(async move {
+            gossip_handler.start().await;
+        });
+
         let mut eth_facade = RpcServerFacade::new();
         let mut auth_facade = RpcServerFacade::new();
         let provider = Arc::new(StorageProvider::new(storage.clone()));
@@ -245,6 +245,7 @@ impl AppBuilder {
             storage.clone(),
             mempool.clone(),
             (*executor).clone(),
+            sync_engine.clone(),
         ))?;
         eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
         eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
@@ -256,7 +257,7 @@ impl AppBuilder {
             eth_module: eth_facade.into_module(),
             auth_module: auth_facade.into_module(),
             swarm: peer_manager,
-            gossip_rx: Some(gossip_rx),
+            gossip_rx: None, // Moved to GossipHandler
             mempool: mempool.clone(),
             storage: storage.clone(),
         })

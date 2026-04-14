@@ -25,4 +25,4 @@ wasix = { version = "0.13.1" }
 rand = "=0.8.5"
 serde_json = "1.0"
 tokio = {version = "1.47.4", features = ["full"]}
-jsonrpsee = {path = "../jsonrpsee/jsonrpsee", default-features = false, features = ["full"]}
+jsonrpsee = {git = "https://github.com/Z4l3s5i0/jsonrpsee", branch = "fix", default-features = false, features = ["full"]}

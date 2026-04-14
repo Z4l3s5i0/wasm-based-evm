@@ -103,6 +103,18 @@ impl P2pApiServer for PeerManager {
         Ok(storage.get_block_hash(number))
     }
 
+    async fn get_block_by_hash(&self, hash: B256) -> RpcResult<Option<Vec<u8>>> {
+        let storage = self.storage.read().await;
+        match storage.get_block_by_hash(hash) {
+            Some(block) => {
+                let mut buf = Vec::new();
+                alloy_rlp::Encodable::encode(&block, &mut buf);
+                Ok(Some(buf))
+            }
+            None => Ok(None),
+        }
+    }
+
     async fn gossip(&self, _topic: String, data: Vec<u8>) -> RpcResult<()> {
         debug!("[P2P] Received gossip message ({} bytes)", data.len());
         let _ = self.gossip_tx.send(data).await;

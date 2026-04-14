@@ -9,26 +9,34 @@ use alloy_rpc_types::engine::{
 };
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_primitives::{B256, U256, Bytes};
-use crate::info;
+use crate::{info, error};
 use crate::storage::storage::InMemoryStorage;
 use crate::mempool::Mempool;
 use crate::executor::Executor;
+use crate::p2p::sync::SyncEngine;
 use alloy_rlp::Decodable;
 
 pub struct EngineService {
     pub storage: Arc<RwLock<InMemoryStorage>>,
     pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
+    pub sync_engine: Arc<SyncEngine>,
     pub payloads: Arc<RwLock<HashMap<PayloadId, Block<Transaction>>>>,
 }
 
 impl EngineService {
-    pub fn new(storage: Arc<RwLock<InMemoryStorage>>, mempool: Arc<RwLock<Mempool>>, executor: Executor) -> Self {
+    pub fn new(
+        storage: Arc<RwLock<InMemoryStorage>>,
+        mempool: Arc<RwLock<Mempool>>,
+        executor: Executor,
+        sync_engine: Arc<SyncEngine>,
+    ) -> Self {
         info!("[EngineService] Initializing engine service");
         Self {
             storage,
             mempool,
             executor,
+            sync_engine,
             payloads: Arc::new(RwLock::new(HashMap::new())),
         }
     }
@@ -274,6 +282,14 @@ impl EngineService {
 
         // Check if head block is in storage
         let status = if storage.get_block_by_hash(forkchoice_state.head_block_hash).is_none() {
+            // Trigger sync for missing head
+            let sync_engine = self.sync_engine.clone();
+            tokio::spawn(async move {
+                if let Err(e) = sync_engine.trigger_sync().await {
+                    error!("[EngineService] Failed to trigger sync for missing head: {}", e);
+                }
+            });
+
             PayloadStatus {
                 status: PayloadStatusEnum::Syncing,
                 latest_valid_hash: None,
