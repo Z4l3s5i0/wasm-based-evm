@@ -10,7 +10,7 @@ use crate::rpc::account_manager::AccountManager;
 use crate::p2p::peer_manager::PeerManager;
 use crate::executor::Executor;
 use alloy_consensus::{TxEnvelope as Transaction, TxLegacy};
-use alloy_rlp::Encodable;
+use alloy_rlp::{Encodable, Decodable};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
 
@@ -66,8 +66,24 @@ impl EthService {
                 .map_err(|e| error::RpcError::Internal(e.to_string()))?
         };
 
-        let gas_price = request.gas_price.unwrap_or(1_000_000_000u128);
-        let gas_limit = request.gas.unwrap_or(21000);
+        // Standard gas price if not provided: use the current gas price
+        let gas_price = if let Some(p) = request.gas_price {
+            p
+        } else {
+            self.gas_price().await?.to::<u128>()
+        };
+
+        // Standard gas limit if not provided: estimate gas or use 21000 for simple transfers
+        let gas_limit = if let Some(g) = request.gas {
+            g
+        } else {
+            // For now, simple 21000 if it's just a transfer, otherwise we should estimate
+            if request.to.is_some() && request.input.data.is_none() {
+                21000
+            } else {
+                self.estimate_gas(request.clone(), None).await?.to::<u64>()
+            }
+        };
 
         let tx = TxLegacy {
             chain_id: Some(chain_id),
@@ -159,5 +175,83 @@ impl EthService {
         
         // Let's assume 21000 + some gas for now, or use a fixed value.
         Ok(U256::from(21000u64))
+    }
+
+    pub async fn send_raw_transaction(&self, data: String) -> RpcResult<alloy_primitives::B256> {
+        let data = hex::decode(data.trim_start_matches("0x"))
+            .map_err(|e| error::RpcError::InvalidParams(format!("Invalid hex: {}", e)))?;
+        
+        let signed_tx = Transaction::decode(&mut &data[..])
+            .map_err(|e| error::RpcError::InvalidParams(format!("Invalid RLP: {}", e)))?;
+        
+        let hash = signed_tx.hash().clone();
+        info!("[EthService] eth_sendRawTransaction hash: {:?}", hash);
+
+        self.mempool.write().await.add_transaction(signed_tx.clone());
+
+        // Gossip the transaction to the P2P network
+        let mut rlp_data = Vec::new();
+        signed_tx.encode(&mut rlp_data);
+        if !rlp_data.is_empty() {
+            info!("[EthService] Gossiping transaction {:?}", hash);
+            self.peer_manager.broadcast_gossip(rlp_data).await;
+        }
+
+        Ok(hash)
+    }
+
+    pub async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<Bytes> {
+        let from = request.from.ok_or_else(|| error::RpcError::InvalidParams("from address is required".to_string()))?;
+        
+        if !self.account_manager.is_managed(&from) {
+            return Err(error::RpcError::AccountNotFound(from));
+        }
+
+        let chain_id = self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?;
+        let nonce = if let Some(n) = request.nonce {
+            n
+        } else {
+            self.state_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest)).await
+                .map_err(|e| error::RpcError::Internal(e.to_string()))?
+        };
+
+        let gas_price = request.gas_price.unwrap_or(1_000_000_000u128);
+        let gas_limit = request.gas.unwrap_or(21000);
+
+        let tx = TxLegacy {
+            chain_id: Some(chain_id),
+            nonce,
+            gas_price,
+            gas_limit,
+            to: request.to.unwrap_or_default().into(),
+            value: request.value.unwrap_or_default(),
+            input: request.input.data.clone().unwrap_or_default(),
+        };
+
+        let signed_tx = self.account_manager.sign_transaction(&from, tx).await?;
+        let mut rlp_data = Vec::new();
+        signed_tx.encode(&mut rlp_data);
+        
+        Ok(Bytes::from(rlp_data))
+    }
+
+    pub async fn sign(&self, address: Address, message: String) -> RpcResult<alloy_primitives::Signature> {
+        if !self.account_manager.is_managed(&address) {
+            return Err(error::RpcError::AccountNotFound(address));
+        }
+
+        // eth_sign expects the message to be signed with the Ethereum prefix
+        // However, many implementations just sign the raw message if it's already hex, 
+        // or the bytes of the string.
+        // The spec says: "The message is prefixed with "\x19Ethereum Signed Message:\n" + message.length and hashed"
+        // PrivateKeySigner::sign_message_sync already handles EIP-191 prefixing.
+        
+        let message_bytes = if message.starts_with("0x") {
+            hex::decode(&message[2..]).unwrap_or_else(|_| message.into_bytes())
+        } else {
+            message.into_bytes()
+        };
+
+        self.account_manager.sign(&address, &message_bytes).await
     }
 }

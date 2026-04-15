@@ -1,7 +1,8 @@
-use alloy_primitives::Address;
+use alloy_primitives::{Address, Bytes, B256};
 use alloy_consensus::{TxEnvelope, TxLegacy, SignableTransaction};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_network::TxSignerSync;
+use alloy_signer::SignerSync;
 use std::collections::HashMap;
 use crate::error::{RpcResult, RpcError};
 
@@ -67,5 +68,16 @@ impl AccountManager {
         // Create the signed transaction envelope.
         let signed_tx = tx.into_signed(signature);
         Ok(TxEnvelope::Legacy(signed_tx))
+    }
+
+    /// Sign a message for a managed address.
+    pub async fn sign(&self, from: &Address, message: &[u8]) -> RpcResult<alloy_primitives::Signature> {
+        let signer = self.signers.get(from)
+            .ok_or_else(|| RpcError::AccountNotFound(*from))?;
+
+        let signature = signer.sign_message_sync(message)
+            .map_err(|e| RpcError::Internal(format!("Signing failed: {}", e)))?;
+
+        Ok(signature)
     }
 }
