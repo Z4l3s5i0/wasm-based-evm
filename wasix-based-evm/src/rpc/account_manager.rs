@@ -56,18 +56,30 @@ impl AccountManager {
     }
 
     /// Sign a transaction for a managed address.
-    pub async fn sign_transaction(&self, from: &Address, mut tx: TxLegacy) -> RpcResult<TxEnvelope> {
+    pub async fn sign_transaction(&self, from: &Address, tx: TxLegacy) -> RpcResult<TxEnvelope> {
         let signer = self.signers.get(from)
             .ok_or_else(|| RpcError::AccountNotFound(*from))?;
 
-        // In a real implementation, we should support EIP-1559 and EIP-2930 as well.
-        // For now, let's focus on Legacy signing.
-        let signature = signer.sign_transaction_sync(&mut tx)
+        let mut tx_clone = tx.clone();
+        let signature = signer.sign_transaction_sync(&mut tx_clone)
             .map_err(|e| RpcError::Internal(format!("Signing failed: {}", e)))?;
 
         // Create the signed transaction envelope.
-        let signed_tx = tx.into_signed(signature);
+        let signed_tx = tx_clone.into_signed(signature);
         Ok(TxEnvelope::Legacy(signed_tx))
+    }
+
+    /// Sign an EIP-1559 transaction for a managed address.
+    pub async fn sign_transaction_1559(&self, from: &Address, tx: alloy_consensus::TxEip1559) -> RpcResult<TxEnvelope> {
+        let signer = self.signers.get(from)
+            .ok_or_else(|| RpcError::AccountNotFound(*from))?;
+
+        let mut tx_clone = tx.clone();
+        let signature = signer.sign_transaction_sync(&mut tx_clone)
+            .map_err(|e| RpcError::Internal(format!("Signing failed: {}", e)))?;
+
+        let signed_tx = tx_clone.into_signed(signature);
+        Ok(TxEnvelope::Eip1559(signed_tx))
     }
 
     /// Sign a message for a managed address.
