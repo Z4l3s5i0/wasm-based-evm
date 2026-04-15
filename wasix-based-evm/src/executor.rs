@@ -185,17 +185,26 @@ impl Executor {
         debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", state_root, txs_root, receipts_root, withdrawals_root);
 
         // Verify roots against block
-        if block.header.state_root != B256::ZERO && state_root != block.header.state_root {
+        if block.header.state_root != B256::ZERO 
+            && block.header.state_root != alloy_trie::EMPTY_ROOT_HASH
+            && state_root != block.header.state_root 
+        {
             let err = format!("State root mismatch: expected {:?}, got {:?}", block.header.state_root, state_root);
             info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
-        if block.header.transactions_root != B256::ZERO && txs_root != block.header.transactions_root {
+        if block.header.transactions_root != B256::ZERO 
+            && block.header.transactions_root != alloy_trie::EMPTY_ROOT_HASH
+            && txs_root != block.header.transactions_root 
+        {
             let err = format!("Transactions root mismatch: expected {:?}, got {:?}", block.header.transactions_root, txs_root);
             info!("[Executor] ERROR: {}", err);
             return Err(err);
         }
-        if block.header.receipts_root != B256::ZERO && receipts_root != block.header.receipts_root {
+        if block.header.receipts_root != B256::ZERO 
+            && block.header.receipts_root != alloy_trie::EMPTY_ROOT_HASH
+            && receipts_root != block.header.receipts_root 
+        {
             let err = format!("Receipts root mismatch: expected {:?}, got {:?}", block.header.receipts_root, receipts_root);
             info!("[Executor] ERROR: {}", err);
             return Err(err);

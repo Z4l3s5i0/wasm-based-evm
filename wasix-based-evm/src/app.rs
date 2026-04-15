@@ -38,7 +38,9 @@ pub struct App {
     gossip_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
     mempool: Arc<RwLock<Mempool>>,
     storage: Arc<RwLock<InMemoryStorage>>,
+    executor: Arc<Executor>,
     data_dir: PathBuf,
+    dev_interval: Option<u64>,
 }
 
 impl App {
@@ -77,6 +79,18 @@ impl App {
 
         let _eth_handle = eth_server.start(self.eth_module);
         let _auth_handle = auth_server.start(self.auth_module);
+
+        if let Some(interval) = self.dev_interval {
+            let dev_mode = crate::dev::DevMode::new(
+                self.mempool.clone(),
+                self.storage.clone(),
+                self.executor.clone(),
+                interval,
+            );
+            tokio::spawn(async move {
+                dev_mode.start().await;
+            });
+        }
 
         let storage = self.storage.clone();
         let data_dir = self.data_dir.clone();
@@ -294,7 +308,9 @@ impl AppBuilder {
             gossip_rx: None, // Moved to GossipHandler
             mempool: mempool.clone(),
             storage: storage.clone(),
+            executor: executor.clone(),
             data_dir,
+            dev_interval: args.dev,
         })
     }
 }

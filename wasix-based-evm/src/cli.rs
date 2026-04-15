@@ -47,4 +47,8 @@ pub struct Args {
     /// Verbosity level (0: none, 1: info, 2: debug)
     #[arg(long, default_value_t = 1)]
     pub verbose: u8,
+
+    /// Interval in seconds for automatic block production in dev mode
+    #[arg(long, default_missing_value = "12", num_args = 0..=1)]
+    pub dev: Option<u64>,
 }

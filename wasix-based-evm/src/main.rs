@@ -6,6 +6,7 @@ mod storage;
 mod mempool;
 mod cli;
 mod logging;
+mod dev;
 mod app;
 mod p2p;
 mod frontend;

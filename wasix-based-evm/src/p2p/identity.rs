@@ -40,7 +40,7 @@ impl Identity {
             None => {
                 let mut bytes = [0u8; 32];
                 getrandom::getrandom(&mut bytes)
-                    .map_err(|e| anyhow::anyhow!("getrandom failed: {:?}", e))?;;
+                    .map_err(|e| anyhow::anyhow!("getrandom failed: {:?}", e))?;
                 SigningKey::from_slice(&bytes)
                     .expect("32 bytes is valid secret key length")
             }
