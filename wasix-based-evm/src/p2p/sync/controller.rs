@@ -32,9 +32,9 @@ impl SyncController {
     ) -> Self {
         Self {
             storage: storage.clone(),
-            mempool,
+            mempool: mempool.clone(),
             downloader: Downloader::new(peer_manager),
-            processor: BlockProcessor::new(storage, executor),
+            processor: BlockProcessor::new(storage, executor, mempool),
             is_syncing: AtomicBool::new(false),
             current_block: AtomicU64::new(0),
             highest_block: AtomicU64::new(0),

@@ -56,9 +56,14 @@ impl Mempool {
     }
 
     /// Set the current base fee and re-evaluate pending pool.
-    pub fn update_base_fee(&mut self, new_base_fee: U256) {
+    pub async fn update_base_fee(&mut self, new_base_fee: U256, state: &dyn StateProvider) {
+        let increased = new_base_fee > self.base_fee;
         self.base_fee = new_base_fee;
-        // In a real client, we might evict transactions that can no longer pay the base fee.
+        
+        if increased {
+            info!("[Mempool] Base fee increased to {}. Revalidating mempool...", new_base_fee);
+            self.revalidate(state).await;
+        }
     }
 
     /// Internal helper to insert a transaction into pending or queued maps.
@@ -371,6 +376,22 @@ impl Mempool {
 
             for tx in queue {
                 let tx_nonce = tx.nonce();
+                // Check if transaction can pay the base fee
+                let max_fee = match tx {
+                    Transaction::Legacy(t) => t.tx().gas_price,
+                    Transaction::Eip2930(t) => t.tx().gas_price,
+                    Transaction::Eip1559(t) => t.tx().max_fee_per_gas,
+                    Transaction::Eip4844(t) => t.tx().max_fee_per_gas(),
+                    _ => 0,
+                };
+
+                if max_fee < self.base_fee.to::<u128>() {
+                    info!("[Mempool] Evicting transaction {:?} (nonce: {}) because max fee {} is below base fee {}", 
+                        tx.hash(), tx_nonce, max_fee, self.base_fee);
+                    to_remove.push(tx.hash().clone());
+                    continue;
+                }
+
                 // A very simplified balance check: gas_limit * gas_price + value
                 let gas_limit = tx.gas_limit() as u128;
                 let gas_price = tx.gas_price().unwrap_or_default();
@@ -390,6 +411,22 @@ impl Mempool {
 
             for tx in queue {
                 let tx_nonce = tx.nonce();
+                // Check if transaction can pay the base fee
+                let max_fee = match tx {
+                    Transaction::Legacy(t) => t.tx().gas_price,
+                    Transaction::Eip2930(t) => t.tx().gas_price,
+                    Transaction::Eip1559(t) => t.tx().max_fee_per_gas,
+                    Transaction::Eip4844(t) => t.tx().max_fee_per_gas(),
+                    _ => 0,
+                };
+
+                if max_fee < self.base_fee.to::<u128>() {
+                    info!("[Mempool] Evicting transaction {:?} (nonce: {}) because max fee {} is below base fee {}", 
+                        tx.hash(), tx_nonce, max_fee, self.base_fee);
+                    to_remove.push(tx.hash().clone());
+                    continue;
+                }
+
                 let gas_limit = tx.gas_limit() as u128;
                 let gas_price = tx.gas_price().unwrap_or_default();
                 let value = tx.value().to::<u128>();
