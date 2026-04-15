@@ -5,12 +5,12 @@ edition = "2024"
 
 [profile.dev]
 panic = "abort"
-lto = true
+#lto = true
 
 [profile.release]
 panic = "abort"
-lto = true
-codegen-units = 1
+#lto = true
+#codegen-units = 1
 [[bin]]
 name = "wasix-based-evm"
 path = "src/main.rs"
@@ -44,12 +44,7 @@ clap = { version = "4.5.4", features = ["derive"] }
 thiserror = "2.0.18"
 hex = "0.4.3"
 anyhow = "1.0.102"
-rcgen = "0.13"
-axum = { version = "0.7.5", default-features = false, features = ["http1", "json", "query", "tokio", "form"] }
-tower = { version = "0.4.13", default-features = false, features = ["util"] }
-tower-http = { version = "0.5.2", default-features = false, features = ["fs", "cors"] }
-maud = "0.26.0"
-once_cell = "1.19.0"
+
 k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic"] }
 serde = { version = "1.0.228", features = ["derive", "std", "serde_derive"] }
 #parking_lot = { path = "../parking_lot", default-features = false, features = ["deadlock_detection", "nightly", "default"] }
@@ -62,10 +57,20 @@ serde = { version = "1.0.228", features = ["derive", "std", "serde_derive"] }
 #jsonrpsee = {version = "0.26.0", default-features = false, features = ["tracing", "server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
 #rustls = { version = "0.23.31", default-features = false, features = [ "tls12"] }
 
+### frontend
+rcgen = "0.13"
+axum = { version = "0.7.5", default-features = false, features = ["http1", "json", "query", "tokio", "form"] }
+tower = { version = "0.4.13", default-features = false, features = ["util"] }
+tower-http = { version = "0.5.2", default-features = false, features = ["fs", "cors"] }
+maud = "0.26.0"
+once_cell = "1.19.0"
+#yew = { version = "0.23", features = ["csr"] }
+#dioxus = { version = "0.7.5", features = ["wasm-split", "fullstack"] }
 
 #  WASIX dependencies
 
 # When using wasix
+#wasmer = { version = "7.1.0", default-features=false, features=["js-default"]}
 wasix = { version = "0.13.1" }
 
 reqwest = {git = "https://github.com/wasix-org/reqwest.git", branch = "rustls-0.21.8", default-features = false, features = ["json", "serde_json"]}
@@ -74,6 +79,8 @@ tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0
 tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31", default-features = false, features = [ "tls12"] }
+
+
 
 
 [patch.crates-io]

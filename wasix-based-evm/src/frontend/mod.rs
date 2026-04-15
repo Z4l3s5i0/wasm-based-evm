@@ -1,3 +1,6 @@
+pub mod rpc_page;
+pub mod logs_page;
+
 use axum::{
     routing::{get, post},
     Router,
@@ -5,15 +8,58 @@ use axum::{
     Form,
 };
 use maud::{html, DOCTYPE};
-use crate::logging::LOGS;
 use std::net::SocketAddr;
-use crate::{info, error};
-use serde::Deserialize;
+use crate::{info};
+use serde::{Deserialize, Deserializer, de};
+use std::fmt;
+use crate::frontend::logs_page::{get_logs_markup, index};
+use crate::frontend::rpc_page::{execute_rpc, rpc_page};
 
 #[derive(Deserialize)]
 pub struct RpcForm {
-    method: String,
-    params: String,
+    pub method: String,
+    #[serde(deserialize_with = "deserialize_params")]
+    pub params: Vec<String>,
+}
+
+fn deserialize_params<'de, D>(deserializer: D) -> Result<Vec<String>, D::Error>
+where
+    D: Deserializer<'de>,
+{
+    struct ParamsVisitor;
+
+    impl<'de> de::Visitor<'de> for ParamsVisitor {
+        type Value = Vec<String>;
+
+        fn expecting(&self, formatter: &mut fmt::Formatter) -> fmt::Result {
+            formatter.write_str("a string or a sequence of strings")
+        }
+
+        fn visit_str<E>(self, v: &str) -> Result<Self::Value, E>
+        where
+            E: de::Error,
+        {
+            Ok(vec![v.to_string()])
+        }
+
+        fn visit_seq<A>(self, mut seq: A) -> Result<Self::Value, A::Error>
+        where
+            A: de::SeqAccess<'de>,
+        {
+            let mut values = Vec::new();
+            while let Some(value) = seq.next_element()? {
+                values.push(value);
+            }
+            Ok(values)
+        }
+    }
+
+    deserializer.deserialize_any(ParamsVisitor)
+}
+
+#[derive(Deserialize)]
+pub struct MethodQuery {
+    pub method: String,
 }
 
 pub async fn start_frontend(addr: SocketAddr, rpc_port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -22,6 +68,7 @@ pub async fn start_frontend(addr: SocketAddr, rpc_port: u16) -> Result<(), Box<d
         .route("/", get(index))
         .route("/logs", get(get_logs))
         .route("/rpc", get(rpc_page))
+        .route("/rpc/params", get(crate::frontend::rpc_page::rpc_params))
         .route("/rpc/execute", post(move |form| execute_rpc(form, rpc_url.clone())));
 
     info!("[Frontend] Serving at http://{}", addr);
@@ -72,82 +119,7 @@ fn layout(title: &str, content: maud::Markup) -> maud::Markup {
     }
 }
 
-async fn index() -> Html<String> {
-    let content = html! {
-        h1 { "Node Logs" }
-        div class="log-container" hx-get="/logs" hx-trigger="every 2s" {
-            (get_logs_markup())
-        }
-    };
-    Html(layout("Wasix EVM - Logs", content).into_string())
-}
-
-async fn rpc_page() -> Html<String> {
-    let content = html! {
-        h1 { "RPC Console" }
-        form hx-post="/rpc/execute" hx-target="#rpc-result" {
-            div class="field" {
-                label for="method" { "Method" }
-                input type="text" id="method" name="method" placeholder="eth_blockNumber" required;
-            }
-            div class="field" {
-                label for="params" { "Params (JSON Array)" }
-                textarea id="params" name="params" rows="5" placeholder="[]" { "[]" }
-            }
-            button type="submit" { "Execute" }
-        }
-        div id="rpc-result" { "Result will appear here..." }
-    };
-    Html(layout("Wasix EVM - RPC Console", content).into_string())
-}
-
 async fn get_logs() -> Html<String> {
     Html(get_logs_markup().into_string())
 }
 
-fn get_logs_markup() -> maud::Markup {
-    let logs = LOGS.lock().unwrap();
-    html! {
-        @for log in logs.iter().rev() {
-            @let level = if log.contains("[INFO]") { "INFO" } else if log.contains("[DEBUG]") { "DEBUG" } else if log.contains("[ERROR]") { "ERROR" } else { "" };
-            div class=(format!("log-entry {}", level)) {
-                (log)
-            }
-        }
-    }
-}
-
-async fn execute_rpc(Form(form): Form<RpcForm>, rpc_url: String) -> Html<String> {
-    let client = reqwest::Client::new();
-    let params_val: serde_json::Value = match serde_json::from_str(&form.params) {
-        Ok(v) => v,
-        Err(e) => return Html(format!("Invalid JSON params: {}", e)),
-    };
-
-    let body = serde_json::json!({
-        "jsonrpc": "2.0",
-        "id": 1,
-        "method": form.method,
-        "params": params_val
-    });
-
-    match client.post(&rpc_url).json(&body).send().await {
-        Ok(resp) => {
-            match resp.text().await {
-                Ok(text) => {
-                    // Try to pretty print if it's JSON
-                    let display_text = match serde_json::from_str::<serde_json::Value>(&text) {
-                        Ok(json) => serde_json::to_string_pretty(&json).unwrap_or(text),
-                        Err(_) => text,
-                    };
-                    Html(display_text)
-                }
-                Err(e) => Html(format!("Error reading response: {}", e)),
-            }
-        }
-        Err(e) => {
-            error!("[Frontend] RPC execution failed: {}", e);
-            Html(format!("RPC Error: {}", e))
-        }
-    }
-}

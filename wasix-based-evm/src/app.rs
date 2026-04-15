@@ -67,13 +67,13 @@ impl App {
         info!("[App] Eth JSON-RPC Server listening on {}", self.eth_rpc_addr);
         info!("[App] Auth Engine JSON-RPC Server listening on {}", self.auth_rpc_addr);
         
-        let frontend_addr = self.frontend_addr;
+        // let frontend_addr = self.frontend_addr;
         let eth_rpc_port = self.eth_rpc_port;
-        tokio::spawn(async move {
-            if let Err(e) = crate::frontend::start_frontend(frontend_addr, eth_rpc_port).await {
-                error!("[App] Frontend error: {}", e);
-            }
-        });
+        // tokio::spawn(async move {
+        //     if let Err(e) = crate::frontend::start_frontend(frontend_addr, eth_rpc_port).await {
+        //         error!("[App] Frontend error: {}", e);
+        //     }
+        // });
 
         let _eth_handle = eth_server.start(self.eth_module);
         let _auth_handle = auth_server.start(self.auth_module);
