@@ -102,7 +102,7 @@ impl DevMode {
                 let block_hash = block.header.hash_slow();
                 let new_base_fee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
                 storage.add_block(block);
-                storage.update_forkchoice(block_hash);
+                storage.update_forkchoice(block_hash, Some(block_hash), Some(block_hash));
                 
                 info!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);
 

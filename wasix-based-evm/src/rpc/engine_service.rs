@@ -278,7 +278,7 @@ impl EngineService {
         let mut storage = self.storage.write().await;
 
         // Update forkchoice in storage
-        storage.update_forkchoice(forkchoice_state.head_block_hash);
+        storage.update_forkchoice(forkchoice_state.head_block_hash, Some(forkchoice_state.safe_block_hash), Some(forkchoice_state.finalized_block_hash));
 
         // Check if head block is in storage
         let status = if storage.get_block_by_hash(forkchoice_state.head_block_hash).is_none() {

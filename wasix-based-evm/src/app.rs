@@ -273,7 +273,7 @@ impl AppBuilder {
 
         let mut eth_facade = RpcServerFacade::new();
         let mut auth_facade = RpcServerFacade::new();
-        let provider = Arc::new(StorageProvider::new(storage.clone()));
+        let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
 
         eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
         eth_facade.register_debug(DebugService { mempool: mempool.clone() })?;

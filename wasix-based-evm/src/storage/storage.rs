@@ -7,6 +7,7 @@ use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
 use crate::storage::genesis::Genesis;
 use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, LogProvider};
+use crate::mempool::Mempool;
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction, Header};
 use alloy_eips::BlockId;
 use anyhow::{Result, anyhow};
@@ -287,9 +288,49 @@ impl InMemoryStorage {
         self.get_block_by_number(number).map(|b| b.header.hash_slow())
     }
 
-    pub fn update_forkchoice(&mut self, hash: B256) {
-        info!("[Storage] Updating forkchoice: head={:?}", hash);
-        self.head_block_hash = hash;
+    pub fn get_block_by_id(&self, block_id: BlockId) -> Option<&Block<Transaction>> {
+        match block_id {
+            BlockId::Hash(hash) => self.get_block_by_hash(hash.into()),
+            BlockId::Number(num) => {
+                match num {
+                    alloy_eips::BlockNumberOrTag::Number(n) => self.get_block_by_number(n),
+                    alloy_eips::BlockNumberOrTag::Latest | alloy_eips::BlockNumberOrTag::Pending => {
+                        self.get_block_by_hash(self.head_block_hash)
+                    }
+                    alloy_eips::BlockNumberOrTag::Safe => self.get_block_by_hash(self.safe_block_hash),
+                    alloy_eips::BlockNumberOrTag::Finalized => {
+                        self.get_block_by_hash(self.finalized_block_hash)
+                    }
+                    alloy_eips::BlockNumberOrTag::Earliest => self.get_block_by_number(0),
+                }
+            }
+        }
+    }
+
+    pub fn get_block_hash_by_id(&self, block_id: BlockId) -> Option<B256> {
+        match block_id {
+            BlockId::Hash(hash) => Some(hash.into()),
+            BlockId::Number(num) => match num {
+                alloy_eips::BlockNumberOrTag::Number(n) => self.get_block_hash(n),
+                alloy_eips::BlockNumberOrTag::Latest | alloy_eips::BlockNumberOrTag::Pending => {
+                    Some(self.head_block_hash)
+                }
+                alloy_eips::BlockNumberOrTag::Safe => Some(self.safe_block_hash),
+                alloy_eips::BlockNumberOrTag::Finalized => Some(self.finalized_block_hash),
+                alloy_eips::BlockNumberOrTag::Earliest => self.get_block_hash(0),
+            },
+        }
+    }
+
+    pub fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>) {
+        info!("[Storage] Updating forkchoice: head={:?}, safe={:?}, finalized={:?}", head, safe, finalized);
+        self.head_block_hash = head;
+        if let Some(s) = safe {
+            self.safe_block_hash = s;
+        }
+        if let Some(f) = finalized {
+            self.finalized_block_hash = f;
+        }
     }
 
     pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
@@ -307,33 +348,87 @@ impl InMemoryStorage {
 
 pub struct StorageProvider {
     inner: Arc<RwLock<InMemoryStorage>>,
+    mempool: Arc<RwLock<Mempool>>,
+    executor: Arc<crate::executor::Executor>,
 }
 
 impl StorageProvider {
-    pub fn new(storage: Arc<RwLock<InMemoryStorage>>) -> Self {
-        Self { inner: storage }
+    pub fn new(
+        storage: Arc<RwLock<InMemoryStorage>>,
+        mempool: Arc<RwLock<Mempool>>,
+        executor: Arc<crate::executor::Executor>,
+    ) -> Self {
+        Self {
+            inner: storage,
+            mempool,
+            executor,
+        }
+    }
+
+    async fn get_pending_state(&self) -> Result<InMemoryStorage> {
+        let storage = self.inner.read().await.clone();
+        let transactions = self.mempool.read().await.peek_transactions(100); // Take a reasonable amount for pending
+        
+        if transactions.is_empty() {
+            return Ok(storage);
+        }
+
+        let mut pending_storage = storage;
+        let latest_block = pending_storage.get_latest_block().cloned().unwrap();
+        let pending_block = Block {
+            header: Header {
+                number: latest_block.header.number + 1,
+                parent_hash: latest_block.header.hash_slow(),
+                timestamp: latest_block.header.timestamp + 1,
+                ..Default::default()
+            },
+            body: alloy_consensus::BlockBody {
+                transactions: transactions.clone(),
+                ..Default::default()
+            },
+        };
+
+        // We don't want to fail if some txs in mempool are invalid, just apply what we can
+        let _ = self.executor.execute_block(&mut pending_storage, transactions, pending_block);
+        
+        Ok(pending_storage)
     }
 }
 
 #[async_trait]
 impl StateProvider for StorageProvider {
     async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>> {
+        if matches!(block_id, BlockId::Number(alloy_eips::BlockNumberOrTag::Pending)) {
+            return self.get_pending_state().await?.account(address, block_id).await;
+        }
         self.inner.read().await.account(address, block_id).await
     }
 
     async fn storage(&self, address: Address, slot: B256, block_id: BlockId) -> Result<Option<U256>> {
+        if matches!(block_id, BlockId::Number(alloy_eips::BlockNumberOrTag::Pending)) {
+            return self.get_pending_state().await?.storage(address, slot, block_id).await;
+        }
         self.inner.read().await.storage(address, slot, block_id).await
     }
 
     async fn code(&self, address: Address, block_id: BlockId) -> Result<Option<Bytes>> {
+        if matches!(block_id, BlockId::Number(alloy_eips::BlockNumberOrTag::Pending)) {
+            return self.get_pending_state().await?.code(address, block_id).await;
+        }
         self.inner.read().await.code(address, block_id).await
     }
 
     async fn balance(&self, address: Address, block_id: BlockId) -> Result<U256> {
+        if matches!(block_id, BlockId::Number(alloy_eips::BlockNumberOrTag::Pending)) {
+            return self.get_pending_state().await?.balance(address, block_id).await;
+        }
         self.inner.read().await.balance(address, block_id).await
     }
 
     async fn transaction_count(&self, address: Address, block_id: BlockId) -> Result<u64> {
+        if matches!(block_id, BlockId::Number(alloy_eips::BlockNumberOrTag::Pending)) {
+            return self.get_pending_state().await?.transaction_count(address, block_id).await;
+        }
         self.inner.read().await.transaction_count(address, block_id).await
     }
 
@@ -434,33 +529,11 @@ impl StateProvider for InMemoryStorage {
 #[async_trait]
 impl BlockProvider for InMemoryStorage {
     async fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
-        match block_id {
-            BlockId::Hash(hash) => Ok(self.get_block_by_hash(hash.into()).map(|b| b.header.clone())),
-            BlockId::Number(num) => {
-                let n = match num {
-                    alloy_eips::BlockNumberOrTag::Number(n) => n,
-                    alloy_eips::BlockNumberOrTag::Latest => self.get_latest_block_number(),
-                    alloy_eips::BlockNumberOrTag::Earliest => 0,
-                    _ => return Err(anyhow!("Unsupported block tag")),
-                };
-                Ok(self.get_block_by_number(n).map(|b| b.header.clone()))
-            }
-        }
+        Ok(self.get_block_by_id(block_id).map(|b| b.header.clone()))
     }
 
     async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> {
-        match block_id {
-            BlockId::Hash(hash) => Ok(self.get_block_by_hash(hash.into()).cloned()),
-            BlockId::Number(num) => {
-                let n = match num {
-                    alloy_eips::BlockNumberOrTag::Number(n) => n,
-                    alloy_eips::BlockNumberOrTag::Latest => self.get_latest_block_number(),
-                    alloy_eips::BlockNumberOrTag::Earliest => 0,
-                    _ => return Err(anyhow!("Unsupported block tag")),
-                };
-                Ok(self.get_block_by_number(n).cloned())
-            }
-        }
+        Ok(self.get_block_by_id(block_id).cloned())
     }
 
     async fn block_hash(&self, number: u64) -> Result<Option<B256>> {
