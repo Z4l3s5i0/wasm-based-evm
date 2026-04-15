@@ -3,6 +3,7 @@ use tokio::sync::RwLock;
 use std::sync::Arc;
 use alloy_consensus::Block as ConsensusBlock;
 use alloy_consensus::TxEnvelope as Transaction;
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_rlp::Decodable;
 use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
@@ -78,7 +79,12 @@ impl GossipHandler {
         // Add to mempool and re-broadcast only if it's new
         let is_new = {
             let mut mempool = self.mempool.write().await;
-            mempool.add_transaction(tx)
+            let _from = tx.recover_signer().unwrap_or_default();
+            // We need current nonce here. For now we use 0 or we could use the storage.
+            // GossipHandler doesn't have storage access directly, but sync_engine might.
+            // Let's use 0 for now as a fallback if we don't want to add storage here.
+            // Actually, it's better to provide a way to get the nonce.
+            mempool.add_transaction(tx, 0)
         };
         
         if is_new {

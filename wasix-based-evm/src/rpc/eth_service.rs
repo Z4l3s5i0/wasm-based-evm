@@ -9,7 +9,7 @@ use crate::mempool::Mempool;
 use crate::rpc::account_manager::AccountManager;
 use crate::p2p::peer_manager::PeerManager;
 use crate::executor::Executor;
-use alloy_consensus::{TxEnvelope as Transaction, TxLegacy};
+use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRecoverable};
 use alloy_rlp::{Encodable, Decodable};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
@@ -99,7 +99,7 @@ impl EthService {
         let hash = signed_tx.hash().clone();
 
         info!("[EthService] Adding signed transaction {:?} to mempool", hash);
-        self.mempool.write().await.add_transaction(signed_tx.clone());
+        self.mempool.write().await.add_transaction(signed_tx.clone(), nonce);
 
         // Gossip the transaction to the P2P network
         let mut rlp_data = Vec::new();
@@ -187,7 +187,11 @@ impl EthService {
         let hash = signed_tx.hash().clone();
         info!("[EthService] eth_sendRawTransaction hash: {:?}", hash);
 
-        self.mempool.write().await.add_transaction(signed_tx.clone());
+        let from = signed_tx.recover_signer().unwrap_or_default();
+        let current_nonce = self.state_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest)).await
+            .map_err(|e| error::RpcError::Internal(e.to_string()))?;
+
+        self.mempool.write().await.add_transaction(signed_tx.clone(), current_nonce);
 
         // Gossip the transaction to the P2P network
         let mut rlp_data = Vec::new();

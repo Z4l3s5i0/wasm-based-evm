@@ -2,8 +2,9 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::mempool::Mempool;
 use crate::storage::storage::InMemoryStorage;
+use crate::storage::traits::StateProvider;
 use crate::executor::Executor;
-use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
+use alloy_consensus::{Block, Header, transaction::SignerRecoverable};
 use alloy_primitives::{Bytes, B256};
 use crate::{info, error};
 
@@ -103,13 +104,19 @@ impl DevMode {
                 storage.update_forkchoice(block_hash);
                 
                 info!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);
+
+                // Revalidate mempool after successful block production
+                mempool.revalidate(&*storage).await;
+
                 Ok(())
             }
             Err(e) => {
                 // If block execution fails, we should put transactions back into mempool
                 info!("[DevMode] Block execution failed: {}. Putting {} transactions back into mempool.", e, transactions.len());
                 for tx in transactions {
-                    mempool.add_transaction(tx);
+                    let from = tx.recover_signer().unwrap_or_default();
+                    let current_nonce = storage.transaction_count(from, alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Latest)).await.unwrap_or(0);
+                    mempool.add_transaction(tx, current_nonce);
                 }
                 Err(format!("Block execution failed: {}", e))
             }

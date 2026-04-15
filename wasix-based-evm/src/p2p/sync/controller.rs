@@ -2,12 +2,14 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::storage::storage::InMemoryStorage;
+use crate::storage::traits::StateProvider;
 use crate::p2p::peer_manager::PeerManager;
 use crate::executor::Executor;
 use crate::mempool::Mempool;
 use crate::p2p::sync::downloader::Downloader;
 use crate::p2p::sync::processor::BlockProcessor;
 use crate::{info, error, debug};
+use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{U256};
 use alloy_rpc_types::{SyncStatus, SyncInfo};
 
@@ -114,8 +116,11 @@ impl SyncController {
                         info!("[Sync] Reverted {} blocks. Re-adding {} transactions to mempool", local_height - ancestor_height, reverted_txs.len());
                         {
                             let mut mempool_write = self.mempool.write().await;
+                            let storage_read = self.storage.read().await;
                             for tx in reverted_txs {
-                                mempool_write.add_transaction(tx);
+                                let from = tx.recover_signer().unwrap_or_default();
+                                let current_nonce = storage_read.transaction_count(from, alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Latest)).await.unwrap_or(0);
+                                mempool_write.add_transaction(tx, current_nonce);
                             }
                         }
                         
