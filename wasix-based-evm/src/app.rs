@@ -1,3 +1,4 @@
+use std::net::SocketAddr;
 use crate::cli::Args;
 use crate::storage::genesis::Genesis;
 use crate::storage::storage::{InMemoryStorage, StorageProvider};
@@ -179,9 +180,10 @@ impl AppBuilder {
             logging::set_log_level(level);
         }
 
-        let eth_rpc_addr = format!("127.0.0.1:{}", args.eth_rpc_port).parse()?;
-        let auth_rpc_addr = format!("127.0.0.1:{}", args.auth_rpc_port).parse()?;
-        let frontend_addr = format!("127.0.0.1:{}", args.frontend_port).parse()?;
+        let bind_ip = args.ext_ip.unwrap_or_else(|| "127.0.0.1".parse().unwrap());
+        let eth_rpc_addr = SocketAddr::new(bind_ip, args.eth_rpc_port);
+        let auth_rpc_addr = SocketAddr::new(bind_ip, args.auth_rpc_port);
+        let frontend_addr = SocketAddr::new(bind_ip, args.frontend_port);
 
         let data_dir = if let Some(ref dir) = args.data_dir {
             if !dir.exists() {

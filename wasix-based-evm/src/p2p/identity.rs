@@ -55,8 +55,7 @@ impl Identity {
         hex::encode(pubkey.to_sec1_bytes())
     }
 
-    /// Generate a self-signed certificate and private key for TLS
-    pub fn generate_tls_config(&self) -> Result<(Vec<u8>, Vec<u8>)> {
+    pub fn generate_tls_config(&self, ext_ip: Option<std::net::IpAddr>) -> Result<(Vec<u8>, Vec<u8>)> {
         let keypair = KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256)
             .map_err(|e| anyhow::anyhow!("Failed to generate rcgen KeyPair: {}", e))?;
 
@@ -71,6 +70,9 @@ impl Identity {
             rcgen::SanType::IpAddress("127.0.0.1".parse()?),
             rcgen::SanType::IpAddress("0.0.0.0".parse()?),
         ];
+        if let Some(ip) = ext_ip {
+            params.subject_alt_names.push(rcgen::SanType::IpAddress(ip));
+        }
         
         let cert = params.self_signed(&keypair)
             .map_err(|e| anyhow::anyhow!("Failed to generate certificate: {}", e))?;

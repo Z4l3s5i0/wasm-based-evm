@@ -160,14 +160,15 @@ impl PeerManager {
         bootnodes: Vec<String>,
     ) -> Result<()> {
         // Start Discovery Server
-        let discovery_addr: SocketAddr = format!("0.0.0.0:{}", discovery_port).parse()?;
+        let bind_ip = self.ext_ip.unwrap_or_else(|| "127.0.0.1".parse().unwrap());
+        let discovery_addr = SocketAddr::new(bind_ip, discovery_port);
         let discovery_server = ServerBuilder::default().build(discovery_addr).await?;
         let discovery_handle = discovery_server.start(DiscoveryApiServer::into_rpc(self.clone()));
         info!("[P2P] Discovery RPC Server started on {}", discovery_addr);
         tokio::spawn(discovery_handle.stopped());
 
         // Start P2P Server
-        let p2p_addr: SocketAddr = format!("0.0.0.0:{}", self.p2p_port).parse()?;
+        let p2p_addr = SocketAddr::new(bind_ip, self.p2p_port);
         let p2p_server = ServerBuilder::default().build(p2p_addr).await?;
         let p2p_handle = p2p_server.start(P2pApiServer::into_rpc(self.clone()));
         info!("[P2P] P2P RPC Server started on {}", p2p_addr);

@@ -63,7 +63,8 @@ pub struct MethodQuery {
 }
 
 pub async fn start_frontend(addr: SocketAddr, rpc_port: u16) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
-    let rpc_url = format!("http://127.0.0.1:{}", rpc_port);
+    let rpc_url = format!("http://{}", addr.ip());
+    let rpc_url = format!("{}:{}", rpc_url, rpc_port);
     let app = Router::new()
         .route("/", get(index))
         .route("/logs", get(get_logs))

@@ -5,12 +5,12 @@ edition = "2024"
 
 [profile.dev]
 panic = "abort"
-#lto = true
+lto = true
 
 [profile.release]
 panic = "abort"
-#lto = true
-#codegen-units = 1
+lto = true
+codegen-units = 1
 [[bin]]
 name = "wasix-based-evm"
 path = "src/main.rs"
