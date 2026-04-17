@@ -13,6 +13,7 @@ pub mod account_manager;
 pub mod block_service;
 pub mod transaction_service;
 pub mod log_service;
+pub mod jwt;
 
 mod account_mapper;
 mod block_mapper;

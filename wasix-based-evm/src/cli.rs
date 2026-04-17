@@ -44,6 +44,10 @@ pub struct Args {
     #[arg(long, default_value = "devnet")]
     pub chain: String,
 
+    /// Path to the JWT secret for the Auth Engine JSON-RPC
+    #[arg(long)]
+    pub auth_rpc_jwt_path: Option<PathBuf>,
+
     /// Verbosity level (0: none, 1: info, 2: debug)
     #[arg(long, default_value_t = 1)]
     pub verbose: u8,

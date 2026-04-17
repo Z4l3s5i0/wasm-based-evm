@@ -1,0 +1,320 @@
+info: `cargo` is unavailable for the active toolchain
+info: falling back to "C:\Users\aless\.rustup\fallback\cargo.exe"
+warning: patch `libc v0.2.139 (https://github.com/john-sharratt/libc.git?rev=682f9e91#682f9e91)` was not used in the crate graph
+warning: patch `ring v0.17.7 (https://github.com/wasix-org/ring?branch=0.17.7#be27e9a6)` was not used in the crate graph
+warning: patch `wasm-bindgen v0.2.84 (https://github.com/wasix-org/wasm-bindgen.git?branch=wasi#945c535f)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+warn: failed to check dependencies: Found incompatible crates in dependencies (of dependencies): ring
+To fix this add the following to 'Cargo.toml':
+[patch.crates-io]
+You might have to run `cargo update` to ensure the dependencies are used properly
+No replacements found for the following dependencies:
+* ring v0.17.5, known replacement versions: ^0.16.20
+info: `cargo` is unavailable for the active toolchain
+info: falling back to "C:\Users\aless\.rustup\fallback\cargo.exe"
+warning: patch `libc v0.2.139 (https://github.com/john-sharratt/libc.git?rev=682f9e91#682f9e91)` was not used in the crate graph
+warning: patch `ring v0.17.7 (https://github.com/wasix-org/ring?branch=0.17.7#be27e9a6)` was not used in the crate graph
+warning: patch `wasm-bindgen v0.2.84 (https://github.com/wasix-org/wasm-bindgen.git?branch=wasi#945c535f)` was not used in the crate graph
+help: Check that the patched package version and available features are compatible
+      with the dependency requirements. If the patch has a different version from
+      what is locked in the Cargo.lock file, run `cargo update` to use the new
+      version. This may also occur with an optional dependency that is not enabled.
+warning: unstable feature specified for `-Ctarget-feature`: `atomics`
+  |
+  = note: this feature is not stably supported; its behavior can change in the future
+warning: `evm-interpreter` (lib) generated 1 warning
+warning: `evm` (lib) generated 1 warning (1 duplicate)
+warning: `evm-precompile` (lib) generated 1 warning (1 duplicate)
+    Checking wasix-based-evm v0.1.0 (D:\MA\wasm-based-evm\wasix-based-evm)
+warning: unused imports: `B256` and `Bytes`
+ --> src\rpc\account_manager.rs:1:33
+  |
+1 | use alloy_primitives::{Address, Bytes, B256};
+  |                                 ^^^^^  ^^^^
+  |
+  = note: `#[warn(unused_imports)]` on by default
+warning: unused import: `anyhow`
+  --> src\storage\storage.rs:13:22
+   |
+13 | use anyhow::{Result, anyhow};
+   |                      ^^^^^^
+warning: unused import: `Form`
+ --> src\frontend\mod.rs:8:5
+  |
+8 |     Form,
+  |     ^^^^
+warning: unused variable: `tx_hashes`
+  --> src\dev.rs:72:13
+   |
+72 |         let tx_hashes: Vec<B256> = transactions.iter().map(|tx| tx.hash...
+   |             ^^^^^^^^^ help: if this is intentional, prefix it with an underscore: `_tx_hashes`
+   |
+   = note: `#[warn(unused_variables)]` on by default
+warning: unused import: `crate::storage::traits::StateProvider`
+ --> src\p2p\sync\processor.rs:4:5
+  |
+4 | use crate::storage::traits::StateProvider;
+  |     ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+warning: unused import: `axum::handler::Handler`
+  --> src\app.rs:19:5
+   |
+19 | use axum::handler::Handler;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+warning: associated function `empty_module` is never used
+  --> src\rpc\mod.rs:50:12
+   |
+45 | impl RpcServerFacade {
+   | -------------------- associated function in this implementation
+...
+50 |     pub fn empty_module() -> jsonrpsee::RpcModule<()> {
+   |            ^^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` on by default
+warning: method `managed_addresses` is never used
+  --> src\rpc\account_manager.rs:54:12
+   |
+15 | impl AccountManager {
+   | ------------------- method in this implementation
+...
+54 |     pub fn managed_addresses(&self) -> Vec<Address> {
+   |            ^^^^^^^^^^^^^^^^^
+warning: struct `LogMapper` is never constructed
+ --> src\rpc\log_mapper.rs:1:12
+  |
+1 | pub struct LogMapper;
+  |            ^^^^^^^^^
+warning: method `execute` is never used
+  --> src\executor.rs:45:12
+   |
+38 | impl Executor {
+   | ------------- method in this implementation
+...
+45 |     pub fn execute(&self, storage: &mut InMemoryStorage, tx: TxEnvelope...
+   |            ^^^^^^^
+warning: associated function `builder` is never used
+  --> src\storage\genesis.rs:16:12
+   |
+15 | impl GenesisAccount {
+   | ------------------- associated function in this implementation
+16 |     pub fn builder() -> GenesisAccountBuilder {
+   |            ^^^^^^^
+warning: struct `GenesisAccountBuilder` is never constructed
+  --> src\storage\genesis.rs:22:12
+   |
+22 | pub struct GenesisAccountBuilder {
+   |            ^^^^^^^^^^^^^^^^^^^^^
+warning: methods `address`, `balance`, `code`, `nonce`, `storage`, and `build` are never used
+  --> src\storage\genesis.rs:31:12
+   |
+30 | impl GenesisAccountBuilder {
+   | -------------------------- methods in this implementation
+31 |     pub fn address(mut self, address: Address) -> Self {
+   |            ^^^^^^^
+...
+35 |     pub fn balance(mut self, balance: U256) -> Self {
+   |            ^^^^^^^
+...
+39 |     pub fn code(mut self, code: Vec<u8>) -> Self {
+   |            ^^^^
+...
+43 |     pub fn nonce(mut self, nonce: u64) -> Self {
+   |            ^^^^^
+...
+47 |     pub fn storage(mut self, storage: BTreeMap<B256, B256>) -> Self {
+   |            ^^^^^^^
+...
+51 |     pub fn build(self) -> GenesisAccount {
+   |            ^^^^^
+warning: associated function `builder` is never used
+  --> src\storage\genesis.rs:71:12
+   |
+70 | impl Genesis {
+   | ------------ associated function in this implementation
+71 |     pub fn builder() -> GenesisBuilder {
+   |            ^^^^^^^
+warning: struct `GenesisBuilder` is never constructed
+  --> src\storage\genesis.rs:77:12
+   |
+77 | pub struct GenesisBuilder {
+   |            ^^^^^^^^^^^^^^
+warning: methods `add_account`, `timestamp`, `chain_id`, `gas_limit`, and `build` are never used
+   --> src\storage\genesis.rs:85:12
+    |
+ 84 | impl GenesisBuilder {
+    | ------------------- methods in this implementation
+ 85 |     pub fn add_account(mut self, account: GenesisAccount) -> Self {
+    |            ^^^^^^^^^^^
+...
+ 89 |     pub fn timestamp(mut self, timestamp: u64) -> Self {
+    |            ^^^^^^^^^
+...
+ 93 |     pub fn chain_id(mut self, chain_id: u64) -> Self {
+    |            ^^^^^^^^
+...
+ 97 |     pub fn gas_limit(mut self, gas_limit: u64) -> Self {
+    |            ^^^^^^^^^
+...
+101 |     pub fn build(self) -> Genesis {
+    |            ^^^^^
+warning: multiple associated items are never used
+   --> src\storage\storage.rs:35:12
+    |
+ 34 | impl InMemoryStorage {
+    | -------------------- associated items in this implementation
+ 35 |     pub fn new(chain_id: EvmU256) -> Self {
+    |            ^^^
+...
+200 |     pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Opti...
+    |            ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+...
+204 |     pub fn get_block_receipts(&self, block_hash: B256) -> Vec<Receipt> {
+    |            ^^^^^^^^^^^^^^^^^^
+...
+223 |     pub fn backend_mut(&mut self) -> &mut InMemoryBackend {
+    |            ^^^^^^^^^^^
+...
+228 |     pub fn set_backend(&mut self, backend: InMemoryBackend) {
+    |            ^^^^^^^^^^^
+...
+247 |     pub fn get_code(&self, address: Address) -> Vec<u8> {
+    |            ^^^^^^^^
+...
+255 |     pub fn set_balance(&mut self, address: Address, balance: U256) {
+    |            ^^^^^^^^^^^
+...
+310 |     pub fn get_block_hash_by_id(&self, block_id: BlockId) -> Option<B2...
+    |            ^^^^^^^^^^^^^^^^^^^^
+warning: method `account` is never used
+ --> src\storage\traits.rs:9:14
+  |
+8 | pub trait StateProvider: Send + Sync {
+  |           ------------- method in this trait
+9 |     async fn account(&self, address: Address, block_id: BlockId) -> Resu...
+  |              ^^^^^^^
+warning: method `block_hash` is never used
+  --> src\storage\traits.rs:21:14
+   |
+18 | pub trait BlockProvider: Send + Sync {
+   |           ------------- method in this trait
+...
+21 |     async fn block_hash(&self, number: u64) -> Result<Option<B256>>;
+   |              ^^^^^^^^^^
+warning: struct `TxMetadata` is never constructed
+  --> src\mempool.rs:19:12
+   |
+19 | pub struct TxMetadata {
+   |            ^^^^^^^^^^
+warning: methods `clear` and `is_empty` are never used
+   --> src\mempool.rs:161:12
+    |
+ 24 | impl Mempool {
+    | ------------ methods in this implementation
+...
+161 |     pub fn clear(&mut self) {
+    |            ^^^^^
+...
+363 |     pub fn is_empty(&self) -> bool {
+    |            ^^^^^^^^
+warning: fields `frontend_addr` and `gossip_rx` are never read
+  --> src\app.rs:37:5
+   |
+34 | pub struct App {
+   |            --- fields in this struct
+...
+37 |     frontend_addr: SocketAddr,
+   |     ^^^^^^^^^^^^^
+...
+42 |     gossip_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
+   |     ^^^^^^^^^
+warning: methods `with_genesis`, `with_storage`, `with_mempool`, `with_executor`, `with_logging`, and `with_account_manager` are never used
+   --> src\app.rs:148:12
+    |
+142 | impl AppBuilder {
+    | --------------- methods in this implementation
+...
+148 |     pub fn with_genesis(mut self, genesis: Genesis) -> Self {
+    |            ^^^^^^^^^^^^
+...
+154 |     pub fn with_storage(mut self, storage: Arc<RwLock<InMemoryStorage>...
+    |            ^^^^^^^^^^^^
+...
+160 |     pub fn with_mempool(mut self, mempool: Arc<RwLock<Mempool>>) -> Se...
+    |            ^^^^^^^^^^^^
+...
+166 |     pub fn with_executor(mut self, executor: Executor) -> Self {
+    |            ^^^^^^^^^^^^^
+...
+172 |     pub fn with_logging(mut self, level: LogLevel) -> Self {
+    |            ^^^^^^^^^^^^
+...
+178 |     pub fn with_account_manager(mut self, manager: AccountManager) -> ...
+    |            ^^^^^^^^^^^^^^^^^^^^
+warning: method `generate_tls_config` is never used
+  --> src\p2p\identity.rs:58:12
+   |
+12 | impl Identity {
+   | ------------- method in this implementation
+...
+58 |     pub fn generate_tls_config(&self, ext_ip: Option<std::net::IpAddr>)...
+   |            ^^^^^^^^^^^^^^^^^^^
+warning: struct `RpcForm` is never constructed
+  --> src\frontend\mod.rs:19:12
+   |
+19 | pub struct RpcForm {
+   |            ^^^^^^^
+warning: function `deserialize_params` is never used
+  --> src\frontend\mod.rs:25:4
+   |
+25 | fn deserialize_params<'de, D>(deserializer: D) -> Result<Vec<String>, D...
+   |    ^^^^^^^^^^^^^^^^^^
+warning: struct `MethodQuery` is never constructed
+  --> src\frontend\mod.rs:61:12
+   |
+61 | pub struct MethodQuery {
+   |            ^^^^^^^^^^^
+warning: function `start_frontend` is never used
+  --> src\frontend\mod.rs:65:14
+   |
+65 | pub async fn start_frontend(addr: SocketAddr, rpc_port: u16) -> Result<...
+   |              ^^^^^^^^^^^^^^
+warning: function `layout` is never used
+  --> src\frontend\mod.rs:83:4
+   |
+83 | fn layout(title: &str, content: maud::Markup) -> maud::Markup {
+   |    ^^^^^^
+warning: function `get_logs` is never used
+   --> src\frontend\mod.rs:123:10
+    |
+123 | async fn get_logs() -> Html<String> {
+    |          ^^^^^^^^
+warning: function `rpc_page` is never used
+  --> src\frontend\rpc_page.rs:10:14
+   |
+10 | pub async fn rpc_page() -> Html<String> {
+   |              ^^^^^^^^
+warning: function `rpc_params` is never used
+  --> src\frontend\rpc_page.rs:51:14
+   |
+51 | pub async fn rpc_params(Query(query): Query<MethodQuery>) -> Html<Strin...
+   |              ^^^^^^^^^^
+warning: function `execute_rpc` is never used
+   --> src\frontend\rpc_page.rs:118:14
+    |
+118 | pub async fn execute_rpc(Form(form): Form<RpcForm>, rpc_url: String) -...
+    |              ^^^^^^^^^^^
+warning: function `index` is never used
+ --> src\frontend\logs_page.rs:6:14
+  |
+6 | pub async fn index() -> Html<String> {
+  |              ^^^^^
+warning: function `get_logs_markup` is never used
+  --> src\frontend\logs_page.rs:16:8
+   |
+16 | pub fn get_logs_markup() -> maud::Markup {
+   |        ^^^^^^^^^^^^^^^
+warning: `wasix-based-evm` (bin "wasix-based-evm") generated 36 warnings (1 duplicate) (run `cargo fix --bin "wasix-based-evm" -p wasix-based-evm` to apply 3 suggestions)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 1.87s
+info: Post-processing WebAssembly files

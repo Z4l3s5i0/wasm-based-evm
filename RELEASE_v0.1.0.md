@@ -64,6 +64,7 @@ wasmer run target/wasm32-wasmer-wasi/release/wasix-based-evm.wasi.wasm --enable-
 ```
 
 By default the volume is set as ./data-dir:./data-dir
+
 ---
 
 ## Command Line Flags
@@ -79,9 +80,8 @@ The client supports the following flags for configuration:
 | `--frontend-port` | TCP port for the integrated web dashboard                 | `3000` |
 | `--bootnodes` | Comma-separated list of Multiaddrs for bootstrapping (fromat < ip-address > : < discovery-port > )     | - |
 | `--max-peers` | Maximum number of concurrent P2P connections              | `50` |
-| `--data-dir` | Path for persistent storage (mapped to a WASIX volume)    | `data-dir` |
+| `--data-dir` | Path for persistent storage (mapped to a WASIX volume, must be same as for wasmer guest data-dir). Genesis file, to be put in data-dir/genesis/genesis.json  | `data-dir` |
 | `--chain` | Chain name                                                | `devnet` |
 | `--verbose` | Verbosity level (0: none, 1: info, 2: debug)              | `1` |
 | `--ext-ip` | Outwards facing ip address. If not provided, inward facing ip address is used (127.0.0.1) | `-` |
-| `--data-dir` | Set path to the data directory (must be same as for wasmer guest data-dir). Genesis file, to be put in data-dir/genesis/genesis.json | `data-dir` |
 | `--dev` | Enable dev mode with automatic block production (seconds) | `12` |

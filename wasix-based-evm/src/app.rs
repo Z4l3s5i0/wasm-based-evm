@@ -16,6 +16,8 @@ use crate::{info, debug, error};
 use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
+use axum::handler::Handler;
+use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
 use crate::rpc::RpcServerFacade;
 use crate::rpc::eth_service::EthService;
 use crate::rpc::debug_service::DebugService;
@@ -27,11 +29,12 @@ use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
 
 use crate::p2p::sync::SyncEngine;
+use crate::rpc::jwt::JwtAuthLayer;
 
 pub struct App {
-    eth_rpc_addr: std::net::SocketAddr,
-    auth_rpc_addr: std::net::SocketAddr,
-    frontend_addr: std::net::SocketAddr,
+    eth_rpc_addr: SocketAddr,
+    auth_rpc_addr: SocketAddr,
+    frontend_addr: SocketAddr,
     eth_rpc_port: u16,
     eth_module: jsonrpsee::RpcModule<()>,
     auth_module: jsonrpsee::RpcModule<()>,
@@ -42,6 +45,7 @@ pub struct App {
     executor: Arc<Executor>,
     data_dir: PathBuf,
     dev_interval: Option<u64>,
+    auth_rpc_jwt_secret: Option<[u8; 32]>,
 }
 
 impl App {
@@ -63,15 +67,24 @@ impl App {
             .build(self.eth_rpc_addr)
             .await?;
         
-        let auth_server = jsonrpsee::server::Server::builder()
-            .build(self.auth_rpc_addr)
-            .await?;
+        let rpc_middleware = RpcServiceBuilder::new();
+        let _auth_handle = if let Some(secret) = self.auth_rpc_jwt_secret {
+            info!("[App] Enabling JWT authentication for Auth Engine JSON-RPC");
+            let auth_server = jsonrpsee::server::Server::builder()
+                .set_rpc_middleware(rpc_middleware.layer(JwtAuthLayer::new(secret)))
+                .build(self.auth_rpc_addr)
+                .await?;
+            auth_server.start(self.auth_module)
+        } else {
+            error!("[App] JWT authentication key missing: Auth RPC requires JWT authentication");
+            return Err("JWT authentication key missing for Auth RPC".into());
+        };
 
         info!("[App] Eth JSON-RPC Server listening on {}", self.eth_rpc_addr);
         info!("[App] Auth Engine JSON-RPC Server listening on {}", self.auth_rpc_addr);
         
         // let frontend_addr = self.frontend_addr;
-        let eth_rpc_port = self.eth_rpc_port;
+        let _eth_rpc_port = self.eth_rpc_port;
         // tokio::spawn(async move {
         //     if let Err(e) = crate::frontend::start_frontend(frontend_addr, eth_rpc_port).await {
         //         error!("[App] Frontend error: {}", e);
@@ -79,7 +92,6 @@ impl App {
         // });
 
         let _eth_handle = eth_server.start(self.eth_module);
-        let _auth_handle = auth_server.start(self.auth_module);
 
         if let Some(interval) = self.dev_interval {
             let dev_mode = crate::dev::DevMode::new(
@@ -277,6 +289,16 @@ impl AppBuilder {
         let mut auth_facade = RpcServerFacade::new();
         let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
 
+        let auth_rpc_jwt_secret = if let Some(ref path) = args.auth_rpc_jwt_path {
+            let secret_str = std::fs::read_to_string(path)?;
+            let secret_str = secret_str.trim();
+            let mut secret = [0u8; 32];
+            hex::decode_to_slice(secret_str, &mut secret)?;
+            Some(secret)
+        } else {
+            None
+        };
+
         eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
         eth_facade.register_debug(DebugService { mempool: mempool.clone() })?;
         eth_facade.register_eth(EthService { 
@@ -313,6 +335,7 @@ impl AppBuilder {
             executor: executor.clone(),
             data_dir,
             dev_interval: args.dev,
+            auth_rpc_jwt_secret,
         })
     }
 }
