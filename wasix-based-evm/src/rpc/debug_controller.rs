@@ -1,3 +1,4 @@
+use crate::{info, error};
 use crate::error::RpcResult;
 use alloy_rpc_types::Transaction;
 use async_trait::async_trait;
@@ -18,7 +19,10 @@ pub struct DebugController {
 #[async_trait]
 impl DebugRpcServer for DebugController {
     async fn get_mempool(&self) -> RpcResult<Vec<Transaction>> {
+        info!("[RPC] debug_getMempool");
         let mempool_txs = self.service.get_mempool().await?;
-        Ok(mempool_txs.into_iter().map(|tx| TransactionMapper::to_rpc_transaction(tx, None)).collect())
+        let result: Vec<Transaction> = mempool_txs.into_iter().map(|tx| TransactionMapper::to_rpc_transaction(tx, None)).collect();
+        info!("[RPC] debug_getMempool result count: {}", result.len());
+        Ok(result)
     }
 }

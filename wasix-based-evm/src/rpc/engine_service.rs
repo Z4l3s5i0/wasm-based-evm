@@ -7,6 +7,7 @@ use alloy_rpc_types::engine::{
     ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
     PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadBodyV1,
 };
+use alloy_rpc_types::SyncStatus;
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_primitives::{B256, U256, Bytes};
 use crate::{info, error};
@@ -163,7 +164,7 @@ impl EngineService {
     pub async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3> {
         let payloads_lock = self.payloads.read().await;
         let block = payloads_lock.get(&payload_id)
-            .ok_or_else(|| RpcError::Internal("Payload not found".to_string()))?;
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(ExecutionPayloadV3 {
             payload_inner: ExecutionPayloadV2 {
@@ -193,7 +194,7 @@ impl EngineService {
     pub async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
         let payloads_lock = self.payloads.read().await;
         let block = payloads_lock.get(&payload_id)
-            .ok_or_else(|| RpcError::Internal("Payload not found".to_string()))?;
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(ExecutionPayloadV4 {
             payload_inner: ExecutionPayloadV3 {
@@ -307,7 +308,7 @@ impl EngineService {
                 // Validate attributes
                 let parent_block = storage.get_block_by_hash(forkchoice_state.head_block_hash)
                     .cloned()
-                    .ok_or_else(|| RpcError::Internal("Parent block not found".to_string()))?;
+                    .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found: {:?}", forkchoice_state.head_block_hash)))?;
 
                 if attr.timestamp <= parent_block.header.timestamp {
                     return Ok(ForkchoiceUpdated {
@@ -367,7 +368,7 @@ impl EngineService {
     pub async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
         let payloads_lock = self.payloads.read().await;
         let block = payloads_lock.get(&payload_id)
-            .ok_or_else(|| RpcError::Internal("Payload not found".to_string()))?;
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         // Convert Block to ExecutionPayloadV1
         // This requires mapping all fields precisely
@@ -392,7 +393,7 @@ impl EngineService {
     pub async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV2> {
         let payloads_lock = self.payloads.read().await;
         let block = payloads_lock.get(&payload_id)
-            .ok_or_else(|| RpcError::Internal("Payload not found".to_string()))?;
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(ExecutionPayloadV2 {
             payload_inner: ExecutionPayloadV1 {
@@ -433,7 +434,7 @@ impl EngineService {
         let mut transactions = Vec::new();
         for tx_bytes in &payload_v1.transactions {
             let tx: Transaction = Decodable::decode(&mut &tx_bytes[..])
-                .map_err(|e| RpcError::Internal(format!("Failed to decode transaction: {}", e)))?;
+                .map_err(|e| RpcError::InvalidParams(format!("Failed to decode transaction: {}", e)))?;
             transactions.push(tx);
         }
 

@@ -1,3 +1,4 @@
+use crate::{info, error};
 use crate::error::RpcResult;
 use alloy_rpc_types::{Filter, Log};
 use async_trait::async_trait;
@@ -17,6 +18,9 @@ pub struct LogController {
 #[async_trait]
 impl LogRpcServer for LogController {
     async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
-        self.service.get_logs(filter).await
+        info!("[RPC] eth_getLogs: filter={:?}", filter);
+        let result = self.service.get_logs(filter).await?;
+        info!("[RPC] eth_getLogs result count: {}", result.len());
+        Ok(result)
     }
 }

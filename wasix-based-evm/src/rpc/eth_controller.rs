@@ -1,3 +1,4 @@
+use crate::{info, error};
 use crate::error::RpcResult;
 use alloy_rpc_types::{SyncStatus, TransactionRequest};
 use alloy_eips::BlockId;
@@ -38,52 +39,79 @@ pub struct EthController {
 #[async_trait]
 impl EthRpcServer for EthController {
     async fn gas_price(&self) -> RpcResult<String> {
+        info!("[RPC] eth_gasPrice");
         let price = self.service.gas_price().await?;
-        Ok(format!("0x{:x}", price))
+        let result = format!("0x{:x}", price);
+        info!("[RPC] eth_gasPrice result: {}", result);
+        Ok(result)
     }
 
     async fn accounts(&self) -> RpcResult<Vec<String>> {
+        info!("[RPC] eth_accounts");
         let accounts = self.service.accounts().await?;
-        Ok(AccountMapper::addresses_to_rpc(accounts))
+        let result = AccountMapper::addresses_to_rpc(accounts);
+        info!("[RPC] eth_accounts result count: {}", result.len());
+        Ok(result)
     }
 
     async fn syncing(&self) -> RpcResult<SyncStatus> {
+        info!("[RPC] eth_syncing");
         let status = self.service.syncing().await?;
+        info!("[RPC] eth_syncing result: {:?}", status);
         Ok(status)
     }
 
     async fn mining(&self) -> RpcResult<bool> {
+        info!("[RPC] eth_mining");
         Ok(false)
     }
 
     async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<String> {
+        info!("[RPC] eth_sendTransaction: request={:?}", request);
         let hash = self.service.send_transaction(request).await?;
-        Ok(format!("0x{:x}", hash))
+        let result = format!("0x{:x}", hash);
+        info!("[RPC] eth_sendTransaction result: {}", result);
+        Ok(result)
     }
 
     async fn send_raw_transaction(&self, data: String) -> RpcResult<String> {
+        info!("[RPC] eth_sendRawTransaction: data_len={}", data.len());
         let hash = self.service.send_raw_transaction(data).await?;
-        Ok(format!("0x{:x}", hash))
+        let result = format!("0x{:x}", hash);
+        info!("[RPC] eth_sendRawTransaction result: {}", result);
+        Ok(result)
     }
 
     async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<String> {
+        info!("[RPC] eth_signTransaction: request={:?}", request);
         let signed_tx_rlp = self.service.sign_transaction(request).await?;
-        Ok(format!("{}", signed_tx_rlp))
+        let result = format!("{}", signed_tx_rlp);
+        info!("[RPC] eth_signTransaction result size: {}", result.len());
+        Ok(result)
     }
 
     async fn sign(&self, address: String, message: String) -> RpcResult<String> {
-        let address = parse_address(&address)?;
-        let signature = self.service.sign(address, message).await?;
-        Ok(format!("0x{}", hex::encode(signature.as_bytes())))
+        info!("[RPC] eth_sign: address={}, message_len={}", address, message.len());
+        let addr = parse_address(&address)?;
+        let signature = self.service.sign(addr, message).await?;
+        let result = format!("0x{}", hex::encode(signature.as_bytes()));
+        info!("[RPC] eth_sign result size: {}", result.len());
+        Ok(result)
     }
 
     async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<String> {
-        let result = self.service.call(request, block_id).await?;
-        Ok(format!("0x{:x}", result))
+        info!("[RPC] eth_call: request={:?}, block_id={:?}", request, block_id);
+        let result_bytes = self.service.call(request, block_id).await?;
+        let result = format!("0x{:x}", result_bytes);
+        info!("[RPC] eth_call result: {}", result);
+        Ok(result)
     }
 
     async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<String> {
+        info!("[RPC] eth_estimateGas: request={:?}, block_id={:?}", request, block_id);
         let gas = self.service.estimate_gas(request, block_id).await?;
-        Ok(format!("0x{:x}", gas))
+        let result = format!("0x{:x}", gas);
+        info!("[RPC] eth_estimateGas result: {}", result);
+        Ok(result)
     }
 }
