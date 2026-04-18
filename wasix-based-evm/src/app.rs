@@ -111,11 +111,22 @@ impl App {
         let state_filename = self.state_filename.clone();
         tokio::spawn(async move {
             loop {
-                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(90)).await;
                 debug!("[App] Periodic state dump...");
-                let storage_inner = storage.read().await;
-                if let Err(e) = storage_inner.save_to_file(data_dir.join(&state_filename)) {
-                    error!("[App] Failed to dump state: {}", e);
+                let storage_json = {
+                    let storage_inner = storage.read().await;
+                    serde_json::to_vec_pretty(&*storage_inner)
+                };
+                
+                match storage_json {
+                    Ok(json) => {
+                        if let Err(e) = std::fs::write(data_dir.join(&state_filename), json) {
+                            error!("[App] Failed to dump state to file: {}", e);
+                        }
+                    }
+                    Err(e) => {
+                        error!("[App] Failed to serialize state: {}", e);
+                    }
                 }
             }
         });
