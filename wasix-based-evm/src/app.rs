@@ -44,6 +44,7 @@ pub struct App {
     storage: Arc<RwLock<InMemoryStorage>>,
     executor: Arc<Executor>,
     data_dir: PathBuf,
+    state_filename: String,
     dev_interval: Option<u64>,
     auth_rpc_jwt_secret: Option<[u8; 32]>,
 }
@@ -107,12 +108,13 @@ impl App {
 
         let storage = self.storage.clone();
         let data_dir = self.data_dir.clone();
+        let state_filename = self.state_filename.clone();
         tokio::spawn(async move {
             loop {
                 tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
                 debug!("[App] Periodic state dump...");
                 let storage_inner = storage.read().await;
-                if let Err(e) = storage_inner.save_to_file(data_dir.join("state.json")) {
+                if let Err(e) = storage_inner.save_to_file(data_dir.join(&state_filename)) {
                     error!("[App] Failed to dump state: {}", e);
                 }
             }
@@ -208,7 +210,20 @@ impl AppBuilder {
             PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
         };
 
-        let storage_path = data_dir.join("storage/state.json");
+        let account_manager = if let Some(manager) = self.account_manager {
+            manager
+        } else {
+            Arc::new(AccountManager::new_with_dev_keys())
+        };
+
+        let p2p_identity = Identity::new(
+            args.data_dir.as_deref(),
+        )?;
+        let peer_id = p2p_identity.peer_id();
+        info!("[App] P2P Identity generated. PeerId: {}", peer_id);
+
+        let state_filename = format!("state_{}.json", peer_id);
+        let storage_path = data_dir.join(&state_filename);
         let storage = if self.storage_configured {
             self.storage.clone().ok_or("Storage marked as configured but not provided")?
         } else if storage_path.exists() {
@@ -219,7 +234,7 @@ impl AppBuilder {
             let genesis = if self.genesis_configured {
                 self.genesis.clone().ok_or("Genesis marked as configured but not provided")?
             } else {
-                let genesis_path = data_dir.join("genesis/genesis.json");
+                let genesis_path = args.genesis_path.clone().unwrap_or_else(|| data_dir.join("genesis.json"));
                 info!("[App] Loading genesis from {:?}", genesis_path);
                 let genesis_file = std::fs::File::open(genesis_path)?;
                 let alloy_genesis: AlloyGenesis = serde_json::from_reader(genesis_file)?;
@@ -242,17 +257,6 @@ impl AppBuilder {
             Executor::new()
         };
         let executor = Arc::new(executor);
-
-        let account_manager = if let Some(manager) = self.account_manager {
-            manager
-        } else {
-            Arc::new(AccountManager::new_with_dev_keys())
-        };
-
-        let p2p_identity = Identity::new(
-            args.data_dir.as_deref(),
-        )?;
-        info!("[App] P2P Identity generated. PeerId: {}", p2p_identity.peer_id());
 
         let (peer_manager, gossip_rx) = PeerManager::new(
             p2p_identity,
@@ -352,6 +356,7 @@ impl AppBuilder {
             storage: storage.clone(),
             executor: executor.clone(),
             data_dir,
+            state_filename,
             dev_interval: args.dev,
             auth_rpc_jwt_secret,
         })

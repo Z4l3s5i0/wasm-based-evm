@@ -40,6 +40,10 @@ pub struct Args {
     #[arg(long)]
     pub data_dir: Option<PathBuf>,
 
+    /// Path to the genesis JSON file
+    #[arg(long)]
+    pub genesis_path: Option<PathBuf>,
+
     /// Chain name (mainnet, sepolia, devnet)
     #[arg(long, default_value = "devnet")]
     pub chain: String,
