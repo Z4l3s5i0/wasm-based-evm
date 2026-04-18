@@ -8,6 +8,15 @@ use crate::rpc::parse_address;
 use crate::rpc::eth_service::EthService;
 use crate::rpc::account_mapper::AccountMapper;
 
+use serde::Serialize;
+
+#[derive(Serialize, Debug, Clone)]
+#[serde(untagged)]
+pub enum MySyncStatus {
+    Syncing(SyncStatus),
+    NotSyncing(bool),
+}
+
 #[rpc(server)]
 pub trait EthRpc {
     #[method(name = "eth_gasPrice")]
@@ -15,7 +24,7 @@ pub trait EthRpc {
     #[method(name = "eth_accounts")]
     async fn accounts(&self) -> RpcResult<Vec<String>>;
     #[method(name = "eth_syncing")]
-    async fn syncing(&self) -> RpcResult<SyncStatus>;
+    async fn syncing(&self) -> RpcResult<MySyncStatus>;
     #[method(name = "eth_mining")]
     async fn mining(&self) -> RpcResult<bool>;
     #[method(name = "eth_sendTransaction")]
@@ -54,11 +63,15 @@ impl EthRpcServer for EthController {
         Ok(result)
     }
 
-    async fn syncing(&self) -> RpcResult<SyncStatus> {
+    async fn syncing(&self) -> RpcResult<MySyncStatus> {
         info!("[RPC] eth_syncing");
         let status = self.service.syncing().await?;
-        info!("[RPC] eth_syncing result: {:?}", status);
-        Ok(status)
+        let result = match status {
+            SyncStatus::None => MySyncStatus::NotSyncing(false),
+            _ => MySyncStatus::Syncing(status),
+        };
+        info!("[RPC] eth_syncing result: {:?}", result);
+        Ok(result)
     }
 
     async fn mining(&self) -> RpcResult<bool> {
