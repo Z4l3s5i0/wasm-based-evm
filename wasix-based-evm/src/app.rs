@@ -291,9 +291,13 @@ impl AppBuilder {
 
         let auth_rpc_jwt_secret = if let Some(ref path) = args.auth_rpc_jwt_path {
             let secret_str = std::fs::read_to_string(path)?;
-            let secret_str = secret_str.trim();
+            let mut secret_str = secret_str.trim();
+            if secret_str.starts_with("0x") {
+                secret_str = &secret_str[2..];
+            }
             let mut secret = [0u8; 32];
-            hex::decode_to_slice(secret_str, &mut secret)?;
+            hex::decode_to_slice(secret_str, &mut secret)
+                .map_err(|e| format!("Invalid JWT secret at {:?}: {}", path, e))?;
             Some(secret)
         } else {
             None
@@ -311,15 +315,29 @@ impl AppBuilder {
             account_manager: account_manager.clone(),
             sync_engine: sync_engine.clone(),
         })?;
+
+        eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
+        eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
+        eth_facade.register_logs(LogService { storage: provider.clone() })?;
+
+        auth_facade.register_blocks(BlockService { storage: provider.clone() })?;
+
         auth_facade.register_engine(EngineService::new(
             storage.clone(),
             mempool.clone(),
             (*executor).clone(),
             sync_engine.clone(),
         ))?;
-        eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
-        eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
-        eth_facade.register_logs(LogService { storage: provider.clone() })?;
+        auth_facade.register_eth(EthService {
+            block_storage: provider.clone(),
+            state_storage: provider.clone(),
+            mempool: mempool.clone(),
+            peer_manager: peer_manager.clone(),
+            executor: (*executor).clone(),
+            storage: storage.clone(),
+            account_manager: account_manager.clone(),
+            sync_engine: sync_engine.clone(),
+        })?;
 
         Ok(App {
             eth_rpc_addr,
