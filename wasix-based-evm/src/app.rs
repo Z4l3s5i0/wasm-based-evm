@@ -29,7 +29,7 @@ use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
 
 use crate::p2p::sync::SyncEngine;
-use crate::rpc::jwt::JwtAuthLayer;
+use crate::rpc::jwt::{JwtAuthLayer, HeaderInjectorLayer};
 
 pub struct App {
     eth_rpc_addr: SocketAddr,
@@ -69,10 +69,13 @@ impl App {
             .await?;
         
         let rpc_middleware = RpcServiceBuilder::new();
+        let http_middleware = tower::ServiceBuilder::new()
+            .layer(HeaderInjectorLayer);
         let _auth_handle = if let Some(secret) = self.auth_rpc_jwt_secret {
             info!("[App] Enabling JWT authentication for Auth Engine JSON-RPC");
             let auth_server = jsonrpsee::server::Server::builder()
                 .set_rpc_middleware(rpc_middleware.layer(JwtAuthLayer::new(secret)))
+                .set_http_middleware(http_middleware)
                 .build(self.auth_rpc_addr)
                 .await?;
             auth_server.start(self.auth_module)

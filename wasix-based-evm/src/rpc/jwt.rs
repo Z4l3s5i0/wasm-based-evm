@@ -8,6 +8,46 @@ use jsonrpsee::core::middleware::{Batch, Notification};
 use sha2::Sha256;
 use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
+use std::pin::Pin;
+use std::task::{Context, Poll};
+
+#[derive(Clone)]
+pub struct HeaderInjectorLayer;
+
+impl<S> Layer<S> for HeaderInjectorLayer {
+    type Service = HeaderInjectorService<S>;
+
+    fn layer(&self, inner: S) -> Self::Service {
+        HeaderInjectorService { inner }
+    }
+}
+
+#[derive(Clone)]
+pub struct HeaderInjectorService<S> {
+    inner: S,
+}
+
+impl<S, Body> tower::Service<http::Request<Body>> for HeaderInjectorService<S>
+where
+    S: tower::Service<http::Request<Body>> + Clone + Send + 'static,
+    S::Future: Send + 'static,
+    Body: Send + 'static,
+{
+    type Response = S::Response;
+    type Error = S::Error;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        self.inner.poll_ready(cx)
+    }
+
+    fn call(&mut self, mut req: http::Request<Body>) -> Self::Future {
+        let headers = req.headers().clone();
+        req.extensions_mut().insert(headers);
+        let mut inner = self.inner.clone();
+        Box::pin(async move { inner.call(req).await })
+    }
+}
 
 #[derive(Clone)]
 pub struct JwtAuthLayer {
@@ -53,6 +93,11 @@ where
         async move {
             let id = req.id();
             let method = req.method_name().to_string();
+
+            if !method.starts_with("engine_") {
+                return inner.call(req).await;
+            }
+
             let auth_header = req.extensions().get::<http::HeaderMap>()
                 .and_then(|h| h.get(http::header::AUTHORIZATION))
                 .and_then(|v| v.to_str().ok());
