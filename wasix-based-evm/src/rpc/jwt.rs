@@ -1,5 +1,6 @@
+use crate::error::RpcError;
 use futures_util::Future;
-use jsonrpsee::server::middleware::rpc::RpcServiceT;
+use jsonrpsee::server::middleware::rpc::{RpcServiceT, MethodResponse};
 use jsonrpsee::types::Request;
 use tower::Layer;
 use hmac::{Hmac, Mac};
@@ -39,9 +40,9 @@ pub struct JwtAuthService<S> {
 
 impl<S> RpcServiceT for JwtAuthService<S>
 where
-    S: RpcServiceT + Send + Sync + Clone + 'static,
+    S: RpcServiceT<MethodResponse = MethodResponse> + Send + Sync + Clone + 'static,
 {
-    type MethodResponse = S::MethodResponse;
+    type MethodResponse = MethodResponse;
     type NotificationResponse = S::NotificationResponse;
     type BatchResponse = S::BatchResponse;
 
@@ -50,6 +51,7 @@ where
         let inner = self.inner.clone();
 
         async move {
+            let id = req.id();
             let method = req.method_name().to_string();
             let auth_header = req.extensions().get::<http::HeaderMap>()
                 .and_then(|h| h.get(http::header::AUTHORIZATION))
@@ -62,21 +64,16 @@ where
                         return inner.call(req).await;
                     } else {
                         crate::error!("[JWT] Invalid token for method: {}", method);
-                        // Optional: return unauthorized error here if strict mode is desired
+                        return MethodResponse::error(id, RpcError::InvalidJwtToken);
                     }
                 } else {
                     crate::error!("[JWT] Invalid Authorization header format for method: {}", method);
+                    return MethodResponse::error(id, RpcError::InvalidAuthorizationHeader);
                 }
             } else {
                 crate::error!("[JWT] Missing Authorization header for method: {}", method);
-                
-                // Allow some methods without authentication if strictly needed for health checks,
-                // but usually consensus clients should provide JWT for all requests on this port.
-                // For now, we continue to call inner to avoid breaking existing setups,
-                // but the error is logged as requested.
+                return MethodResponse::error(id, RpcError::MissingAuthorizationHeader);
             }
-
-            inner.call(req).await
         }
     }
 

@@ -35,6 +35,12 @@ pub enum RpcError {
     TooLargeRequest(String),
     #[error("Unsupported fork: {0}")]
     UnsupportedFork(String),
+    #[error("Missing Authorization header")]
+    MissingAuthorizationHeader,
+    #[error("Invalid Authorization header format")]
+    InvalidAuthorizationHeader,
+    #[error("Invalid JWT token")]
+    InvalidJwtToken,
 }
 
 impl From<RpcError> for ErrorObjectOwned {
@@ -113,6 +119,21 @@ impl From<RpcError> for ErrorObjectOwned {
             RpcError::UnsupportedFork(msg) => ErrorObjectOwned::owned(
                 -38005,
                 msg,
+                None::<()>,
+            ),
+            RpcError::MissingAuthorizationHeader => ErrorObjectOwned::owned(
+                -32000,
+                err.to_string(),
+                None::<()>,
+            ),
+            RpcError::InvalidAuthorizationHeader => ErrorObjectOwned::owned(
+                -32000,
+                err.to_string(),
+                None::<()>,
+            ),
+            RpcError::InvalidJwtToken => ErrorObjectOwned::owned(
+                -32000,
+                err.to_string(),
                 None::<()>,
             ),
         }
