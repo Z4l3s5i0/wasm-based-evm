@@ -218,11 +218,13 @@ impl AppBuilder {
 
         let p2p_identity = Identity::new(
             args.data_dir.as_deref(),
+            args.peer_name.as_deref(),
         )?;
         let peer_id = p2p_identity.peer_id();
         info!("[App] P2P Identity generated. PeerId: {}", peer_id);
 
-        let state_filename = format!("state_{}.json", peer_id);
+        let storage_name = args.peer_name.clone().unwrap_or_else(|| peer_id.clone());
+        let state_filename = format!("state_{}.json", storage_name);
         let storage_path = data_dir.join(&state_filename);
         let storage = if self.storage_configured {
             self.storage.clone().ok_or("Storage marked as configured but not provided")?
@@ -304,7 +306,28 @@ impl AppBuilder {
                 .map_err(|e| format!("Invalid JWT secret at {:?}: {}", path, e))?;
             Some(secret)
         } else {
-            None
+            let jwt_path = data_dir.join(format!("jwt_{}.hex", storage_name));
+            if jwt_path.exists() {
+                info!("[App] Loading existing JWT secret from {:?}", jwt_path);
+                let secret_str = std::fs::read_to_string(&jwt_path)?;
+                let mut secret_str = secret_str.trim();
+                if secret_str.starts_with("0x") {
+                    secret_str = &secret_str[2..];
+                }
+                let mut secret = [0u8; 32];
+                hex::decode_to_slice(secret_str, &mut secret)
+                    .map_err(|e| format!("Invalid JWT secret at {:?}: {}", jwt_path, e))?;
+                Some(secret)
+            } else {
+                info!("[App] Generating new JWT secret for this node...");
+                let mut secret_bytes = [0u8; 32];
+                getrandom::getrandom(&mut secret_bytes)
+                    .map_err(|e| format!("Failed to generate JWT secret: {}", e))?;
+                let secret_hex = hex::encode(secret_bytes);
+                std::fs::write(&jwt_path, &secret_hex)?;
+                info!("[App] New JWT secret saved to {:?}", jwt_path);
+                Some(secret_bytes)
+            }
         };
 
         eth_facade.register_accounts(AccountService { storage: provider.clone() })?;

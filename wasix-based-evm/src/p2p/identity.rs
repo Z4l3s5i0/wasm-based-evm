@@ -12,23 +12,27 @@ pub struct Identity {
 impl Identity {
     pub fn new(
         data_dir: Option<&Path>,
+        peer_name: Option<&str>,
     ) -> Result<Self> {
         let keypair = match data_dir {
             Some(path) => {
-                let key_path = path.join("p2p_key");
+                let name_to_use = peer_name.unwrap_or("node");
+                let key_path = path.join(format!("p2p_{}.key", name_to_use));
+                
                 if key_path.exists() {
                     let hex_key = fs::read_to_string(&key_path)
-                        .context("Failed to read p2p_key file")?;
+                        .context(format!("Failed to read key file at {:?}", key_path))?;
                     let bytes = hex::decode(hex_key.trim())
-                        .context("Failed to decode hex p2p_key")?;
+                        .context("Failed to decode hex key")?;
                     SigningKey::from_slice(&bytes)
-                        .map_err(|_| anyhow::anyhow!("Invalid p2p_key bytes"))?
+                        .map_err(|_| anyhow::anyhow!("Invalid key bytes"))?
                 } else {
                     let mut bytes = [0u8; 32];
                     getrandom::getrandom(&mut bytes)
                         .map_err(|e| anyhow::anyhow!("getrandom failed: {:?}", e))?;
                     let secret = SigningKey::from_slice(&bytes)
                         .expect("32 bytes is valid secret key length");
+                    
                     let hex_key = hex::encode(secret.to_bytes());
                     if let Some(parent) = key_path.parent() {
                         fs::create_dir_all(parent)?;

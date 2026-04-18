@@ -59,4 +59,8 @@ pub struct Args {
     /// Interval in seconds for automatic block production in dev mode
     #[arg(long, default_missing_value = "12", num_args = 0..=1)]
     pub dev: Option<u64>,
+
+    /// Descriptive name for the node, used in storage filenames
+    #[arg(long)]
+    pub peer_name: Option<String>,
 }
