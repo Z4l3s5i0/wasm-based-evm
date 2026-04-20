@@ -17,6 +17,7 @@ pub mod jwt;
 
 mod account_mapper;
 mod block_mapper;
+mod engine_mapper;
 mod transaction_mapper;
 mod log_mapper;
 mod debug_controller;
