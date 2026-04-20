@@ -1,7 +1,7 @@
-use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
+use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256};
 use crate::{info, debug, error};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
-use alloy_primitives::{Address, B256, U256, keccak256, Bytes};
+use alloy_primitives::{Address, B256, U256, Bytes};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
@@ -10,7 +10,7 @@ use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, 
 use crate::mempool::Mempool;
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction, Header};
 use alloy_eips::BlockId;
-use anyhow::{Result, anyhow};
+use anyhow::Result;
 use async_trait::async_trait;
 use tokio::sync::RwLock;
 use std::sync::Arc;
@@ -40,12 +40,12 @@ impl InMemoryStorage {
         let env = InMemoryEnvironment {
             block_hashes: BTreeMap::new(),
             block_number: EvmU256::zero(),
-            block_coinbase: H160::zero(),
+            block_coinbase: address_to_h160(genesis.coinbase),
             block_timestamp: EvmU256::from(genesis.timestamp),
-            block_difficulty: EvmU256::zero(),
-            block_randomness: None,
+            block_difficulty: alloy_u256_to_evm_u256(genesis.difficulty),
+            block_randomness: Some(b256_to_h256(genesis.mix_hash)),
             block_gas_limit: EvmU256::from(genesis.gas_limit),
-            block_base_fee_per_gas: EvmU256::zero(),
+            block_base_fee_per_gas: genesis.base_fee_per_gas.map(alloy_u256_to_evm_u256).unwrap_or(EvmU256::zero()),
             blob_base_fee_per_gas: EvmU256::zero(),
             blob_versioned_hashes: Vec::new(),
             chain_id,
@@ -64,17 +64,6 @@ impl InMemoryStorage {
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
             snapshots: BTreeMap::new(),
-        };
-
-        // Create genesis block
-        let _genesis_block: Block<Transaction> = Block {
-            header: Header {
-                number: 0,
-                timestamp: genesis.timestamp,
-                gas_limit: genesis.gas_limit,
-                ..Default::default()
-            },
-            body: Default::default(),
         };
 
         // Pre-fund and initialize accounts
@@ -102,6 +91,19 @@ impl InMemoryStorage {
                 timestamp: genesis.timestamp,
                 gas_limit: genesis.gas_limit,
                 state_root,
+                beneficiary: genesis.coinbase,
+                difficulty: genesis.difficulty,
+                mix_hash: genesis.mix_hash,
+                nonce: genesis.nonce.into(),
+                base_fee_per_gas: genesis.base_fee_per_gas.map(|v| v.to::<u64>()),
+                extra_data: genesis.extra_data.into(),
+                transactions_root: alloy_trie::EMPTY_ROOT_HASH,
+                receipts_root: alloy_trie::EMPTY_ROOT_HASH,
+                withdrawals_root: if genesis.base_fee_per_gas.is_some() { Some(alloy_trie::EMPTY_ROOT_HASH) } else { None },
+                blob_gas_used: if genesis.base_fee_per_gas.is_some() { Some(0) } else { None },
+                excess_blob_gas: if genesis.base_fee_per_gas.is_some() { Some(0) } else { None },
+                parent_beacon_block_root: if genesis.base_fee_per_gas.is_some() { Some(B256::ZERO) } else { None },
+                gas_used: 0,
                 ..Default::default()
             },
             body: Default::default(),
@@ -268,7 +270,13 @@ impl InMemoryStorage {
 
     pub fn calculate_state_root(&self) -> B256 {
         state_root_unhashed(self.backend.state.iter().map(|(addr, acc)| {
-            let storage_root = storage_root_unsorted(acc.storage.iter().map(|(k, v)| (B256::from(k.0), U256::from_be_bytes(v.0))));
+            let storage_root = if acc.storage.is_empty() {
+                alloy_trie::EMPTY_ROOT_HASH
+            } else {
+                storage_root_unsorted(acc.storage.iter().map(|(k, v)| {
+                    (alloy_primitives::keccak256(k.0), U256::from_be_bytes(v.0))
+                }))
+            };
 
             let trie_acc = TrieAccount {
                 nonce: acc.nonce.as_u64(),
@@ -278,7 +286,7 @@ impl InMemoryStorage {
                     U256::from_be_bytes(b)
                 },
                 storage_root,
-                code_hash: keccak256(&acc.code),
+                code_hash: if acc.code.is_empty() { alloy_primitives::KECCAK256_EMPTY } else { alloy_primitives::keccak256(&acc.code) },
             };
             (Address::from(addr.0), trie_acc)
         }))

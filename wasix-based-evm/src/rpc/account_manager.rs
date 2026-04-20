@@ -1,4 +1,4 @@
-use alloy_primitives::{Address, Bytes, B256};
+use alloy_primitives::Address;
 use alloy_consensus::{TxEnvelope, TxLegacy, SignableTransaction};
 use alloy_signer_local::PrivateKeySigner;
 use alloy_network::TxSignerSync;

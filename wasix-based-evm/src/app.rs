@@ -16,7 +16,6 @@ use crate::{info, debug, error};
 use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
-use axum::handler::Handler;
 use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
 use crate::rpc::RpcServerFacade;
 use crate::rpc::eth_service::EthService;

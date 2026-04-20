@@ -69,7 +69,7 @@ impl DevMode {
 
         // Take transactions from mempool
         let transactions = mempool.pop_transactions(10);
-        let tx_hashes: Vec<B256> = transactions.iter().map(|tx| tx.hash()).copied().collect();
+        let _tx_hashes: Vec<B256> = transactions.iter().map(|tx| tx.hash()).copied().collect();
 
         let header = Header {
             parent_hash,

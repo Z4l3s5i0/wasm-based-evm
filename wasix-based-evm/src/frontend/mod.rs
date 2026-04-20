@@ -5,7 +5,6 @@ use axum::{
     routing::{get, post},
     Router,
     response::Html,
-    Form,
 };
 use maud::{html, DOCTYPE};
 use std::net::SocketAddr;

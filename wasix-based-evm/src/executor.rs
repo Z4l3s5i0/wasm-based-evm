@@ -178,9 +178,9 @@ impl Executor {
         storage_for_root.backend.apply_overlayed(&total_changeset);
         let state_root = storage_for_root.calculate_state_root();
 
-        let txs_root = alloy_trie::root::ordered_trie_root(&transactions);
-        let withdrawals_root = alloy_trie::root::ordered_trie_root(&withdrawals);
-        let receipts_root = alloy_trie::root::ordered_trie_root(&receipts);
+        let txs_root = if transactions.is_empty() { alloy_trie::EMPTY_ROOT_HASH } else { alloy_trie::root::ordered_trie_root(&transactions) };
+        let withdrawals_root = if withdrawals.is_empty() { alloy_trie::EMPTY_ROOT_HASH } else { alloy_trie::root::ordered_trie_root(&withdrawals) };
+        let receipts_root = if receipts.is_empty() { alloy_trie::EMPTY_ROOT_HASH } else { alloy_trie::root::ordered_trie_root(&receipts) };
 
         debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", state_root, txs_root, receipts_root, withdrawals_root);
 

@@ -1,4 +1,4 @@
-use crate::{info, error};
+use crate::info;
 use crate::error::RpcResult;
 use alloy_rpc_types::{SyncStatus, TransactionRequest};
 use alloy_eips::BlockId;

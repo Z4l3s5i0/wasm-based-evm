@@ -1,4 +1,4 @@
-use crate::{info, error};
+use crate::info;
 use crate::error::RpcResult;
 use alloy_rpc_types::Transaction;
 use async_trait::async_trait;

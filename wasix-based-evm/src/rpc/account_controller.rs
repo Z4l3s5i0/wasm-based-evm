@@ -1,4 +1,4 @@
-use crate::{info, error};
+use crate::info;
 use crate::error::RpcResult;
 use alloy_eips::BlockId;
 use alloy_primitives::{U256, Bytes, B256};

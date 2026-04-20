@@ -7,7 +7,6 @@ use alloy_rpc_types::engine::{
     ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
     PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadBodyV1,
 };
-use alloy_rpc_types::SyncStatus;
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_primitives::{B256, U256, Bytes};
 use crate::{info, error};
@@ -321,12 +320,52 @@ impl EngineService {
                 }
 
                 // Start building a block
-                let id = PayloadId::new(rand::random());
+                let id = {
+                    use alloy_primitives::keccak256;
+                    let mut data = Vec::new();
+                    data.extend_from_slice(forkchoice_state.head_block_hash.as_slice());
+                    data.extend_from_slice(&attr.timestamp.to_be_bytes());
+                    data.extend_from_slice(attr.prev_randao.as_slice());
+                    data.extend_from_slice(attr.suggested_fee_recipient.as_slice());
+                    if let Some(withdrawals) = &attr.withdrawals {
+                        for w in withdrawals {
+                            data.extend_from_slice(&w.index.to_be_bytes());
+                            data.extend_from_slice(&w.validator_index.to_be_bytes());
+                            data.extend_from_slice(w.address.as_slice());
+                            data.extend_from_slice(&w.amount.to_be_bytes());
+                        }
+                    }
+                    if let Some(root) = &attr.parent_beacon_block_root {
+                        data.extend_from_slice(root.as_slice());
+                    }
+                    let hash = keccak256(&data);
+                    PayloadId::new(hash[..8].try_into().unwrap())
+                };
                 payload_id = Some(id);
+
+                // Calculate base fee (simplified EIP-1559)
+                let base_fee_per_gas = if let Some(parent_fee) = parent_block.header.base_fee_per_gas {
+                    let parent_gas_used = parent_block.header.gas_used;
+                    let parent_gas_target = parent_block.header.gas_limit / 2;
+                    
+                    if parent_gas_used == parent_gas_target {
+                        Some(parent_fee)
+                    } else if parent_gas_used > parent_gas_target {
+                        let gas_used_delta = parent_gas_used - parent_gas_target;
+                        let fee_delta = std::cmp::max(1u64, (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64);
+                        Some(parent_fee + fee_delta)
+                    } else {
+                        let gas_used_delta = parent_gas_target - parent_gas_used;
+                        let fee_delta = (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64;
+                        Some(parent_fee.saturating_sub(fee_delta))
+                    }
+                } else {
+                    None
+                };
 
                 // Build block logic (simplified)
                 let mempool = self.mempool.read().await;
-                let transactions = mempool.peek_transactions(10); // Take top 10 transactions
+                let transactions = mempool.peek_transactions(50); // Take top 50 transactions
 
             let header = Header {
                 parent_hash: forkchoice_state.head_block_hash,
@@ -334,9 +373,13 @@ impl EngineService {
                 timestamp: attr.timestamp,
                 beneficiary: attr.suggested_fee_recipient,
                 gas_limit: parent_block.header.gas_limit,
-                base_fee_per_gas: parent_block.header.base_fee_per_gas,
+                base_fee_per_gas,
                 extra_data: Bytes::new(),
                 mix_hash: attr.prev_randao,
+                parent_beacon_block_root: attr.parent_beacon_block_root,
+                transactions_root: alloy_trie::EMPTY_ROOT_HASH,
+                receipts_root: alloy_trie::EMPTY_ROOT_HASH,
+                withdrawals_root: attr.withdrawals.as_ref().map(|_| alloy_trie::EMPTY_ROOT_HASH),
                 ..Default::default()
             };
 

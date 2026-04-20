@@ -1,7 +1,6 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::storage::storage::InMemoryStorage;
-use crate::storage::traits::StateProvider;
 use crate::executor::Executor;
 use crate::mempool::Mempool;
 use alloy_consensus::Block as ConsensusBlock;
