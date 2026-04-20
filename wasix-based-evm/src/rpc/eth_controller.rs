@@ -1,44 +1,36 @@
-use crate::info;
 use alloy_rpc_types::{SyncStatus, TransactionRequest};
+use alloy_primitives::{U256, Address, B256, Bytes};
 use alloy_eips::BlockId;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::info;
 use crate::rpc::parse_address;
 use crate::rpc::eth_service::EthService;
-use crate::rpc::account_mapper::AccountMapper;
 
-use serde::Serialize;
 use crate::misc::error::RpcResult;
-
-#[derive(Serialize, Debug, Clone)]
-#[serde(untagged)]
-pub enum MySyncStatus {
-    Syncing(SyncStatus),
-    NotSyncing(bool),
-}
 
 #[rpc(server)]
 pub trait EthRpc {
     #[method(name = "eth_gasPrice")]
-    async fn gas_price(&self) -> RpcResult<String>;
+    async fn gas_price(&self) -> RpcResult<U256>;
     #[method(name = "eth_accounts")]
-    async fn accounts(&self) -> RpcResult<Vec<String>>;
+    async fn accounts(&self) -> RpcResult<Vec<Address>>;
     #[method(name = "eth_syncing")]
-    async fn syncing(&self) -> RpcResult<MySyncStatus>;
+    async fn syncing(&self) -> RpcResult<SyncStatus>;
     #[method(name = "eth_mining")]
     async fn mining(&self) -> RpcResult<bool>;
     #[method(name = "eth_sendTransaction")]
-    async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<String>;
+    async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<B256>;
     #[method(name = "eth_sendRawTransaction")]
-    async fn send_raw_transaction(&self, data: String) -> RpcResult<String>;
+    async fn send_raw_transaction(&self, data: String) -> RpcResult<B256>;
     #[method(name = "eth_signTransaction")]
-    async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<String>;
+    async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<Bytes>;
     #[method(name = "eth_sign")]
-    async fn sign(&self, address: String, message: String) -> RpcResult<String>;
+    async fn sign(&self, address: String, message: String) -> RpcResult<Bytes>;
     #[method(name = "eth_call")]
-    async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<String>;
+    async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<Bytes>;
     #[method(name = "eth_estimateGas")]
-    async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<String>;
+    async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<U256>;
 }
 
 pub struct EthController {
@@ -47,31 +39,25 @@ pub struct EthController {
 
 #[async_trait]
 impl EthRpcServer for EthController {
-    async fn gas_price(&self) -> RpcResult<String> {
+    async fn gas_price(&self) -> RpcResult<U256> {
         info!("[RPC] eth_gasPrice");
         let price = self.service.gas_price().await?;
-        let result = format!("0x{:x}", price);
-        info!("[RPC] eth_gasPrice result: {}", result);
-        Ok(result)
+        info!("[RPC] eth_gasPrice result: {}", price);
+        Ok(price)
     }
 
-    async fn accounts(&self) -> RpcResult<Vec<String>> {
+    async fn accounts(&self) -> RpcResult<Vec<Address>> {
         info!("[RPC] eth_accounts");
         let accounts = self.service.accounts().await?;
-        let result = AccountMapper::addresses_to_rpc(accounts);
-        info!("[RPC] eth_accounts result count: {}", result.len());
-        Ok(result)
+        info!("[RPC] eth_accounts result count: {}", accounts.len());
+        Ok(accounts)
     }
 
-    async fn syncing(&self) -> RpcResult<MySyncStatus> {
+    async fn syncing(&self) -> RpcResult<SyncStatus> {
         info!("[RPC] eth_syncing");
         let status = self.service.syncing().await?;
-        let result = match status {
-            SyncStatus::None => MySyncStatus::NotSyncing(false),
-            _ => MySyncStatus::Syncing(status),
-        };
-        info!("[RPC] eth_syncing result: {:?}", result);
-        Ok(result)
+        info!("[RPC] eth_syncing result: {:?}", status);
+        Ok(status)
     }
 
     async fn mining(&self) -> RpcResult<bool> {
@@ -79,52 +65,47 @@ impl EthRpcServer for EthController {
         Ok(false)
     }
 
-    async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<String> {
+    async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<B256> {
         info!("[RPC] eth_sendTransaction: request={:?}", request);
         let hash = self.service.send_transaction(request).await?;
-        let result = format!("0x{:x}", hash);
-        info!("[RPC] eth_sendTransaction result: {}", result);
-        Ok(result)
+        info!("[RPC] eth_sendTransaction result: {}", hash);
+        Ok(hash)
     }
 
-    async fn send_raw_transaction(&self, data: String) -> RpcResult<String> {
+    async fn send_raw_transaction(&self, data: String) -> RpcResult<B256> {
         info!("[RPC] eth_sendRawTransaction: data_len={}", data.len());
         let hash = self.service.send_raw_transaction(data).await?;
-        let result = format!("0x{:x}", hash);
-        info!("[RPC] eth_sendRawTransaction result: {}", result);
-        Ok(result)
+        info!("[RPC] eth_sendRawTransaction result: {}", hash);
+        Ok(hash)
     }
 
-    async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<String> {
+    async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<Bytes> {
         info!("[RPC] eth_signTransaction: request={:?}", request);
         let signed_tx_rlp = self.service.sign_transaction(request).await?;
-        let result = format!("{}", signed_tx_rlp);
-        info!("[RPC] eth_signTransaction result size: {}", result.len());
-        Ok(result)
+        info!("[RPC] eth_signTransaction result size: {}", signed_tx_rlp.len());
+        Ok(signed_tx_rlp)
     }
 
-    async fn sign(&self, address: String, message: String) -> RpcResult<String> {
+    async fn sign(&self, address: String, message: String) -> RpcResult<Bytes> {
         info!("[RPC] eth_sign: address={}, message_len={}", address, message.len());
         let addr = parse_address(&address)?;
         let signature = self.service.sign(addr, message).await?;
-        let result = format!("0x{}", hex::encode(signature.as_bytes()));
+        let result = Bytes::from(signature.as_bytes().to_vec());
         info!("[RPC] eth_sign result size: {}", result.len());
         Ok(result)
     }
 
-    async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<String> {
+    async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<Bytes> {
         info!("[RPC] eth_call: request={:?}, block_id={:?}", request, block_id);
         let result_bytes = self.service.call(request, block_id).await?;
-        let result = format!("0x{:x}", result_bytes);
-        info!("[RPC] eth_call result: {}", result);
-        Ok(result)
+        info!("[RPC] eth_call result size: {}", result_bytes.len());
+        Ok(result_bytes)
     }
 
-    async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<String> {
+    async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<U256> {
         info!("[RPC] eth_estimateGas: request={:?}, block_id={:?}", request, block_id);
         let gas = self.service.estimate_gas(request, block_id).await?;
-        let result = format!("0x{:x}", gas);
-        info!("[RPC] eth_estimateGas result: {}", result);
-        Ok(result)
+        info!("[RPC] eth_estimateGas result: {}", gas);
+        Ok(gas)
     }
 }

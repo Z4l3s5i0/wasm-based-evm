@@ -20,8 +20,7 @@ mod engine_mapper;
 mod transaction_mapper;
 mod debug_controller;
 
-use alloy_primitives::{Address, B256};
-use crate::misc::error::RpcError::InvalidParams;
+use alloy_primitives::Address;
 use crate::misc::error::RpcResult;
 use crate::rpc::eth_controller::{EthController, EthRpcServer};
 use crate::rpc::eth_service::EthService;
@@ -80,10 +79,6 @@ impl RpcServerFacade {
 }
 
 pub fn parse_address(addr: &str) -> RpcResult<Address> {
-    addr.parse().map_err(|e| InvalidParams(format!("Invalid address: {}", e)))
-}
-
-pub fn parse_b256(hash: &str) -> RpcResult<B256> {
-    hash.parse().map_err(|e| InvalidParams(format!("Invalid hash: {}", e)))
+    addr.parse().map_err(|e| crate::misc::error::RpcError::InvalidParams(format!("Invalid address: {}", e)))
 }
 

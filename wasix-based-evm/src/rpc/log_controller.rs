@@ -1,9 +1,9 @@
-use crate::info;
-use crate::misc::error::RpcResult;
 use alloy_rpc_types::{Filter, Log};
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::info;
 use crate::rpc::log_service::LogService;
+use crate::misc::error::RpcResult;
 
 #[rpc(server)]
 pub trait LogRpc {

@@ -1,26 +1,26 @@
-use crate::info;
 use alloy_eips::BlockId;
 use alloy_rpc_types::Block;
+use alloy_primitives::B256;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::info;
 use crate::misc::error::RpcResult;
 use crate::rpc::block_service::BlockService;
-use crate::rpc::parse_b256;
 
 #[rpc(server)]
 pub trait BlockRpc {
     #[method(name = "eth_getBlockByNumber")]
     async fn get_block_by_number(&self, num: BlockId, full: bool) -> RpcResult<Option<Block>>;
     #[method(name = "eth_getBlockByHash")]
-    async fn get_block_by_hash(&self, hash: String, full: bool) -> RpcResult<Option<Block>>;
+    async fn get_block_by_hash(&self, hash: B256, full: bool) -> RpcResult<Option<Block>>;
     #[method(name = "eth_blockNumber")]
-    async fn block_number(&self) -> RpcResult<String>;
+    async fn block_number(&self) -> RpcResult<u64>;
     #[method(name = "eth_chainId")]
-    async fn chain_id(&self) -> RpcResult<String>;
+    async fn chain_id(&self) -> RpcResult<u64>;
     #[method(name = "eth_getBlockTransactionCountByNumber")]
-    async fn get_block_transaction_count_by_number(&self, num: BlockId) -> RpcResult<Option<String>>;
+    async fn get_block_transaction_count_by_number(&self, num: BlockId) -> RpcResult<Option<u64>>;
     #[method(name = "eth_getBlockTransactionCountByHash")]
-    async fn get_block_transaction_count_by_hash(&self, hash: String) -> RpcResult<Option<String>>;
+    async fn get_block_transaction_count_by_hash(&self, hash: B256) -> RpcResult<Option<u64>>;
 }
 
 pub struct BlockController {
@@ -36,44 +36,38 @@ impl BlockRpcServer for BlockController {
         Ok(result)
     }
 
-    async fn get_block_by_hash(&self, hash: String, full: bool) -> RpcResult<Option<Block>> {
+    async fn get_block_by_hash(&self, hash: B256, full: bool) -> RpcResult<Option<Block>> {
         info!("[RPC] eth_getBlockByHash: hash={}, full={}", hash, full);
-        let hash_b256 = parse_b256(&hash)?;
-        let result = self.service.get_block_by_id(BlockId::hash(hash_b256), full).await?;
+        let result = self.service.get_block_by_id(BlockId::hash(hash), full).await?;
         info!("[RPC] eth_getBlockByHash result: {}", if result.is_some() { "found" } else { "not found" });
         Ok(result)
     }
 
-    async fn block_number(&self) -> RpcResult<String> {
+    async fn block_number(&self) -> RpcResult<u64> {
         info!("[RPC] eth_blockNumber");
         let num = self.service.latest_block_number().await?;
-        let result = format!("0x{:x}", num);
-        info!("[RPC] eth_blockNumber result: {}", result);
-        Ok(result)
+        info!("[RPC] eth_blockNumber result: {}", num);
+        Ok(num)
     }
 
-    async fn chain_id(&self) -> RpcResult<String> {
+    async fn chain_id(&self) -> RpcResult<u64> {
         info!("[RPC] eth_chainId");
         let id = self.service.chain_id().await?;
-        let result = format!("0x{:x}", id);
-        info!("[RPC] eth_chainId result: {}", result);
-        Ok(result)
+        info!("[RPC] eth_chainId result: {}", id);
+        Ok(id)
     }
 
-    async fn get_block_transaction_count_by_number(&self, num: BlockId) -> RpcResult<Option<String>> {
+    async fn get_block_transaction_count_by_number(&self, num: BlockId) -> RpcResult<Option<u64>> {
         info!("[RPC] eth_getBlockTransactionCountByNumber: num={:?}", num);
         let count = self.service.get_block_transaction_count(num).await?;
-        let result = count.map(|c| format!("0x{:x}", c));
-        info!("[RPC] eth_getBlockTransactionCountByNumber result: {:?}", result);
-        Ok(result)
+        info!("[RPC] eth_getBlockTransactionCountByNumber result: {:?}", count);
+        Ok(count)
     }
 
-    async fn get_block_transaction_count_by_hash(&self, hash: String) -> RpcResult<Option<String>> {
+    async fn get_block_transaction_count_by_hash(&self, hash: B256) -> RpcResult<Option<u64>> {
         info!("[RPC] eth_getBlockTransactionCountByHash: hash={}", hash);
-        let hash_b256 = parse_b256(&hash)?;
-        let count = self.service.get_block_transaction_count(BlockId::hash(hash_b256)).await?;
-        let result = count.map(|c| format!("0x{:x}", c));
-        info!("[RPC] eth_getBlockTransactionCountByHash result: {:?}", result);
-        Ok(result)
+        let count = self.service.get_block_transaction_count(BlockId::hash(hash)).await?;
+        info!("[RPC] eth_getBlockTransactionCountByHash result: {:?}", count);
+        Ok(count)
     }
 }

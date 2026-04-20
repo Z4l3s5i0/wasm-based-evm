@@ -1,24 +1,21 @@
-use crate::info;
 use alloy_eips::BlockId;
-use alloy_primitives::{U256, Bytes, B256};
+use alloy_primitives::{U256, Bytes, B256, Address};
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
-use crate::misc::error::RpcError::InvalidParams;
+use crate::info;
 use crate::misc::error::RpcResult;
-use crate::rpc::account_mapper::AccountMapper;
 use crate::rpc::account_service::AccountService;
-use crate::rpc::parse_address;
 
 #[rpc(server)]
 pub trait AccountRpc {
     #[method(name = "eth_getBalance")]
-    async fn get_balance(&self, address: String, block_id: Option<BlockId>) -> RpcResult<String>;
+    async fn get_balance(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<U256>;
     #[method(name = "eth_getTransactionCount")]
-    async fn get_transaction_count(&self, address: String, block_id: Option<BlockId>) -> RpcResult<String>;
+    async fn get_transaction_count(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<u64>;
     #[method(name = "eth_getCode")]
-    async fn get_code(&self, address: String, block_id: Option<BlockId>) -> RpcResult<Bytes>;
+    async fn get_code(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<Bytes>;
     #[method(name = "eth_getStorageAt")]
-    async fn get_storage_at(&self, address: String, slot: String, block_id: Option<BlockId>) -> RpcResult<String>;
+    async fn get_storage_at(&self, address: Address, slot: B256, block_id: Option<BlockId>) -> RpcResult<U256>;
 }
 
 pub struct AccountController {
@@ -27,43 +24,35 @@ pub struct AccountController {
 
 #[async_trait]
 impl AccountRpcServer for AccountController {
-    async fn get_balance(&self, address: String, block_id: Option<BlockId>) -> RpcResult<String> {
+    async fn get_balance(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<U256> {
         info!("[RPC] eth_getBalance: address={}, block_id={:?}", address, block_id);
-        let addr = parse_address(&address)?;
         let block_id = block_id.unwrap_or(BlockId::latest());
-        let balance = self.service.get_balance(addr, block_id).await?;
-        let result = AccountMapper::to_hex(balance);
-        info!("[RPC] eth_getBalance result: {}", result);
-        Ok(result)
+        let balance = self.service.get_balance(address, block_id).await?;
+        info!("[RPC] eth_getBalance result: {}", balance);
+        Ok(balance)
     }
 
-    async fn get_transaction_count(&self, address: String, block_id: Option<BlockId>) -> RpcResult<String> {
+    async fn get_transaction_count(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<u64> {
         info!("[RPC] eth_getTransactionCount: address={}, block_id={:?}", address, block_id);
-        let addr = parse_address(&address)?;
         let block_id = block_id.unwrap_or(BlockId::latest());
-        let count = self.service.get_transaction_count(addr, block_id).await?;
-        let result = AccountMapper::to_hex(U256::from(count));
-        info!("[RPC] eth_getTransactionCount result: {}", result);
-        Ok(result)
+        let count = self.service.get_transaction_count(address, block_id).await?;
+        info!("[RPC] eth_getTransactionCount result: {}", count);
+        Ok(count)
     }
 
-    async fn get_code(&self, address: String, block_id: Option<BlockId>) -> RpcResult<Bytes> {
+    async fn get_code(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<Bytes> {
         info!("[RPC] eth_getCode: address={}, block_id={:?}", address, block_id);
-        let addr = parse_address(&address)?;
         let block_id = block_id.unwrap_or(BlockId::latest());
-        let result = self.service.get_code(addr, block_id).await?;
+        let result = self.service.get_code(address, block_id).await?;
         info!("[RPC] eth_getCode result size: {}", result.len());
         Ok(result)
     }
 
-    async fn get_storage_at(&self, address: String, slot: String, block_id: Option<BlockId>) -> RpcResult<String> {
+    async fn get_storage_at(&self, address: Address, slot: B256, block_id: Option<BlockId>) -> RpcResult<U256> {
         info!("[RPC] eth_getStorageAt: address={}, slot={}, block_id={:?}", address, slot, block_id);
-        let addr = parse_address(&address)?;
-        let slot = slot.parse::<B256>().map_err(|e| InvalidParams(format!("Invalid slot: {}", e)))?;
         let block_id = block_id.unwrap_or(BlockId::latest());
-        let value = self.service.get_storage_at(addr, slot, block_id).await?;
-        let result = AccountMapper::to_hex(value);
-        info!("[RPC] eth_getStorageAt result: {}", result);
-        Ok(result)
+        let value = self.service.get_storage_at(address, slot, block_id).await?;
+        info!("[RPC] eth_getStorageAt result: {}", value);
+        Ok(value)
     }
 }

@@ -1,17 +1,17 @@
-use crate::info;
-use crate::misc::error::RpcResult;
-use alloy_rpc_types::Transaction;
+use alloy_primitives::B256;
+use alloy_rpc_types::{Transaction, TransactionReceipt};
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::info;
+use crate::misc::error::RpcResult;
 use crate::rpc::transaction_service::TransactionService;
-use crate::rpc::parse_b256;
 
 #[rpc(server)]
 pub trait TransactionRpc {
     #[method(name = "eth_getTransactionByHash")]
-    async fn get_transaction_by_hash(&self, hash: String) -> RpcResult<Option<Transaction>>;
+    async fn get_transaction_by_hash(&self, hash: B256) -> RpcResult<Option<Transaction>>;
     #[method(name = "eth_getTransactionReceipt")]
-    async fn get_transaction_receipt(&self, hash: String) -> RpcResult<Option<alloy_rpc_types::TransactionReceipt>>;
+    async fn get_transaction_receipt(&self, hash: B256) -> RpcResult<Option<TransactionReceipt>>;
 }
 
 pub struct TransactionController {
@@ -20,18 +20,16 @@ pub struct TransactionController {
 
 #[async_trait]
 impl TransactionRpcServer for TransactionController {
-    async fn get_transaction_by_hash(&self, hash: String) -> RpcResult<Option<Transaction>> {
+    async fn get_transaction_by_hash(&self, hash: B256) -> RpcResult<Option<Transaction>> {
         info!("[RPC] eth_getTransactionByHash: hash={}", hash);
-        let hash_b256 = parse_b256(&hash)?;
-        let result = self.service.get_transaction_by_hash(hash_b256).await?;
+        let result = self.service.get_transaction_by_hash(hash).await?;
         info!("[RPC] eth_getTransactionByHash result: {}", if result.is_some() { "found" } else { "not found" });
         Ok(result)
     }
 
-    async fn get_transaction_receipt(&self, hash: String) -> RpcResult<Option<alloy_rpc_types::TransactionReceipt>> {
+    async fn get_transaction_receipt(&self, hash: B256) -> RpcResult<Option<TransactionReceipt>> {
         info!("[RPC] eth_getTransactionReceipt: hash={}", hash);
-        let hash_b256 = parse_b256(&hash)?;
-        let result = self.service.get_transaction_receipt(hash_b256).await?;
+        let result = self.service.get_transaction_receipt(hash).await?;
         info!("[RPC] eth_getTransactionReceipt result: {}", if result.is_some() { "found" } else { "not found" });
         Ok(result)
     }
