@@ -50,15 +50,6 @@ impl Executor {
         }
     }
 
-    pub fn execute(&self, storage: &mut InMemoryStorage, tx: TxEnvelope, block: Block<TxEnvelope>) -> Result<TransactValue, String> {
-        self.run_execution(storage, vec![tx], block, true).map(|mut v| v.remove(0))
-    }
-
-    pub fn call(&self, storage: &InMemoryStorage, tx: TxEnvelope, block: Block<TxEnvelope>) -> Result<TransactValue, String> {
-        let mut storage_copy = storage.clone();
-        self.run_execution(&mut storage_copy, vec![tx], block, false).map(|mut v| v.remove(0))
-    }
-
     pub fn execute_with_changeset(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
         info!("[Executor] Executing {} transactions for block {}", transactions.len(), block.header.number);
         let precompiles = StandardPrecompileSet;
@@ -419,7 +410,7 @@ impl Executor {
         })
     }
 
-    fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
+    pub fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
         if apply_changes {
             self.execute_block(storage, transactions, block)
         } else {

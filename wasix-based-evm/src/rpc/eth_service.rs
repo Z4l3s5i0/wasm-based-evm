@@ -172,8 +172,9 @@ impl EthService {
         };
 
         let storage_lock = self.storage.read().await;
-        let result = self.executor.call(&storage_lock, tx_envelope, block)
-            .map_err(|e| error::RpcError::Internal(e))?;
+
+        let result = self.executor.run_execution(&mut storage_lock.clone(), vec![tx_envelope], block, false)
+            .map(|mut v| v.remove(0)).map_err(|e| error::RpcError::Internal(e))?;
         
         match result.call_create {
             TransactValueCallCreate::Call { retval, .. } => Ok(retval.into()),
@@ -219,9 +220,10 @@ impl EthService {
         };
 
         let storage_lock = self.storage.read().await;
-        let result = self.executor.call(&storage_lock, tx_envelope, block)
+
+        let result = self.executor.run_execution(&mut storage_lock.clone(), vec![tx_envelope], block, false).map(|mut v| v.remove(0))
             .map_err(|e| error::RpcError::Internal(e))?;
-        
+
         Ok(U256::from(result.used_gas.as_u64()))
     }
 
