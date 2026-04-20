@@ -195,9 +195,7 @@ impl AppBuilder {
         self
     }
 
-    pub async fn build(self) -> Result<App, Box<dyn std::error::Error>> {
-        let args = self.args.clone().ok_or("Args not provided")?;
-
+    async fn setup_logging(&self, args: &Args) {
         if !self.logging_configured {
             let level = match args.verbose {
                 0 => LogLevel::None,
@@ -206,12 +204,17 @@ impl AppBuilder {
             };
             logging::set_log_level(level);
         }
+    }
 
+    fn setup_addresses(&self, args: &Args) -> (SocketAddr, SocketAddr, SocketAddr) {
         let bind_ip = args.ext_ip.unwrap_or_else(|| "127.0.0.1".parse().unwrap());
         let eth_rpc_addr = SocketAddr::new(bind_ip, args.eth_rpc_port);
         let auth_rpc_addr = SocketAddr::new(bind_ip, args.auth_rpc_port);
         let frontend_addr = SocketAddr::new(bind_ip, args.frontend_port);
+        (eth_rpc_addr, auth_rpc_addr, frontend_addr)
+    }
 
+    fn setup_data_dir(&self, args: &Args) -> Result<PathBuf, Box<dyn std::error::Error>> {
         let data_dir = if let Some(ref dir) = args.data_dir {
             if !dir.exists() {
                 std::fs::create_dir_all(dir)?;
@@ -222,23 +225,22 @@ impl AppBuilder {
         } else {
             PathBuf::from(std::env!("CARGO_MANIFEST_DIR"))
         };
+        Ok(data_dir)
+    }
 
-        let account_manager = if let Some(manager) = self.account_manager {
-            manager
+    fn setup_account_manager(&self) -> Arc<AccountManager> {
+        if let Some(ref manager) = self.account_manager {
+            manager.clone()
         } else {
             Arc::new(AccountManager::new_with_dev_keys())
-        };
+        }
+    }
 
-        let p2p_identity = Identity::new(
-            args.data_dir.as_deref(),
-            args.peer_name.as_deref(),
-        )?;
-        let peer_id = p2p_identity.peer_id();
-        info!("[App] P2P Identity generated. PeerId: {}", peer_id);
-
-        let storage_name = args.peer_name.clone().unwrap_or_else(|| peer_id.clone());
+    async fn setup_storage(&self, args: &Args, data_dir: &PathBuf, peer_id: &str) -> Result<(Arc<RwLock<InMemoryStorage>>, String), Box<dyn std::error::Error>> {
+        let storage_name = args.peer_name.clone().unwrap_or_else(|| peer_id.to_string());
         let state_filename = format!("state_{}.json", storage_name);
         let storage_path = data_dir.join(&state_filename);
+
         let storage = if self.storage_configured {
             self.storage.clone().ok_or("Storage marked as configured but not provided")?
         } else if storage_path.exists() {
@@ -260,20 +262,28 @@ impl AppBuilder {
             let storage_inner = InMemoryStorage::new_with_genesis(chain_id, genesis);
             Arc::new(RwLock::new(storage_inner))
         };
+        Ok((storage, state_filename))
+    }
 
+    fn setup_mempool(&self) -> Result<Arc<RwLock<Mempool>>, Box<dyn std::error::Error>> {
         let mempool = if self.mempool_configured {
             self.mempool.clone().ok_or("Mempool marked as configured but not provided")?
         } else {
             Arc::new(RwLock::new(Mempool::new(U256::ZERO)))
         };
+        Ok(mempool)
+    }
 
+    fn setup_executor(&self) -> Result<Arc<Executor>, Box<dyn std::error::Error>> {
         let executor = if self.executor_configured {
             self.executor.clone().ok_or("Executor marked as configured but not provided")?
         } else {
             Executor::new()
         };
-        let executor = Arc::new(executor);
+        Ok(Arc::new(executor))
+    }
 
+    fn setup_p2p(&self, args: &Args, p2p_identity: Identity, storage: Arc<RwLock<InMemoryStorage>>, mempool: Arc<RwLock<Mempool>>, executor: Arc<Executor>) -> Result<(Arc<PeerManager>, Arc<SyncController>), Box<dyn std::error::Error>> {
         let (peer_manager, gossip_rx) = PeerManager::new(
             p2p_identity,
             storage.clone(),
@@ -305,11 +315,11 @@ impl AppBuilder {
             gossip_handler.start().await;
         });
 
-        let mut eth_facade = RpcServerFacade::new();
-        let mut auth_facade = RpcServerFacade::new();
-        let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
+        Ok((peer_manager, sync_engine))
+    }
 
-        let auth_rpc_jwt_secret = if let Some(ref path) = args.auth_rpc_jwt_path {
+    fn setup_jwt_secret(&self, args: &Args, data_dir: &PathBuf, storage_name_from_id: &str) -> Result<Option<[u8; 32]>, Box<dyn std::error::Error>> {
+        if let Some(ref path) = args.auth_rpc_jwt_path {
             let secret_str = std::fs::read_to_string(path)?;
             let mut secret_str = secret_str.trim();
             if secret_str.starts_with("0x") {
@@ -318,9 +328,9 @@ impl AppBuilder {
             let mut secret = [0u8; 32];
             hex::decode_to_slice(secret_str, &mut secret)
                 .map_err(|e| format!("Invalid JWT secret at {:?}: {}", path, e))?;
-            Some(secret)
+            Ok(Some(secret))
         } else {
-            let jwt_path = data_dir.join(format!("jwt_{}.hex", storage_name));
+            let jwt_path = data_dir.join(format!("jwt_{}.hex", storage_name_from_id));
             if jwt_path.exists() {
                 info!("[App] Loading existing JWT secret from {:?}", jwt_path);
                 let secret_str = std::fs::read_to_string(&jwt_path)?;
@@ -331,7 +341,7 @@ impl AppBuilder {
                 let mut secret = [0u8; 32];
                 hex::decode_to_slice(secret_str, &mut secret)
                     .map_err(|e| format!("Invalid JWT secret at {:?}: {}", jwt_path, e))?;
-                Some(secret)
+                Ok(Some(secret))
             } else {
                 info!("[App] Generating new JWT secret for this node...");
                 let mut secret_bytes = [0u8; 32];
@@ -340,9 +350,23 @@ impl AppBuilder {
                 let secret_hex = hex::encode(secret_bytes);
                 std::fs::write(&jwt_path, &secret_hex)?;
                 info!("[App] New JWT secret saved to {:?}", jwt_path);
-                Some(secret_bytes)
+                Ok(Some(secret_bytes))
             }
-        };
+        }
+    }
+
+    fn setup_rpc_services(
+        &self,
+        storage: Arc<RwLock<InMemoryStorage>>,
+        mempool: Arc<RwLock<Mempool>>,
+        executor: Arc<Executor>,
+        peer_manager: Arc<PeerManager>,
+        sync_engine: Arc<SyncController>,
+        account_manager: Arc<AccountManager>,
+    ) -> Result<(jsonrpsee::RpcModule<()>, jsonrpsee::RpcModule<()>), Box<dyn std::error::Error>> {
+        let mut eth_facade = RpcServerFacade::new();
+        let mut auth_facade = RpcServerFacade::new();
+        let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
 
         eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
         eth_facade.register_debug(DebugService { mempool: mempool.clone() })?;
@@ -380,13 +404,50 @@ impl AppBuilder {
             sync_engine: sync_engine.clone(),
         })?;
 
+        Ok((eth_facade.into_module(), auth_facade.into_module()))
+    }
+
+    pub async fn build(self) -> Result<App, Box<dyn std::error::Error>> {
+        let args = self.args.clone().ok_or("Args not provided")?;
+
+        self.setup_logging(&args).await;
+
+        let (eth_rpc_addr, auth_rpc_addr, frontend_addr) = self.setup_addresses(&args);
+        let data_dir = self.setup_data_dir(&args)?;
+        let account_manager = self.setup_account_manager();
+
+        let p2p_identity = Identity::new(
+            args.data_dir.as_deref(),
+            args.peer_name.as_deref(),
+        )?;
+        let peer_id = p2p_identity.peer_id();
+        info!("[App] P2P Identity generated. PeerId: {}", peer_id);
+
+        let (storage, state_filename) = self.setup_storage(&args, &data_dir, &peer_id).await?;
+        let mempool = self.setup_mempool()?;
+        let executor = self.setup_executor()?;
+
+        let (peer_manager, sync_engine) = self.setup_p2p(&args, p2p_identity, storage.clone(), mempool.clone(), executor.clone())?;
+
+        let storage_name_from_id = args.peer_name.clone().unwrap_or_else(|| peer_id.clone());
+        let auth_rpc_jwt_secret = self.setup_jwt_secret(&args, &data_dir, &storage_name_from_id)?;
+
+        let (eth_module, auth_module) = self.setup_rpc_services(
+            storage.clone(),
+            mempool.clone(),
+            executor.clone(),
+            peer_manager.clone(),
+            sync_engine.clone(),
+            account_manager,
+        )?;
+
         Ok(App {
             eth_rpc_addr,
             auth_rpc_addr,
             frontend_addr,
             eth_rpc_port: args.eth_rpc_port,
-            eth_module: eth_facade.into_module(),
-            auth_module: auth_facade.into_module(),
+            eth_module,
+            auth_module,
             swarm: peer_manager,
             gossip_rx: None, // Moved to GossipHandler
             mempool: mempool.clone(),
