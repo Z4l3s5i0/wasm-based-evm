@@ -1,0 +1,315 @@
+wasm@Ubuntu-WASM:/media/sf_vm_shared$ lighthouse bn --execution-endpoint http://192.168.1.152:8551  --execution-jwt ./startup/jwt_node1.hex  --http --http-address 0.0.0.0 --http-port 5052 --testnet-dir ./startup  --debug-level debug  --enr-address 192.168.1.152 --enr-tcp-port 9005 --enr-udp-port 9005 --datadir /home/wasm/.lighthouse/node1
+Apr 20 14:57:35.031 INFO  Lighthouse started                            version: "Lighthouse/v8.1.3-176cce5"
+Apr 20 14:57:35.031 INFO  Configured network                            network_name: "custom (./startup)"
+Apr 20 14:57:35.032 INFO  Data directory initialised                    datadir: /home/wasm/.lighthouse/node1
+Apr 20 14:57:35.033 INFO  Deposit contract                              deploy_block: 0, address: 0x00000000219ab540356cbb839cbe05303d7705fa
+Apr 20 14:57:35.033 DEBUG Opening HotColdDB                           
+Apr 20 14:57:35.033 DEBUG Opening LevelDB                               hot_path: "/home/wasm/.lighthouse/node1/beacon/chain_db"
+Apr 20 14:57:35.040 DEBUG Loaded anchor info                            anchor_info: RwLock { data: AnchorInfo { anchor_slot: Slot(18446744073709551615), oldest_block_slot: Slot(18446744073709551615), oldest_block_parent: 0x0000000000000000000000000000000000000000000000000000000000000000, state_upper_limit: Slot(18446744073709551615), state_lower_limit: Slot(0) } }
+Apr 20 14:57:35.052 INFO  Blob DB initialized                           path: "/home/wasm/.lighthouse/node1/beacon/blobs_db", oldest_blob_slot: None, oldest_data_column_slot: None
+Apr 20 14:57:35.052 DEBUG Store anchor info                             anchor: AnchorInfo { anchor_slot: Slot(18446744073709551615), oldest_block_slot: Slot(18446744073709551615), oldest_block_parent: 0x0000000000000000000000000000000000000000000000000000000000000000, state_upper_limit: Slot(18446744073709551615), state_lower_limit: Slot(0) }
+Apr 20 14:57:35.053 DEBUG New network key generated and written to disk
+Apr 20 14:57:35.054 DEBUG Loaded execution endpoint                     endpoint: http://192.168.1.152:8551/, jwt_path: "./startup/jwt_node1.hex"
+Apr 20 14:57:38.091 INFO  Starting from known genesis state           
+Apr 20 14:57:38.121 DEBUG Cached state                                  state_root: 0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a, state_slot: 0, deleted_states: [], location: "store_hot_state"
+Apr 20 14:57:38.125 DEBUG Storing hot state summary and diffs           state_root: 0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a, slot: 0, storage_strategy: Snapshot, diff_base_state: snapshot, previous_state_root: 0x0000000000000000000000000000000000000000000000000000000000000000
+Apr 20 14:57:38.126 INFO  Block production enabled                    
+Apr 20 14:57:38.126 DEBUG Loaded persisted custody context              custody_context: CustodyContext { validator_custody_count: 0, validator_registrations: RwLock { data: ValidatorRegistrations { validators: {}, epoch_validator_custody_requirements: {} } }, ordered_custody_column_indices: [22, 96, 15, 38, 107, 72, 19, 45, 76, 126, 46, 125, 99, 77, 62, 90, 91, 113, 12, 88, 67, 68, 52, 108, 33, 14, 87, 119, 50, 101, 47, 97, 10, 55, 48, 43, 120, 95, 118, 106, 18, 6, 31, 40, 42, 105, 69, 30, 115, 82, 58, 94, 102, 92, 116, 103, 51, 75, 41, 117, 89, 80, 20, 3, 64, 56, 59, 39, 127, 121, 70, 36, 104, 83, 32, 27, 112, 109, 13, 34, 11, 60, 122, 53, 26, 21, 8, 2, 78, 23, 29, 5, 100, 25, 0, 86, 81, 4, 114, 28, 61, 16, 124, 73, 57, 49, 44, 93, 110, 111, 37, 123, 17, 66, 84, 74, 9, 63, 65, 79, 7, 71, 54, 24, 85, 1, 98, 35], _phantom_data: PhantomData<types::core::eth_spec::MainnetEthSpec> }
+Apr 20 14:57:38.127 INFO  Beacon chain initialized                      head_state: 0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a, head_block: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, head_slot: 0
+Apr 20 14:57:38.127 INFO  Timer service started                       
+Apr 20 14:57:38.127 INFO  UPnP Attempting to initialise routes        
+Apr 20 14:57:38.127 DEBUG ENR written to disk                         
+Apr 20 14:57:38.127 DEBUG Metadata sequence number                      seq_num: 0
+Apr 20 14:57:38.127 DEBUG Metadata written to disk                    
+Apr 20 14:57:38.127 DEBUG Starting node with custody params             cgc: 4, sampling_subnets: {22, 19, 96, 15, 38, 107, 72, 45}
+Apr 20 14:57:38.128 DEBUG Using response rate limiting params           config: InboundRateLimiterConfig(RateLimiterConfig { ping: 2/10s, metadata: 2/5s, status: 5/15s, goodbye: 1/10s, blocks_by_range: 128/10s, blocks_by_root: 128/10s, blobs_by_range: 896/10s, blobs_by_root: 896/10s, data_columns_by_range: 16384/10s, data_columns_by_root: 16384/10s })
+Apr 20 14:57:38.128 DEBUG Using self rate limiting params               config: Some(OutboundRateLimiterConfig(RateLimiterConfig { ping: 2/10s, metadata: 2/5s, status: 5/15s, goodbye: 1/10s, blocks_by_range: 128/10s, blocks_by_root: 128/10s, blobs_by_range: 896/10s, blobs_by_root: 896/10s, data_columns_by_range: 16384/10s, data_columns_by_root: 16384/10s }))
+Apr 20 14:57:38.128 INFO  ENR Initialised                               enr: "enr:-N24QPb9ugkbrsQL73hzOR6cSmlOATjin865RHEx-XymsqHhZdjYDaVW81-ZR2BSPVAf2ZIvisWcyddfsuBCwjVUmckBh2F0dG5ldHOIAAAAAAAAAACGY2xpZW500YpMaWdodGhvdXNlhTguMS4zhGV0aDKQFBGi7kAAAAD__________4JpZIJ2NIJpcITAqAGYhHF1aWOCIymJc2VjcDI1NmsxoQNk29Tt0_U0kew5gC1qPtxRIjROSpbekrC-L08XgZID04hzeW5jbmV0cwCDdGNwgiMtg3VkcIIjLQ", seq: 1, id: 0xeae5..80b7, ip4: Some(192.168.1.152), udp4: Some(9005), tcp4: Some(9005), tcp6: None, udp6: None, quic4: Some(9001), quic6: None
+Apr 20 14:57:38.128 DEBUG Discovery service started                   
+Apr 20 14:57:38.128 DEBUG Starting a peer discovery request             target_peers: 16
+Apr 20 14:57:38.128 INFO  Libp2p Starting                               peer_id: 16Uiu2HAmKShYKEy6TawxBavC1JgiBew5jBvZHTWQzVhg4FU7wKWA, bandwidth_config: "3-Average"
+Apr 20 14:57:38.129 DEBUG Attempting to open listening ports            listen_addrs: V4(ListenAddr { addr: 0.0.0.0, disc_port: 9000, quic_port: 9001, tcp_port: 9000 }), discovery_enabled: true, quic_enabled: true
+Apr 20 14:57:38.129 INFO  Listening established                         address: /ip4/0.0.0.0/tcp/9000/p2p/16Uiu2HAmKShYKEy6TawxBavC1JgiBew5jBvZHTWQzVhg4FU7wKWA
+Apr 20 14:57:38.130 INFO  Listening established                         address: /ip4/0.0.0.0/udp/9001/quic-v1/p2p/16Uiu2HAmKShYKEy6TawxBavC1JgiBew5jBvZHTWQzVhg4FU7wKWA
+Apr 20 14:57:38.130 DEBUG Loading peers into the routing table          peers: 0
+Apr 20 14:57:38.130 DEBUG Sync Manager started                        
+Apr 20 14:57:38.130 DEBUG Network message router started              
+Apr 20 14:57:38.130 DEBUG Subscribed to topic                           topic: /eth2/1411a2ee/beacon_attestation_58/ssz_snappy
+Apr 20 14:57:38.131 DEBUG Starting a new peer discovery query           connected: 0, target: 200, outbound: 0, wanted: 220
+Apr 20 14:57:38.131 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: Attestation(SubnetId(58)), min_ttl_secs: None, retries: 0 }, SubnetQuery { subnet: Attestation(SubnetId(59)), min_ttl_secs: None, retries: 0 }]
+Apr 20 14:57:38.131 DEBUG Skipping ENR update                           multiaddr: /ip4/127.0.0.1/tcp/9000
+Apr 20 14:57:38.131 DEBUG ENR written to disk                         
+Apr 20 14:57:38.131 DEBUG Sync's view on execution engine state updated  past_state: Online, new_state: Online
+Apr 20 14:57:38.132 DEBUG Metadata written to disk                    
+Apr 20 14:57:38.132 DEBUG Updating gossipsub score parameters           active_validators: 2
+Apr 20 14:57:38.132 DEBUG Subscribed to topic                           topic: /eth2/1411a2ee/beacon_attestation_59/ssz_snappy
+Apr 20 14:57:38.132 DEBUG ENR written to disk                         
+Apr 20 14:57:38.132 DEBUG Metadata written to disk                    
+Apr 20 14:57:38.133 DEBUG Skipping ENR update                           multiaddr: /ip4/192.168.1.152/tcp/9000
+Apr 20 14:57:38.133 DEBUG Discovery query yielded no results.         
+Apr 20 14:57:38.133 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [Attestation(SubnetId(58)), Attestation(SubnetId(59))]
+Apr 20 14:57:38.133 DEBUG Discv5 event stream ready                   
+Apr 20 14:57:38.134 INFO  HTTP API started                              listen_address: 0.0.0.0:5052
+Apr 20 14:57:38.134 DEBUG Metrics server is disabled                  
+Apr 20 14:57:38.134 DEBUG Deneb fork not configured, not starting availability cache maintenance service
+Apr 20 14:57:38.146 DEBUG Execution engine online                     
+Apr 20 14:57:38.148 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:57:38.150 DEBUG Execution engine online                     
+Apr 20 14:57:38.150 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:57:40.028 DEBUG Advanced head state one slot                  head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, state_slot: 1, current_slot: 0
+Apr 20 14:57:40.029 DEBUG Cached state                                  state_root: 0xe7707e9ccc016ccbaf9f33d2365c4a0939f010547ca4e39cc73b0c4e62ba0b6b, state_slot: 1, deleted_states: [], location: "store_hot_state"
+Apr 20 14:57:40.029 DEBUG Storing hot state summary and diffs           state_root: 0xe7707e9ccc016ccbaf9f33d2365c4a0939f010547ca4e39cc73b0c4e62ba0b6b, slot: 1, storage_strategy: ReplayFrom(Slot(0)), diff_base_state: 0/0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a, previous_state_root: 0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a
+Apr 20 14:57:40.029 DEBUG Completed state advance                       head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, advanced_slot: 1, initial_slot: 0
+Apr 20 14:57:42.502 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 1
+Apr 20 14:57:43.006 DEBUG Running beacon chain per slot tasks           slot: Slot(1)
+Apr 20 14:57:43.006 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 1
+Apr 20 14:57:44.129 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: Attestation(SubnetId(58)), min_ttl_secs: None, retries: 1 }, SubnetQuery { subnet: Attestation(SubnetId(59)), min_ttl_secs: None, retries: 1 }]
+Apr 20 14:57:44.129 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [Attestation(SubnetId(58)), Attestation(SubnetId(59))]
+Apr 20 14:57:45.135 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: Attestation(SubnetId(58)), min_ttl_secs: None, retries: 2 }, SubnetQuery { subnet: Attestation(SubnetId(59)), min_ttl_secs: None, retries: 2 }]
+Apr 20 14:57:45.135 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [Attestation(SubnetId(58)), Attestation(SubnetId(59))]
+Apr 20 14:57:46.137 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: Attestation(SubnetId(58)), min_ttl_secs: None, retries: 3 }, SubnetQuery { subnet: Attestation(SubnetId(59)), min_ttl_secs: None, retries: 3 }]
+Apr 20 14:57:46.137 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [Attestation(SubnetId(58)), Attestation(SubnetId(59))]
+Apr 20 14:57:46.137 DEBUG Subnet peer discovery did not find sufficient peers. Reached max retry limit
+Apr 20 14:57:46.137 DEBUG Subnet peer discovery did not find sufficient peers. Reached max retry limit
+Apr 20 14:57:47.006 DEBUG Simulating unagg. attestation production    
+Apr 20 14:57:47.006 DEBUG Produce unagg. attestation                    attestation_source: "0x0000000000000000000000000000000000000000000000000000000000000000", attestation_target: "0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c"
+Apr 20 14:57:48.132 INFO  UPnP not available                          
+Apr 20 14:57:48.132 INFO  Could not UPnP map Discovery port             error: Gateway does not support UPnP
+Apr 20 14:57:49.008 WARN  Low peer count                                peer_count: "0"
+Apr 20 14:57:49.008 DEBUG Slot timer                                    peers: "0", finalized_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, finalized_epoch: 0, head_block: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, head_slot: 0, current_slot: 1, sync_state: Stalled
+Apr 20 14:57:49.008 INFO  Searching for peers                           peers: "0", finalized_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, finalized_epoch: 0, head_slot: 0, current_slot: 1
+Apr 20 14:57:49.019 WARN  Not ready Bellatrix                           info: The execution endpoint is connected and configured, however it is not yet synced
+Apr 20 14:57:50.163 DEBUG Execution engine online                     
+Apr 20 14:57:50.163 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:57:51.003 DEBUG Proposer prepare routine firing             
+Apr 20 14:57:52.001 DEBUG Advanced head state one slot                  head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, state_slot: 2, current_slot: 1
+Apr 20 14:57:52.001 DEBUG Cached state                                  state_root: 0x842350621946c8779238f9dca239cb0b3628f5a6e0a9f118f035519416eb799a, state_slot: 2, deleted_states: [], location: "store_hot_state"
+Apr 20 14:57:52.002 DEBUG Storing hot state summary and diffs           state_root: 0x842350621946c8779238f9dca239cb0b3628f5a6e0a9f118f035519416eb799a, slot: 2, storage_strategy: ReplayFrom(Slot(0)), diff_base_state: 0/0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a, previous_state_root: 0xe7707e9ccc016ccbaf9f33d2365c4a0939f010547ca4e39cc73b0c4e62ba0b6b
+Apr 20 14:57:52.002 DEBUG Completed state advance                       head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, advanced_slot: 2, initial_slot: 1
+Apr 20 14:57:54.507 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 2
+Apr 20 14:57:55.001 DEBUG Running beacon chain per slot tasks           slot: Slot(2)
+Apr 20 14:57:55.003 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 2
+Apr 20 14:57:59.171 DEBUG Simulating unagg. attestation production    
+Apr 20 14:57:59.172 DEBUG Produce unagg. attestation                    attestation_source: "0x0000000000000000000000000000000000000000000000000000000000000000", attestation_target: "0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c"
+Apr 20 14:58:00.018 DEBUG Processed HTTP API request                    elapsed_ms: 0.404214, status: 200 OK, path: /eth/v1/beacon/states/head/validators/0xaa4545eae1ffe47cb4e48d1aa640e7994acdc9c976581c4a1bbf4ec34cbf2cad516e58e31e104a6bc26659cb6617674f, method: GET
+Apr 20 14:58:00.019 DEBUG Processed HTTP API request                    elapsed_ms: 0.79099, status: 200 OK, path: /eth/v1/events, method: GET
+Apr 20 14:58:00.019 DEBUG Processed HTTP API request                    elapsed_ms: 1.016772, status: 200 OK, path: /eth/v1/config/spec, method: GET
+Apr 20 14:58:00.020 DEBUG Processed HTTP API request                    elapsed_ms: 0.9726710000000001, status: 200 OK, path: /eth/v1/beacon/states/head/validators/0xb183ffd1e01fb382d78a6757e726ce3d7d4726bb71175718e7badf717e0b78b1c2b4e0e51bb2bb5069a5027074263f68, method: GET
+Apr 20 14:58:00.020 DEBUG Processed HTTP API request                    elapsed_ms: 0.282474, status: 200 OK, path: /eth/v1/node/syncing, method: GET
+Apr 20 14:58:01.002 WARN  Low peer count                                peer_count: "0"
+Apr 20 14:58:01.002 DEBUG Slot timer                                    peers: "0", finalized_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, finalized_epoch: 0, head_block: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, head_slot: 0, current_slot: 2, sync_state: Stalled
+Apr 20 14:58:01.002 INFO  Searching for peers                           peers: "0", finalized_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, finalized_epoch: 0, head_slot: 0, current_slot: 2
+Apr 20 14:58:01.009 WARN  Not ready Bellatrix                           info: The execution endpoint is connected and configured, however it is not yet synced
+Apr 20 14:58:02.158 DEBUG Execution engine online                     
+Apr 20 14:58:02.158 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:03.009 DEBUG Proposer prepare routine firing             
+Apr 20 14:58:04.002 DEBUG Advanced head state one slot                  head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, state_slot: 3, current_slot: 2
+Apr 20 14:58:04.002 DEBUG Cached state                                  state_root: 0x99c03e242a66350ccd80eb222751690e2e006eb9255c37ba768e6561dd7b3578, state_slot: 3, deleted_states: [], location: "store_hot_state"
+Apr 20 14:58:04.002 DEBUG Storing hot state summary and diffs           state_root: 0x99c03e242a66350ccd80eb222751690e2e006eb9255c37ba768e6561dd7b3578, slot: 3, storage_strategy: ReplayFrom(Slot(0)), diff_base_state: 0/0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a, previous_state_root: 0x842350621946c8779238f9dca239cb0b3628f5a6e0a9f118f035519416eb799a
+Apr 20 14:58:04.002 DEBUG Completed state advance                       head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, advanced_slot: 3, initial_slot: 2
+Apr 20 14:58:05.001 DEBUG Processed HTTP API request                    elapsed_ms: 0.454618, status: 200 OK, path: /eth/v1/config/spec, method: GET
+Apr 20 14:58:05.002 DEBUG Processed HTTP API request                    elapsed_ms: 0.555065, status: 200 OK, path: /eth/v1/node/syncing, method: GET
+Apr 20 14:58:06.011 DEBUG Processed HTTP API request                    elapsed_ms: 0.511773, status: 200 OK, path: /eth/v1/config/spec, method: GET
+Apr 20 14:58:06.014 DEBUG Processed HTTP API request                    elapsed_ms: 0.443851, status: 200 OK, path: /eth/v1/node/syncing, method: GET
+Apr 20 14:58:06.545 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 3
+Apr 20 14:58:07.004 DEBUG Running beacon chain per slot tasks           slot: Slot(3)
+Apr 20 14:58:07.006 DEBUG Received proposer preparation data            count: 2
+Apr 20 14:58:07.006 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 3
+Apr 20 14:58:07.007 DEBUG Committee cache miss                          shuffling_id: Epoch(0), head_block_root: "0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c"
+Apr 20 14:58:07.007 DEBUG Proposer shuffling cache miss for proposer prep  shuffling_decision_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, epoch: 0
+Apr 20 14:58:07.007 DEBUG Priming proposer shuffling cache              shuffling_decision_block: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, epoch: 0
+Apr 20 14:58:07.010 DEBUG Processed HTTP API request                    elapsed_ms: 5.732226, status: 200 OK, path: /eth/v1/validator/duties/attester/0, method: POST
+Apr 20 14:58:07.011 DEBUG Processed HTTP API request                    elapsed_ms: 4.771869, status: 200 OK, path: /eth/v1/validator/duties/sync/0, method: POST
+Apr 20 14:58:07.011 INFO  Prepared beacon proposer                      prepare_slot: 4, validator: 1, parent_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c
+Apr 20 14:58:07.011 DEBUG Processed HTTP API request                    elapsed_ms: 7.315767, status: 200 OK, path: /eth/v1/validator/prepare_beacon_proposer, method: POST
+Apr 20 14:58:07.011 DEBUG Processed HTTP API request                    elapsed_ms: 4.996221, status: 200 OK, path: /eth/v1/validator/duties/proposer/0, method: GET
+Apr 20 14:58:07.012 DEBUG Committee cache miss                          shuffling_id: Epoch(1), head_block_root: "0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c"
+Apr 20 14:58:07.013 DEBUG Processed HTTP API request                    elapsed_ms: 1.3768280000000002, status: 200 OK, path: /eth/v1/validator/duties/attester/1, method: POST
+Apr 20 14:58:07.015 DEBUG Block production request from HTTP API        slot: Slot(3)
+Apr 20 14:58:07.015 DEBUG Fork choice successfully updated before block production  slot: 3, fork_choice_slot: 3
+Apr 20 14:58:07.015 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:07.016 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:07.017 WARN  Producing block with no sync contributions    slot: 3
+Apr 20 14:58:07.018 DEBUG Processed HTTP API request                    elapsed_ms: 1.393325, status: 200 OK, path: /eth/v1/config/spec, method: GET
+Apr 20 14:58:07.019 DEBUG Processed HTTP API request                    elapsed_ms: 0.434951, status: 200 OK, path: /eth/v1/node/syncing, method: GET
+Apr 20 14:58:07.027 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697087, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:07.029 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:07.030 WARN  Error processing HTTP API request             elapsed_ms: 14.956325, status: 400 Bad Request, path: /eth/v3/validator/blocks/3, method: GET
+Apr 20 14:58:07.030 DEBUG Block production request from HTTP API        slot: Slot(3)
+Apr 20 14:58:07.031 DEBUG Execution engine online                     
+Apr 20 14:58:07.031 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:07.031 DEBUG Fork choice successfully updated before block production  slot: 3, fork_choice_slot: 3
+Apr 20 14:58:07.032 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:07.032 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:07.033 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697087, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:07.033 WARN  Producing block with no sync contributions    slot: 3
+Apr 20 14:58:07.034 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:07.034 WARN  Error processing HTTP API request             elapsed_ms: 4.0262839999999995, status: 400 Bad Request, path: /eth/v3/validator/blocks/3, method: GET
+Apr 20 14:58:07.035 DEBUG Execution engine online                     
+Apr 20 14:58:07.035 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:07.035 DEBUG Block production request from HTTP API        slot: Slot(3)
+Apr 20 14:58:07.035 DEBUG Fork choice successfully updated before block production  slot: 3, fork_choice_slot: 3
+Apr 20 14:58:07.035 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:07.035 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:07.035 WARN  Producing block with no sync contributions    slot: 3
+Apr 20 14:58:07.035 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697087, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:07.037 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:07.037 WARN  Error processing HTTP API request             elapsed_ms: 2.562958, status: 400 Bad Request, path: /eth/v3/validator/blocks/3, method: GET
+Apr 20 14:58:07.037 DEBUG Block production request from HTTP API        slot: Slot(3)
+Apr 20 14:58:07.038 DEBUG Fork choice successfully updated before block production  slot: 3, fork_choice_slot: 3
+Apr 20 14:58:07.038 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:07.038 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:07.038 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697087, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:07.038 WARN  Producing block with no sync contributions    slot: 3
+Apr 20 14:58:07.039 DEBUG Execution engine online                     
+Apr 20 14:58:07.039 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:07.041 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:07.041 WARN  Error processing HTTP API request             elapsed_ms: 3.437234, status: 400 Bad Request, path: /eth/v3/validator/blocks/3, method: GET
+Apr 20 14:58:07.048 DEBUG Execution engine online                     
+Apr 20 14:58:07.048 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:08.130 DEBUG Starting a new peer discovery query           connected: 0, target: 200, outbound: 0, wanted: 220
+Apr 20 14:58:08.130 DEBUG Starting a peer discovery request             target_peers: 16
+Apr 20 14:58:08.130 DEBUG Discovery query yielded no results.         
+Apr 20 14:58:11.001 DEBUG Simulating unagg. attestation production    
+Apr 20 14:58:11.001 DEBUG Produce unagg. attestation                    attestation_source: "0x0000000000000000000000000000000000000000000000000000000000000000", attestation_target: "0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c"
+Apr 20 14:58:11.001 DEBUG Processed HTTP API request                    elapsed_ms: 0.498665, status: 200 OK, path: /eth/v1/beacon/blocks/head/root, method: GET
+Apr 20 14:58:11.003 DEBUG Processed HTTP API request                    elapsed_ms: 1.1835630000000001, status: 200 OK, path: /eth/v1/validator/sync_committee_subscriptions, method: POST
+Apr 20 14:58:11.003 DEBUG Subscribing to subnet                         subnet: SyncCommittee(SyncSubnetId(1)), until: Slot(8192)
+Apr 20 14:58:11.003 DEBUG Subscribing to subnet                         subnet: SyncCommittee(SyncSubnetId(2)), until: Slot(8192)
+Apr 20 14:58:11.003 DEBUG Subscribing to subnet                         subnet: SyncCommittee(SyncSubnetId(3)), until: Slot(8192)
+Apr 20 14:58:11.003 DEBUG Subscribing to subnet                         subnet: SyncCommittee(SyncSubnetId(0)), until: Slot(8192)
+Apr 20 14:58:11.003 DEBUG Subscribed to topic                           topic: /eth2/1411a2ee/sync_committee_1/ssz_snappy
+Apr 20 14:58:11.004 DEBUG ENR written to disk                         
+Apr 20 14:58:11.004 DEBUG Metadata written to disk                    
+Apr 20 14:58:11.004 DEBUG Subscribed to topic                           topic: /eth2/1411a2ee/sync_committee_2/ssz_snappy
+Apr 20 14:58:11.004 DEBUG ENR written to disk                         
+Apr 20 14:58:11.004 DEBUG Metadata written to disk                    
+Apr 20 14:58:11.004 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(1))]
+Apr 20 14:58:11.004 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_1
+Apr 20 14:58:11.004 DEBUG Subscribed to topic                           topic: /eth2/1411a2ee/sync_committee_3/ssz_snappy
+Apr 20 14:58:11.005 DEBUG ENR written to disk                         
+Apr 20 14:58:11.005 DEBUG Metadata written to disk                    
+Apr 20 14:58:11.005 DEBUG Subscribed to topic                           topic: /eth2/1411a2ee/sync_committee_0/ssz_snappy
+Apr 20 14:58:11.005 DEBUG ENR written to disk                         
+Apr 20 14:58:11.006 DEBUG Metadata written to disk                    
+Apr 20 14:58:11.006 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(0))]
+Apr 20 14:58:11.006 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_0
+Apr 20 14:58:11.006 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(3)), min_ttl_secs: Some(98275), retries: 0 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(2)), min_ttl_secs: Some(98275), retries: 0 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(0)), min_ttl_secs: Some(98275), retries: 0 }]
+Apr 20 14:58:11.006 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(1)), min_ttl_secs: Some(98275), retries: 0 }]
+Apr 20 14:58:11.006 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(3)), SyncCommittee(SyncSubnetId(2)), SyncCommittee(SyncSubnetId(0))]
+Apr 20 14:58:11.006 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(1))]
+Apr 20 14:58:11.008 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(2))]
+Apr 20 14:58:11.008 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_2
+Apr 20 14:58:11.008 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(3)), min_ttl_secs: Some(98275), retries: 1 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(2)), min_ttl_secs: Some(98275), retries: 1 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(0)), min_ttl_secs: Some(98275), retries: 1 }]
+Apr 20 14:58:11.008 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(1)), min_ttl_secs: Some(98275), retries: 1 }]
+Apr 20 14:58:11.008 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(3)), SyncCommittee(SyncSubnetId(2)), SyncCommittee(SyncSubnetId(0))]
+Apr 20 14:58:11.008 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(1))]
+Apr 20 14:58:11.010 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(3))]
+Apr 20 14:58:11.010 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_3
+Apr 20 14:58:11.010 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(3)), min_ttl_secs: Some(98275), retries: 2 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(2)), min_ttl_secs: Some(98275), retries: 2 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(0)), min_ttl_secs: Some(98275), retries: 2 }]
+Apr 20 14:58:11.010 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(1)), min_ttl_secs: Some(98275), retries: 2 }]
+Apr 20 14:58:11.010 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(3)), SyncCommittee(SyncSubnetId(2)), SyncCommittee(SyncSubnetId(0))]
+Apr 20 14:58:11.010 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(1))]
+Apr 20 14:58:11.012 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(3)), min_ttl_secs: Some(98275), retries: 3 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(2)), min_ttl_secs: Some(98275), retries: 3 }, SubnetQuery { subnet: SyncCommittee(SyncSubnetId(0)), min_ttl_secs: Some(98275), retries: 3 }]
+Apr 20 14:58:11.012 DEBUG Starting grouped subnet query                 subnets: [SubnetQuery { subnet: SyncCommittee(SyncSubnetId(1)), min_ttl_secs: Some(98275), retries: 3 }]
+Apr 20 14:58:11.012 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(1))]
+Apr 20 14:58:11.013 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_1
+Apr 20 14:58:11.013 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(3)), SyncCommittee(SyncSubnetId(2)), SyncCommittee(SyncSubnetId(0))]
+Apr 20 14:58:11.013 DEBUG Subnet peer discovery did not find sufficient peers. Reached max retry limit
+Apr 20 14:58:11.013 DEBUG Subnet peer discovery did not find sufficient peers. Reached max retry limit
+Apr 20 14:58:11.013 DEBUG Subnet peer discovery did not find sufficient peers. Reached max retry limit
+Apr 20 14:58:11.013 DEBUG Grouped subnet discovery query yielded no results.  subnets_searched_for: [SyncCommittee(SyncSubnetId(1))]
+Apr 20 14:58:11.013 DEBUG Subnet peer discovery did not find sufficient peers. Reached max retry limit
+Apr 20 14:58:11.016 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(0))]
+Apr 20 14:58:11.016 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_0
+Apr 20 14:58:11.018 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(3))]
+Apr 20 14:58:11.018 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_3
+Apr 20 14:58:11.019 DEBUG Sending pubsub messages                       count: 1, topics: [SyncCommitteeMessage(SyncSubnetId(2))]
+Apr 20 14:58:11.019 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: sync_committee_2
+Apr 20 14:58:11.022 DEBUG Processed HTTP API request                    elapsed_ms: 19.312427, status: 200 OK, path: /eth/v1/beacon/pool/sync_committees, method: POST
+Apr 20 14:58:13.014 WARN  Low peer count                                peer_count: "0"
+Apr 20 14:58:13.014 DEBUG Slot timer                                    peers: "0", finalized_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, finalized_epoch: 0, head_block: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, head_slot: 0, current_slot: 3, sync_state: Stalled
+Apr 20 14:58:13.014 INFO  Searching for peers                           peers: "0", finalized_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, finalized_epoch: 0, head_slot: 0, current_slot: 3
+Apr 20 14:58:13.017 WARN  Not ready Bellatrix                           info: The execution endpoint is connected and configured, however it is not yet synced
+Apr 20 14:58:13.402 DEBUG Processed HTTP API request                    elapsed_ms: 0.097647, status: 200 OK, path: /eth/v1/node/version, method: GET
+Apr 20 14:58:14.166 DEBUG Execution engine online                     
+Apr 20 14:58:14.166 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:15.001 DEBUG Proposer prepare routine firing             
+Apr 20 14:58:15.001 DEBUG Processed HTTP API request                    elapsed_ms: 0.574948, status: 200 OK, path: /eth/v1/validator/sync_committee_contribution, method: GET
+Apr 20 14:58:15.002 DEBUG Beacon proposer found                         payload_attributes: V2(PayloadAttributesV2 { timestamp: 1776697099, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, suggested_fee_recipient: 0x0000000000000000000000000000000000000000, withdrawals: [] }), head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4, validator_index: 1
+Apr 20 14:58:15.002 DEBUG Sending forkchoiceUpdate for proposer prep    till_prepare_slot: 3.99775322s, prepare_slot: 4
+Apr 20 14:58:15.002 DEBUG Beacon proposer found                         payload_attributes: V2(PayloadAttributesV2 { timestamp: 1776697099, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, suggested_fee_recipient: 0x0000000000000000000000000000000000000000, withdrawals: [] }), head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4, validator_index: 1
+Apr 20 14:58:15.004 INFO  Found terminal block hash                     terminal_block_hash_override: 0x0000000000000000000000000000000000000000000000000000000000000000, terminal_total_difficulty: 0, block_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:15.005 INFO  Prepared POS transition block proposer        slot: 4
+Apr 20 14:58:15.005 DEBUG Issuing engine_forkchoiceUpdated              finalized_block_hash: 0x0000000000000000000000000000000000000000000000000000000000000000, justified_block_hash: 0x0000000000000000000000000000000000000000000000000000000000000000, head_block_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, current_slot: Slot(3)
+Apr 20 14:58:15.005 DEBUG Beacon proposer found                         payload_attributes: V2(PayloadAttributesV2 { timestamp: 1776697099, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, suggested_fee_recipient: 0x0000000000000000000000000000000000000000, withdrawals: [] }), head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4, validator_index: 1
+Apr 20 14:58:15.006 DEBUG Sending pubsub messages                       count: 1, topics: [SignedContributionAndProof]
+Apr 20 14:58:15.006 WARN  Could not publish message                     error: NoPeersSubscribedToTopic, kind: signed_contribution_and_proof
+Apr 20 14:58:15.006 DEBUG Processed HTTP API request                    elapsed_ms: 2.893321, status: 200 OK, path: /eth/v1/validator/contribution_and_proofs, method: POST
+Apr 20 14:58:16.004 DEBUG Advanced head state one slot                  head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, state_slot: 4, current_slot: 3
+Apr 20 14:58:16.005 DEBUG Cached state                                  state_root: 0x76baac4145747a8a94585bd7facb07fc1fda5f1120410d18fc26ff24eccc90fc, state_slot: 4, deleted_states: [], location: "store_hot_state"
+Apr 20 14:58:16.005 DEBUG Storing hot state summary and diffs           state_root: 0x76baac4145747a8a94585bd7facb07fc1fda5f1120410d18fc26ff24eccc90fc, slot: 4, storage_strategy: ReplayFrom(Slot(0)), diff_base_state: 0/0xabcd4aabdf5417b60a3a4577f3512eaeac166c78e9388fc56c9c69a6391fed2a, previous_state_root: 0x99c03e242a66350ccd80eb222751690e2e006eb9255c37ba768e6561dd7b3578
+Apr 20 14:58:16.005 DEBUG Completed state advance                       head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, advanced_slot: 4, initial_slot: 3
+Apr 20 14:58:17.000 DEBUG Processed HTTP API request                    elapsed_ms: 0.406006, status: 200 OK, path: /eth/v1/config/spec, method: GET
+Apr 20 14:58:17.010 DEBUG Processed HTTP API request                    elapsed_ms: 8.992906, status: 200 OK, path: /eth/v1/node/syncing, method: GET
+Apr 20 14:58:18.012 DEBUG Processed HTTP API request                    elapsed_ms: 0.471878, status: 200 OK, path: /eth/v1/config/spec, method: GET
+Apr 20 14:58:18.026 DEBUG Processed HTTP API request                    elapsed_ms: 1.043714, status: 200 OK, path: /eth/v1/node/syncing, method: GET
+Apr 20 14:58:18.506 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4
+Apr 20 14:58:18.506 DEBUG Beacon proposer found                         payload_attributes: V2(PayloadAttributesV2 { timestamp: 1776697099, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, suggested_fee_recipient: 0x0000000000000000000000000000000000000000, withdrawals: [] }), head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4, validator_index: 1
+Apr 20 14:58:18.506 DEBUG Sending forkchoiceUpdate for proposer prep    till_prepare_slot: 493.479875ms, prepare_slot: 4
+Apr 20 14:58:18.506 DEBUG Beacon proposer found                         payload_attributes: V2(PayloadAttributesV2 { timestamp: 1776697099, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, suggested_fee_recipient: 0x0000000000000000000000000000000000000000, withdrawals: [] }), head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4, validator_index: 1
+Apr 20 14:58:18.509 INFO  Found terminal block hash                     terminal_block_hash_override: 0x0000000000000000000000000000000000000000000000000000000000000000, terminal_total_difficulty: 0, block_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:18.509 INFO  Prepared POS transition block proposer        slot: 4
+Apr 20 14:58:18.509 DEBUG Issuing engine_forkchoiceUpdated              finalized_block_hash: 0x0000000000000000000000000000000000000000000000000000000000000000, justified_block_hash: 0x0000000000000000000000000000000000000000000000000000000000000000, head_block_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, current_slot: Slot(3)
+Apr 20 14:58:18.509 DEBUG Beacon proposer found                         payload_attributes: V2(PayloadAttributesV2 { timestamp: 1776697099, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, suggested_fee_recipient: 0x0000000000000000000000000000000000000000, withdrawals: [] }), head_block_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4, validator_index: 1
+Apr 20 14:58:19.051 DEBUG Running beacon chain per slot tasks           slot: Slot(4)
+Apr 20 14:58:19.053 DEBUG No change in canonical head                   head: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c, slot: 4
+Apr 20 14:58:19.059 DEBUG Processed HTTP API request                    elapsed_ms: 7.146625, status: 200 OK, path: /eth/v1/config/spec, method: GET
+Apr 20 14:58:19.059 DEBUG Processed HTTP API request                    elapsed_ms: 2.215906, status: 200 OK, path: /eth/v1/validator/duties/proposer/0, method: GET
+Apr 20 14:58:19.059 DEBUG Received proposer preparation data            count: 2
+Apr 20 14:58:19.059 DEBUG Processed HTTP API request                    elapsed_ms: 0.53352, status: 200 OK, path: /eth/v1/validator/duties/attester/0, method: POST
+Apr 20 14:58:19.060 INFO  Prepared beacon proposer                      prepare_slot: 5, validator: 0, parent_root: 0x36cd11d51f813372e1c8cc14a4fdb52d29a2001fda00cb6b11b56d3440115d6c
+Apr 20 14:58:19.060 DEBUG Processed HTTP API request                    elapsed_ms: 1.385848, status: 200 OK, path: /eth/v1/validator/prepare_beacon_proposer, method: POST
+Apr 20 14:58:19.060 DEBUG Processed HTTP API request                    elapsed_ms: 0.194841, status: 200 OK, path: /eth/v1/validator/duties/attester/1, method: POST
+Apr 20 14:58:19.060 DEBUG Block production request from HTTP API        slot: Slot(4)
+Apr 20 14:58:19.060 DEBUG Fork choice successfully updated before block production  slot: 4, fork_choice_slot: 4
+Apr 20 14:58:19.060 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:19.060 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:19.060 DEBUG Processed HTTP API request                    elapsed_ms: 0.17390799999999998, status: 200 OK, path: /eth/v1/node/syncing, method: GET
+Apr 20 14:58:19.061 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697099, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:19.068 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:19.068 WARN  Error processing HTTP API request             elapsed_ms: 9.098818, status: 400 Bad Request, path: /eth/v3/validator/blocks/4, method: GET
+Apr 20 14:58:19.069 DEBUG Block production request from HTTP API        slot: Slot(4)
+Apr 20 14:58:19.069 DEBUG Fork choice successfully updated before block production  slot: 4, fork_choice_slot: 4
+Apr 20 14:58:19.069 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:19.070 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:19.070 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697099, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:19.071 DEBUG Execution engine online                     
+Apr 20 14:58:19.071 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:19.071 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:19.071 WARN  Error processing HTTP API request             elapsed_ms: 2.625495, status: 400 Bad Request, path: /eth/v3/validator/blocks/4, method: GET
+Apr 20 14:58:19.072 DEBUG Block production request from HTTP API        slot: Slot(4)
+Apr 20 14:58:19.072 DEBUG Fork choice successfully updated before block production  slot: 4, fork_choice_slot: 4
+Apr 20 14:58:19.072 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:19.072 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:19.073 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697099, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:19.073 DEBUG Execution engine online                     
+Apr 20 14:58:19.073 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:19.074 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:19.074 WARN  Error processing HTTP API request             elapsed_ms: 1.919341, status: 400 Bad Request, path: /eth/v3/validator/blocks/4, method: GET
+Apr 20 14:58:19.079 DEBUG Block production request from HTTP API        slot: Slot(4)
+Apr 20 14:58:19.080 DEBUG Fork choice successfully updated before block production  slot: 4, fork_choice_slot: 4
+Apr 20 14:58:19.080 DEBUG Not attempting re-org                         reason: "head not late"
+Apr 20 14:58:19.080 DEBUG Using default lighthouse graffiti: EL does not support engine_getClientVersionV1 method
+Apr 20 14:58:19.080 DEBUG Issuing engine_getPayload                     suggested_fee_recipient: 0x0000000000000000000000000000000000000000, prev_randao: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1, timestamp: 1776697099, parent_hash: 0x1c8ab1ec4ffbdb3d6021d9d4eb4e521f9c8f71621a56b440723af74ec94011c1
+Apr 20 14:58:19.081 DEBUG Execution engine online                     
+Apr 20 14:58:19.081 DEBUG Execution engine upcheck complete             state: Synced
+Apr 20 14:58:19.082 WARN  Execution engine call failed                  error: Json(Error("missing field `executionPayload`", line: 0, column: 0))
+Apr 20 14:58:19.082 WARN  Error processing HTTP API request             elapsed_ms: 3.756045, status: 400 Bad Request, path: /eth/v3/validator/blocks/4, method: GET
+Apr 20 14:58:19.085 DEBUG Execution engine online                     
+Apr 20 14:58:19.085 DEBUG Execution engine upcheck complete             state: Synced
+^CApr 20 14:58:21.313 INFO  Shutting down..                               reason: Success("Received SIGINT")
+Apr 20 14:58:21.314 DEBUG Persisting DHT to store                       number_of_peers: 0
+Apr 20 14:58:21.314 INFO  Saved DHT state                             
+Apr 20 14:58:21.314 INFO  Network service shutdown                    
+Apr 20 14:58:21.315 INFO  Saved beacon chain to disk  
