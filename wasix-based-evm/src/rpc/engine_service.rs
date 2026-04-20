@@ -347,90 +347,27 @@ impl EngineService {
                     }
 
                     // Start building a block
-                    let id = {
-                        use alloy_primitives::keccak256;
-                        let mut data = Vec::new();
-                        data.extend_from_slice(forkchoice_state.head_block_hash.as_slice());
-                        data.extend_from_slice(&attr.timestamp.to_be_bytes());
-                        data.extend_from_slice(attr.prev_randao.as_slice());
-                        data.extend_from_slice(attr.suggested_fee_recipient.as_slice());
-                        if let Some(withdrawals) = &attr.withdrawals {
-                            for w in withdrawals {
-                                data.extend_from_slice(&w.index.to_be_bytes());
-                                data.extend_from_slice(&w.validator_index.to_be_bytes());
-                                data.extend_from_slice(w.address.as_slice());
-                                data.extend_from_slice(&w.amount.to_be_bytes());
-                            }
-                        }
-                        // For V3+, we should also include parent_beacon_block_root if it's there
-                        if let Some(root) = attr.parent_beacon_block_root {
-                            data.extend_from_slice(root.as_slice());
-                        }
-
-                        let hash = keccak256(&data);
-                        let id = PayloadId::new(hash[..8].try_into().unwrap());
-                        info!("[EngineService] Generated stable payload_id: {} for head={:?}, timestamp={}", id, forkchoice_state.head_block_hash, attr.timestamp);
-                        id
-                    };
+                    let id = self.generate_payload_id(&forkchoice_state.head_block_hash, &attr);
                     payload_id = Some(id);
 
                     // Calculate base fee (simplified EIP-1559)
-                    let base_fee_per_gas = if let Some(parent_fee) = parent_block.header.base_fee_per_gas {
-                        let parent_gas_used = parent_block.header.gas_used;
-                        let parent_gas_target = parent_block.header.gas_limit / 2;
-                        
-                        if parent_gas_used == parent_gas_target {
-                            Some(parent_fee)
-                        } else if parent_gas_used > parent_gas_target {
-                            let gas_used_delta = parent_gas_used - parent_gas_target;
-                            let fee_delta = std::cmp::max(1u64, (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64);
-                            Some(parent_fee + fee_delta)
-                        } else {
-                            let gas_used_delta = parent_gas_target - parent_gas_used;
-                            let fee_delta = (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64;
-                            Some(parent_fee.saturating_sub(fee_delta))
-                        }
-                    } else {
-                        Some(1_000_000_000) // Default to 1 Gwei if parent has no base fee (should not happen post-London)
-                    };
+                    let base_fee_per_gas = self.calculate_next_base_fee(&parent_block.header);
 
                     // Build block logic (simplified)
-                    let mempool = self.mempool.read().await;
-                    let transactions = mempool.peek_transactions(50); // Take top 50 transactions
+                    let transactions = {
+                        let mempool = self.mempool.read().await;
+                        mempool.peek_transactions(50) // Take top 50 transactions
+                    };
 
-                    let header = Header {
-                        parent_hash: forkchoice_state.head_block_hash,
-                        ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
-                        number: parent_block.header.number + 1,
-                        timestamp: attr.timestamp,
-                        beneficiary: attr.suggested_fee_recipient,
-                        gas_limit: parent_block.header.gas_limit,
+                    let finalized_block = self.executor.execute_block_for_payload(
+                        &mut storage,
+                        transactions,
+                        &parent_block.header,
+                        &attr,
                         base_fee_per_gas,
-                        extra_data: Bytes::new(),
-                        mix_hash: attr.prev_randao,
-                        nonce: B64::ZERO,
-                        transactions_root: alloy_trie::EMPTY_ROOT_HASH,
-                        receipts_root: alloy_trie::EMPTY_ROOT_HASH,
-                        withdrawals_root: attr.withdrawals.as_ref().map(|_| alloy_trie::EMPTY_ROOT_HASH),
-                        parent_beacon_block_root: attr.parent_beacon_block_root.or(Some(B256::ZERO)),
-                        ..Default::default()
-                    };
+                    ).map_err(|e| RpcError::Internal(format!("Failed to build block: {}", e)))?;
 
-                    let block = Block {
-                        header,
-                        body: alloy_consensus::BlockBody {
-                            transactions,
-                            ommers: vec![],
-                            withdrawals: attr.withdrawals.clone().map(|w| alloy_eips::eip4895::Withdrawals::new(w.into_iter().map(|wi| alloy_eips::eip4895::Withdrawal {
-                                index: wi.index,
-                                validator_index: wi.validator_index,
-                                address: wi.address,
-                                amount: wi.amount,
-                            }).collect())),
-                        },
-                    };
-
-                    self.payloads.write().await.insert(id, block);
+                    self.payloads.write().await.insert(id, finalized_block);
                     info!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
                 }
             }
@@ -440,6 +377,50 @@ impl EngineService {
             payload_status: status,
             payload_id,
         })
+    }
+
+    fn generate_payload_id(&self, head_block_hash: &B256, attr: &PayloadAttributes) -> PayloadId {
+        use alloy_primitives::keccak256;
+        let mut data = Vec::new();
+        data.extend_from_slice(head_block_hash.as_slice());
+        data.extend_from_slice(&attr.timestamp.to_be_bytes());
+        data.extend_from_slice(attr.prev_randao.as_slice());
+        data.extend_from_slice(attr.suggested_fee_recipient.as_slice());
+        if let Some(withdrawals) = &attr.withdrawals {
+            for w in withdrawals {
+                data.extend_from_slice(&w.index.to_be_bytes());
+                data.extend_from_slice(&w.validator_index.to_be_bytes());
+                data.extend_from_slice(w.address.as_slice());
+                data.extend_from_slice(&w.amount.to_be_bytes());
+            }
+        }
+        if let Some(root) = attr.parent_beacon_block_root {
+            data.extend_from_slice(root.as_slice());
+        }
+
+        let hash = keccak256(&data);
+        PayloadId::new(hash[..8].try_into().unwrap())
+    }
+
+    fn calculate_next_base_fee(&self, parent_header: &Header) -> Option<u64> {
+        if let Some(parent_fee) = parent_header.base_fee_per_gas {
+            let parent_gas_used = parent_header.gas_used;
+            let parent_gas_target = parent_header.gas_limit / 2;
+            
+            if parent_gas_used == parent_gas_target {
+                Some(parent_fee)
+            } else if parent_gas_used > parent_gas_target {
+                let gas_used_delta = parent_gas_used - parent_gas_target;
+                let fee_delta = std::cmp::max(1u64, (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64);
+                Some(parent_fee + fee_delta)
+            } else {
+                let gas_used_delta = parent_gas_target - parent_gas_used;
+                let fee_delta = (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64;
+                Some(parent_fee.saturating_sub(fee_delta))
+            }
+        } else {
+            Some(1_000_000_000) // Default to 1 Gwei
+        }
     }
 
     pub async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
@@ -573,8 +554,6 @@ impl EngineService {
 
         match self.executor.execute_block(&mut storage, transactions, block.clone()) {
             Ok(_) => {
-                // 3. Add to storage
-                storage.add_block(block);
                 Ok(PayloadStatus {
                     status: PayloadStatusEnum::Valid,
                     latest_valid_hash: Some(actual_hash),

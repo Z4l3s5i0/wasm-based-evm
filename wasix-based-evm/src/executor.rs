@@ -1,5 +1,6 @@
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope, Header, Transaction as _, transaction::SignerRecoverable as _};
-use alloy_primitives::{logs_bloom, Log, B256, Address, LogData, B64, U256};
+use alloy_rpc_types::Withdrawal;
+use alloy_primitives::{logs_bloom, Log, B256, Address, LogData, B64, U256, Bytes};
 use crate::ev::{H160, EvmU256, evm, address_to_h160};
 use evm::backend::{OverlayedChangeSet, InMemoryAccount};
 use crate::{info, debug};
@@ -10,6 +11,13 @@ use evm::{
 };
 use evm_precompile::StandardPrecompileSet;
 use crate::storage::storage::InMemoryStorage;
+
+struct BlockRoots {
+    state_root: B256,
+    transactions_root: B256,
+    receipts_root: B256,
+    withdrawals_root: B256,
+}
 
 pub trait OverlayedChangeSetExt {
     fn merge(&mut self, other: OverlayedChangeSet);
@@ -82,28 +90,7 @@ impl Executor {
         for tx in &transactions {
             let sender = tx.recover_signer().map_err(|e| format!("Failed to recover signer: {:?}", e))?;
             debug!("[Executor] DEBUG: Executing tx: from={:?}, to={:?}, value={:?}, gas_limit={:?}", sender, tx.to(), tx.value(), tx.gas_limit());
-            let gas_price = TransactGasPrice::Legacy(EvmU256::from(tx.gas_price().unwrap_or_default()));
-            
-            let call_create = match tx.to() {
-                Some(to) => TransactArgsCallCreate::Call {
-                    address: H160::from_slice(to.as_slice()),
-                    data: tx.input().to_vec(),
-                },
-                None => TransactArgsCallCreate::Create {
-                    init_code: tx.input().to_vec(),
-                    salt: None,
-                },
-            };
-
-            let args = TransactArgs {
-                caller: H160::from_slice(sender.as_slice()),
-                value: EvmU256::from_big_endian(&tx.value().to_be_bytes::<32>()),
-                gas_limit: EvmU256::from(tx.gas_limit()),
-                gas_price,
-                access_list: Vec::new(),
-                call_create,
-                config: &self.config,
-            };
+            let args = self.tx_to_transact_args(tx, sender)?;
 
             // Use an overlay that includes changes from previous transactions in the same block
             let mut current_backend = storage.backend.clone();
@@ -125,31 +112,7 @@ impl Executor {
                     let (_, changeset) = overlayed.deconstruct();
                     total_changeset.merge(changeset.clone());
 
-                    let logs: Vec<Log> = changeset.logs.into_iter().map(|l| Log {
-                        address: Address::from(l.address.0),
-                        data: LogData::new_unchecked(
-                            l.topics.into_iter().map(|t| B256::from(t.0)).collect(),
-                            l.data.into(),
-                        ),
-                    }).collect();
-                    let bloom = logs_bloom(logs.iter());
-                    
-                    let status = match value.call_create {
-                        evm::standard::TransactValueCallCreate::Call { .. } => {
-                            alloy_consensus::Eip658Value::success()
-                        }
-                        evm::standard::TransactValueCallCreate::Create { .. } => {
-                            alloy_consensus::Eip658Value::success()
-                        }
-                    };
-                    let receipt = Receipt {
-                        receipt: alloy_consensus::Receipt {
-                            status,
-                            cumulative_gas_used,
-                            logs,
-                        },
-                        logs_bloom: bloom,
-                    };
+                    let receipt = self.create_receipt(&value, &changeset, cumulative_gas_used);
                     receipts.push(receipt);
                     results.push(value);
                 }
@@ -163,67 +126,163 @@ impl Executor {
         Ok((results, receipts, total_changeset))
     }
 
+    fn tx_to_transact_args(&self, tx: &TxEnvelope, sender: Address) -> Result<TransactArgs, String> {
+        let gas_price = TransactGasPrice::Legacy(EvmU256::from(tx.gas_price().unwrap_or_default()));
+        
+        let call_create = match tx.to() {
+            Some(to) => TransactArgsCallCreate::Call {
+                address: H160::from_slice(to.as_slice()),
+                data: tx.input().to_vec(),
+            },
+            None => TransactArgsCallCreate::Create {
+                init_code: tx.input().to_vec(),
+                salt: None,
+            },
+        };
+
+        Ok(TransactArgs {
+            caller: H160::from_slice(sender.as_slice()),
+            value: EvmU256::from_big_endian(&tx.value().to_be_bytes::<32>()),
+            gas_limit: EvmU256::from(tx.gas_limit()),
+            gas_price,
+            access_list: Vec::new(),
+            call_create,
+            config: &self.config,
+        })
+    }
+
+    fn create_receipt(&self, value: &TransactValue, changeset: &OverlayedChangeSet, cumulative_gas_used: u64) -> Receipt {
+        let logs: Vec<Log> = changeset.logs.iter().map(|l| Log {
+            address: Address::from(l.address.0),
+            data: LogData::new_unchecked(
+                l.topics.iter().map(|t| B256::from(t.0)).collect(),
+                l.data.clone().into(),
+            ),
+        }).collect();
+        let bloom = logs_bloom(logs.iter());
+        
+        let status = match value.call_create {
+            evm::standard::TransactValueCallCreate::Call { .. } => {
+                alloy_consensus::Eip658Value::success()
+            }
+            evm::standard::TransactValueCallCreate::Create { .. } => {
+                alloy_consensus::Eip658Value::success()
+            }
+        };
+        
+        Receipt {
+            receipt: alloy_consensus::Receipt {
+                status,
+                cumulative_gas_used,
+                logs,
+            },
+            logs_bloom: bloom,
+        }
+    }
+
     pub fn execute_block(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
         let (results, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
         
-        // Finalize block with correct roots
         let cumulative_gas_used = receipts.last().map(|r| r.receipt.cumulative_gas_used).unwrap_or(0);
-        
         let bloom = logs_bloom(receipts.iter().flat_map(|r| r.receipt.logs.iter()));
-        
         let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
 
-        // Apply changeset to storage to calculate state root
+        let roots = self.calculate_roots(storage, &transactions, &receipts, &withdrawals, &total_changeset);
+        
+        debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", 
+            roots.state_root, roots.transactions_root, roots.receipts_root, roots.withdrawals_root);
+
+        self.verify_roots(&block.header, &roots)?;
+
+        let finalized_block = self.create_finalized_block(&block, &transactions, &withdrawals, &roots, cumulative_gas_used, bloom);
+
+        self.finalize_state(storage, &total_changeset, &transactions, &receipts, &withdrawals, finalized_block);
+
+        Ok(results)
+    }
+
+    fn calculate_roots(
+        &self, 
+        storage: &InMemoryStorage, 
+        transactions: &[TxEnvelope], 
+        receipts: &[Receipt], 
+        withdrawals: &[Withdrawal],
+        total_changeset: &OverlayedChangeSet
+    ) -> BlockRoots {
         let mut storage_for_root = storage.clone();
-        storage_for_root.backend.apply_overlayed(&total_changeset);
+        storage_for_root.backend.apply_overlayed(total_changeset);
         let state_root = storage_for_root.calculate_state_root();
 
-        let txs_root = if transactions.is_empty() { alloy_trie::EMPTY_ROOT_HASH } else { alloy_trie::root::ordered_trie_root(&transactions) };
-        let withdrawals_root = if withdrawals.is_empty() { alloy_trie::EMPTY_ROOT_HASH } else { alloy_trie::root::ordered_trie_root(&withdrawals) };
-        let receipts_root = if receipts.is_empty() { alloy_trie::EMPTY_ROOT_HASH } else { alloy_trie::root::ordered_trie_root(&receipts) };
+        let transactions_root = if transactions.is_empty() { 
+            alloy_trie::EMPTY_ROOT_HASH 
+        } else { 
+            alloy_trie::root::ordered_trie_root(transactions) 
+        };
 
-        debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", state_root, txs_root, receipts_root, withdrawals_root);
+        let withdrawals_root = if withdrawals.is_empty() { 
+            alloy_trie::EMPTY_ROOT_HASH 
+        } else { 
+            alloy_trie::root::ordered_trie_root(withdrawals) 
+        };
 
-        // Verify roots against block
-        if block.header.state_root != B256::ZERO 
-            && block.header.state_root != alloy_trie::EMPTY_ROOT_HASH
-            && state_root != block.header.state_root 
-        {
-            let err = format!("State root mismatch: expected {:?}, got {:?}", block.header.state_root, state_root);
-            info!("[Executor] ERROR: {}", err);
-            return Err(err);
-        }
-        if block.header.transactions_root != B256::ZERO 
-            && block.header.transactions_root != alloy_trie::EMPTY_ROOT_HASH
-            && txs_root != block.header.transactions_root 
-        {
-            let err = format!("Transactions root mismatch: expected {:?}, got {:?}", block.header.transactions_root, txs_root);
-            info!("[Executor] ERROR: {}", err);
-            return Err(err);
-        }
-        if block.header.receipts_root != B256::ZERO 
-            && block.header.receipts_root != alloy_trie::EMPTY_ROOT_HASH
-            && receipts_root != block.header.receipts_root 
-        {
-            let err = format!("Receipts root mismatch: expected {:?}, got {:?}", block.header.receipts_root, receipts_root);
-            info!("[Executor] ERROR: {}", err);
-            return Err(err);
-        }
-        if block.header.withdrawals_root.unwrap_or(B256::ZERO) != B256::ZERO && withdrawals_root != block.header.withdrawals_root.unwrap_or(B256::ZERO) {
-            let err = format!("Withdrawals root mismatch: expected {:?}, got {:?}", block.header.withdrawals_root, withdrawals_root);
-            info!("[Executor] ERROR: {}", err);
-            return Err(err);
-        }
+        let receipts_root = if receipts.is_empty() { 
+            alloy_trie::EMPTY_ROOT_HASH 
+        } else { 
+            alloy_trie::root::ordered_trie_root(receipts) 
+        };
 
-        let finalized_block = Block {
+        BlockRoots {
+            state_root,
+            transactions_root,
+            receipts_root,
+            withdrawals_root,
+        }
+    }
+
+    fn verify_roots(&self, header: &Header, roots: &BlockRoots) -> Result<(), String> {
+        if header.state_root != B256::ZERO 
+            && header.state_root != alloy_trie::EMPTY_ROOT_HASH
+            && roots.state_root != header.state_root 
+        {
+            return Err(format!("State root mismatch: expected {:?}, got {:?}", header.state_root, roots.state_root));
+        }
+        if header.transactions_root != B256::ZERO 
+            && header.transactions_root != alloy_trie::EMPTY_ROOT_HASH
+            && roots.transactions_root != header.transactions_root 
+        {
+            return Err(format!("Transactions root mismatch: expected {:?}, got {:?}", header.transactions_root, roots.transactions_root));
+        }
+        if header.receipts_root != B256::ZERO 
+            && header.receipts_root != alloy_trie::EMPTY_ROOT_HASH
+            && roots.receipts_root != header.receipts_root 
+        {
+            return Err(format!("Receipts root mismatch: expected {:?}, got {:?}", header.receipts_root, roots.receipts_root));
+        }
+        let header_withdrawals_root = header.withdrawals_root.unwrap_or(B256::ZERO);
+        if header_withdrawals_root != B256::ZERO && roots.withdrawals_root != header_withdrawals_root {
+            return Err(format!("Withdrawals root mismatch: expected {:?}, got {:?}", header.withdrawals_root, roots.withdrawals_root));
+        }
+        Ok(())
+    }
+
+    fn create_finalized_block(
+        &self,
+        block: &Block<TxEnvelope>,
+        transactions: &[TxEnvelope],
+        withdrawals: &[Withdrawal],
+        roots: &BlockRoots,
+        cumulative_gas_used: u64,
+        bloom: alloy_primitives::Bloom,
+    ) -> Block<TxEnvelope> {
+        Block {
             header: Header {
                 number: block.header.number,
                 parent_hash: block.header.parent_hash,
                 ommers_hash: block.header.ommers_hash,
                 beneficiary: block.header.beneficiary,
-                state_root,
-                transactions_root: txs_root,
-                receipts_root,
+                state_root: roots.state_root,
+                transactions_root: roots.transactions_root,
+                receipts_root: roots.receipts_root,
                 logs_bloom: bloom,
                 difficulty: block.header.difficulty,
                 gas_limit: block.header.gas_limit,
@@ -233,7 +292,7 @@ impl Executor {
                 mix_hash: block.header.mix_hash,
                 nonce: B64::ZERO,
                 base_fee_per_gas: block.header.base_fee_per_gas,
-                withdrawals_root: Some(withdrawals_root),
+                withdrawals_root: Some(roots.withdrawals_root),
                 blob_gas_used: None,
                 excess_blob_gas: None,
                 parent_beacon_block_root: block.header.parent_beacon_block_root.or(Some(B256::ZERO)),
@@ -241,33 +300,43 @@ impl Executor {
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
-                transactions: transactions.clone(),
+                transactions: transactions.to_vec(),
                 ommers: vec![],
-                withdrawals: Some(withdrawals.clone()),
+                withdrawals: Some(alloy_eips::eip4895::Withdrawals::new(withdrawals.to_vec())),
             },
-        };
+        }
+    }
 
+    fn finalize_state(
+        &self,
+        storage: &mut InMemoryStorage,
+        total_changeset: &OverlayedChangeSet,
+        transactions: &[TxEnvelope],
+        receipts: &[Receipt],
+        withdrawals: &[Withdrawal],
+        finalized_block: Block<TxEnvelope>,
+    ) {
         // Apply total changeset to actual storage
-        storage.backend.apply_overlayed(&total_changeset);
+        storage.backend.apply_overlayed(total_changeset);
 
         // Add transactions, receipts and block to storage
-        for (tx, receipt) in transactions.into_iter().zip(receipts.into_iter()) {
+        for (tx, receipt) in transactions.iter().cloned().zip(receipts.iter().cloned()) {
             let hash = *tx.hash();
             storage.add_transaction(tx);
             storage.add_receipt(hash, receipt);
         }
 
-        // Apply withdrawals (Shanghai/Capella)
-        for withdrawal in &withdrawals {
+        // Apply withdrawals
+        for withdrawal in withdrawals {
             let addr = withdrawal.address;
-            let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64); // Gwei to Wei
+            let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64);
             let evm_amount_wei = crate::ev::alloy_u256_to_evm_u256(amount_wei);
             let h160_addr = address_to_h160(addr);
+            
             if let Some(account) = storage.backend.state.get_mut(&h160_addr) {
                 account.balance += evm_amount_wei;
                 info!("[Executor] Applied withdrawal: address={:?}, amount={} Gwei", addr, withdrawal.amount);
             } else {
-                // If account doesn't exist, it should be created (standard Ethereum behavior)
                 storage.backend.state.insert(h160_addr, InMemoryAccount {
                     balance: evm_amount_wei,
                     nonce: EvmU256::zero(),
@@ -279,10 +348,75 @@ impl Executor {
             }
         }
 
+        let block_number = finalized_block.header.number;
         storage.add_block(finalized_block);
-        info!("[Executor] Block finalized and saved to storage: number={:?}", block.header.number);
+        info!("[Executor] Block finalized and saved to storage: number={:?}", block_number);
+    }
 
-        Ok(results)
+    pub fn execute_block_for_payload(
+        &self,
+        storage: &mut InMemoryStorage,
+        transactions: Vec<TxEnvelope>,
+        parent_header: &Header,
+        attr: &alloy_rpc_types::engine::PayloadAttributes,
+        base_fee_per_gas: Option<u64>,
+    ) -> Result<Block<TxEnvelope>, String> {
+        let block_number = parent_header.number + 1;
+        
+        // Mock a block for execute_with_changeset
+        let mock_header = Header {
+            number: block_number,
+            timestamp: attr.timestamp,
+            parent_hash: parent_header.hash_slow(),
+            ..Default::default()
+        };
+        let mock_block = Block {
+            header: mock_header,
+            body: alloy_consensus::BlockBody {
+                transactions: transactions.clone(),
+                ommers: vec![],
+                withdrawals: attr.withdrawals.clone().map(|w| alloy_eips::eip4895::Withdrawals::new(w.into_iter().map(|wi| alloy_eips::eip4895::Withdrawal {
+                    index: wi.index,
+                    validator_index: wi.validator_index,
+                    address: wi.address,
+                    amount: wi.amount,
+                }).collect())),
+            },
+        };
+
+        let (_, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), mock_block.clone())?;
+        
+        let cumulative_gas_used = receipts.last().map(|r| r.receipt.cumulative_gas_used).unwrap_or(0);
+        let bloom = logs_bloom(receipts.iter().flat_map(|r| r.receipt.logs.iter()));
+        let withdrawals = mock_block.body.withdrawals.clone().unwrap_or_default();
+
+        let roots = self.calculate_roots(storage, &transactions, &receipts, &withdrawals, &total_changeset);
+        
+        let finalized_header = Header {
+            parent_hash: parent_header.hash_slow(),
+            ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
+            number: block_number,
+            timestamp: attr.timestamp,
+            beneficiary: attr.suggested_fee_recipient,
+            gas_limit: parent_header.gas_limit,
+            base_fee_per_gas,
+            extra_data: Bytes::new(),
+            mix_hash: attr.prev_randao,
+            nonce: B64::ZERO,
+            state_root: roots.state_root,
+            transactions_root: roots.transactions_root,
+            receipts_root: roots.receipts_root,
+            withdrawals_root: Some(roots.withdrawals_root),
+            logs_bloom: bloom,
+            gas_used: cumulative_gas_used,
+            parent_beacon_block_root: attr.parent_beacon_block_root.or(Some(B256::ZERO)),
+            ..Default::default()
+        };
+
+        Ok(Block {
+            header: finalized_header,
+            body: mock_block.body,
+        })
     }
 
     fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
@@ -298,26 +432,7 @@ impl Executor {
             let mut results = Vec::new();
             for tx in &transactions {
                 let sender = tx.recover_signer().map_err(|e| format!("Failed to recover signer: {:?}", e))?;
-                let gas_price = TransactGasPrice::Legacy(EvmU256::from(tx.gas_price().unwrap_or_default()));
-                let call_create = match tx.to() {
-                    Some(to) => TransactArgsCallCreate::Call {
-                        address: H160::from_slice(to.as_slice()),
-                        data: tx.input().to_vec(),
-                    },
-                    None => TransactArgsCallCreate::Create {
-                        init_code: tx.input().to_vec(),
-                        salt: None,
-                    },
-                };
-                let args = TransactArgs {
-                    caller: H160::from_slice(sender.as_slice()),
-                    value: EvmU256::from_big_endian(&tx.value().to_be_bytes::<32>()),
-                    gas_limit: EvmU256::from(tx.gas_limit()),
-                    gas_price,
-                    access_list: Vec::new(),
-                    call_create,
-                    config: &self.config,
-                };
+                let args = self.tx_to_transact_args(tx, sender)?;
                 let mut overlayed = OverlayedBackend::new(&storage.backend, &self.config.runtime);
                 let result = transact(args, None, &mut overlayed, &invoker);
                 match result {

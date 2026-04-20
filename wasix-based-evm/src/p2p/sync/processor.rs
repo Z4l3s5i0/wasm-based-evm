@@ -27,7 +27,6 @@ impl BlockProcessor {
             Ok(_) => {
                 info!("[Processor] Successfully executed and stored block {}", block_num);
                 let block_hash = block.header.hash_slow();
-                storage_write.add_block(block.clone());
                 storage_write.update_forkchoice(block_hash, Some(block_hash), Some(block_hash));
                 
                 // Update mempool after successful block processing
