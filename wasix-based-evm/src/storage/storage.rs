@@ -114,6 +114,9 @@ impl InMemoryStorage {
     }
 
     pub fn create_from_genesis_init(chain_id: EvmU256, genesis: GenesisInit) -> (Self, Block<Transaction>) {
+        let is_london = genesis.config.london_block == Some(0);
+        let base_fee_per_gas = if is_london { Some(1_000_000_000) } else { None };
+        
         let env = InMemoryEnvironment {
             block_hashes: BTreeMap::new(),
             block_number: EvmU256::zero(),
@@ -122,7 +125,7 @@ impl InMemoryStorage {
             block_difficulty: alloy_u256_to_evm_u256(genesis.difficulty.unwrap_or_default()),
             block_randomness: Some(b256_to_h256(genesis.mixhash.unwrap_or_default())),
             block_gas_limit: EvmU256::from(genesis.gas_limit.unwrap_or_default()),
-            block_base_fee_per_gas: alloy_u256_to_evm_u256(U256::from(1_000_000_000u64)),
+            block_base_fee_per_gas: alloy_u256_to_evm_u256(U256::from(base_fee_per_gas.unwrap_or(0))),
             blob_base_fee_per_gas: EvmU256::zero(),
             blob_versioned_hashes: vec![],
             chain_id,
@@ -163,6 +166,9 @@ impl InMemoryStorage {
         }
 
         let state_root = storage.calculate_state_root();
+
+        let is_shanghai = genesis.config.shanghai_time == Some(0);
+
         let genesis_block: Block<Transaction> = Block {
             header: Header {
                 number: genesis.number.unwrap_or(0),
@@ -173,11 +179,11 @@ impl InMemoryStorage {
                 difficulty: genesis.difficulty.unwrap_or_default(),
                 mix_hash: genesis.mixhash.unwrap_or_default(),
                 nonce: B64::from(genesis.nonce.unwrap_or_default()),
-                base_fee_per_gas: None,
+                base_fee_per_gas,
                 extra_data: genesis.extra_data.unwrap_or_default(),
                 transactions_root: alloy_trie::EMPTY_ROOT_HASH,
                 receipts_root: alloy_trie::EMPTY_ROOT_HASH,
-                withdrawals_root: Some(alloy_trie::EMPTY_ROOT_HASH),
+                withdrawals_root: if is_shanghai { Some(alloy_trie::EMPTY_ROOT_HASH) } else { None },
                 gas_used: 0,
                 parent_hash: genesis.parent_hash.unwrap_or_default(),
                 ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
@@ -190,7 +196,7 @@ impl InMemoryStorage {
             body: alloy_consensus::BlockBody {
                 transactions: Vec::new(),
                 ommers: Vec::new(),
-                withdrawals: Some(alloy_eips::eip4895::Withdrawals::new(Vec::new())),
+                withdrawals: if is_shanghai { Some(alloy_eips::eip4895::Withdrawals::new(Vec::new())) } else { None },
             },
         };
         (storage, genesis_block)

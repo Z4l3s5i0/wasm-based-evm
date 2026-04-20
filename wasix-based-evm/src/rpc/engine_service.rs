@@ -213,6 +213,11 @@ impl EngineService {
         info!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let mut storage = self.storage.write().await;
 
+        // Save current forkchoice state for potential rollback
+        let old_head = storage.head_block_hash;
+        let old_safe = storage.safe_block_hash;
+        let old_finalized = storage.finalized_block_hash;
+
         // Update forkchoice in storage
         storage.update_forkchoice(forkchoice_state.head_block_hash, Some(forkchoice_state.safe_block_hash), Some(forkchoice_state.finalized_block_hash));
 
@@ -230,7 +235,11 @@ impl EngineService {
                             latest_valid_hash: Some(forkchoice_state.head_block_hash),
                         }, None)
                     }
-                    Err(e) => return Err(e),
+                    Err(e) => {
+                        // Rollback forkchoice in storage on error
+                        storage.update_forkchoice(old_head, Some(old_safe), Some(old_finalized));
+                        return Err(e);
+                    }
                 }
             } else {
                 (status, None)
