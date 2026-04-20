@@ -1,6 +1,5 @@
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_primitives::U256;
-use alloy_rlp::Encodable;
 use alloy_rpc_types::engine::{
     ExecutionPayloadBodyV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     ExecutionPayloadV4,
@@ -66,6 +65,7 @@ impl EngineMapper {
             parent_hash: payload.parent_hash,
             beneficiary: payload.fee_recipient,
             state_root: payload.state_root,
+            transactions_root: alloy_consensus::proofs::calculate_transaction_root(&transactions),
             receipts_root: payload.receipts_root,
             logs_bloom: payload.logs_bloom,
             mix_hash: payload.prev_randao,
@@ -74,9 +74,23 @@ impl EngineMapper {
             gas_used: payload.gas_used,
             timestamp: payload.timestamp,
             extra_data: payload.extra_data.clone(),
-            base_fee_per_gas: Some(payload.base_fee_per_gas.to::<u128>().try_into().unwrap()),
+            base_fee_per_gas: Some(payload.base_fee_per_gas.to::<u64>()),
+            withdrawals_root: withdrawals.as_ref().map(|w| {
+                let withdrawals_vec: Vec<_> = w.iter().map(|wi| alloy_eips::eip4895::Withdrawal {
+                    index: wi.index,
+                    validator_index: wi.validator_index,
+                    address: wi.address,
+                    amount: wi.amount,
+                }).collect();
+                alloy_consensus::proofs::calculate_withdrawals_root(&withdrawals_vec)
+            }),
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
+            ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
+            difficulty: U256::ZERO,
+            nonce: alloy_primitives::B64::ZERO,
             requests_hash: None,
-            ..Default::default()
         };
 
         Block {

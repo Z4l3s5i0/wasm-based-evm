@@ -47,10 +47,6 @@ impl RpcServerFacade {
         Self { module: jsonrpsee::RpcModule::new(()) }
     }
 
-    pub fn empty_module() -> jsonrpsee::RpcModule<()> {
-        jsonrpsee::RpcModule::new(())
-    }
-
     pub fn register_accounts(&mut self, service: AccountService) -> Result<(), jsonrpsee::types::ErrorObjectOwned> {
         self.module.merge(AccountController { service }.into_rpc()).map_err(|e| jsonrpsee::types::ErrorObjectOwned::owned(jsonrpsee::types::error::INTERNAL_ERROR_CODE, e.to_string(), None::<()>))
     }

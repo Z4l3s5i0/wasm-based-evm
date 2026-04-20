@@ -2,8 +2,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::storage::storage::InMemoryStorage;
 use crate::mempool::Mempool;
-use alloy_consensus::Block as ConsensusBlock;
-use alloy_consensus::TxEnvelope as Transaction;
+use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_primitives::U256;
 use crate::evm::executor::Executor;
 use crate::info;
@@ -19,7 +18,7 @@ impl BlockProcessor {
         Self { storage, executor, mempool }
     }
 
-    pub async fn process_block(&self, block: ConsensusBlock<Transaction>) -> Result<(), Box<dyn std::error::Error>> {
+    pub async fn process_block(&self, block: Block<Transaction>) -> Result<(), Box<dyn std::error::Error>> {
         let block_num = block.header.number;
         let mut storage_write = self.storage.write().await;
         

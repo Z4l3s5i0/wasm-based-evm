@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256, Bytes};
-use alloy_consensus::{Header, Block, TxEnvelope as Transaction, ReceiptWithBloom as Receipt};
+use alloy_consensus::{Header, Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_eips::BlockId;
 use anyhow::Result;
 use async_trait::async_trait;

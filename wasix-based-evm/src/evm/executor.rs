@@ -1,4 +1,4 @@
-use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope, Header, Transaction as _, transaction::SignerRecoverable as _};
+use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope, Transaction as _, transaction::SignerRecoverable as _};
 use alloy_rpc_types::Withdrawal;
 use alloy_primitives::{logs_bloom, Log, B256, Address, LogData, B64, U256, Bytes};
 use crate::evm::ev::{H160, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
@@ -31,7 +31,6 @@ impl OverlayedChangeSetExt for OverlayedChangeSet {
         self.nonces.extend(other.nonces);
         self.storage_resets.extend(other.storage_resets);
         self.storages.extend(other.storages);
-        self.transient_storage.extend(other.transient_storage);
         self.accessed.extend(other.accessed);
         self.touched.extend(other.touched);
         self.deletes.extend(other.deletes);
@@ -77,6 +76,8 @@ impl Executor {
             touched: std::collections::BTreeSet::new(),
             deletes: std::collections::BTreeSet::new(),
         };
+
+        total_changeset.transient_storage.clear(); // Ensure it's empty for Shanghai
 
         for tx in &transactions {
             let sender = tx.recover_signer().map_err(|e| format!("Failed to recover signer: {:?}", e))?;
@@ -286,9 +287,8 @@ impl Executor {
                 withdrawals_root: Some(roots.withdrawals_root),
                 blob_gas_used: None,
                 excess_blob_gas: None,
-                parent_beacon_block_root: block.header.parent_beacon_block_root.or(Some(B256::ZERO)),
+                parent_beacon_block_root: block.header.parent_beacon_block_root.or(None),
                 requests_hash: None,
-                ..Default::default()
             },
             body: alloy_consensus::BlockBody {
                 transactions: transactions.to_vec(),
@@ -400,8 +400,11 @@ impl Executor {
             withdrawals_root: Some(roots.withdrawals_root),
             logs_bloom: bloom,
             gas_used: cumulative_gas_used,
-            parent_beacon_block_root: attr.parent_beacon_block_root.or(Some(B256::ZERO)),
-            ..Default::default()
+            difficulty: U256::ZERO,
+            blob_gas_used: None,
+            excess_blob_gas: None,
+            parent_beacon_block_root: None,
+            requests_hash: None,
         };
 
         Ok(Block {

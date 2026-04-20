@@ -368,9 +368,7 @@ impl AppBuilder {
         let mut auth_facade = RpcServerFacade::new();
         let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
 
-        eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
-        eth_facade.register_debug(DebugService { mempool: mempool.clone() })?;
-        eth_facade.register_eth(EthService { 
+        let eth_service = EthService {
             block_storage: provider.clone(),
             state_storage: provider.clone(),
             mempool: mempool.clone(),
@@ -379,7 +377,11 @@ impl AppBuilder {
             storage: storage.clone(),
             account_manager: account_manager.clone(),
             sync_engine: sync_engine.clone(),
-        })?;
+        };
+
+        eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
+        eth_facade.register_debug(DebugService { mempool: mempool.clone() })?;
+        eth_facade.register_eth(eth_service.clone())?;
 
         eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
         eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
@@ -393,16 +395,7 @@ impl AppBuilder {
             (*executor).clone(),
             sync_engine.clone(),
         ))?;
-        auth_facade.register_eth(EthService {
-            block_storage: provider.clone(),
-            state_storage: provider.clone(),
-            mempool: mempool.clone(),
-            peer_manager: peer_manager.clone(),
-            executor: (*executor).clone(),
-            storage: storage.clone(),
-            account_manager: account_manager.clone(),
-            sync_engine: sync_engine.clone(),
-        })?;
+        auth_facade.register_eth(eth_service.clone())?;
 
         Ok((eth_facade.into_module(), auth_facade.into_module()))
     }

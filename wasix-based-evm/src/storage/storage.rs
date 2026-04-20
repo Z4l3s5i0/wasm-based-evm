@@ -7,8 +7,8 @@ use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
 use crate::storage::genesis::Genesis;
 use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, LogProvider};
+use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use crate::mempool::Mempool;
-use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction, Header};
 use alloy_eips::BlockId;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -48,8 +48,8 @@ impl InMemoryStorage {
             block_randomness: Some(b256_to_h256(genesis.mix_hash)),
             block_gas_limit: EvmU256::from(genesis.gas_limit),
             block_base_fee_per_gas: alloy_u256_to_evm_u256(genesis.base_fee_per_gas.unwrap_or_else(|| U256::from(1_000_000_000u64))),
-            blob_base_fee_per_gas: EvmU256::zero(),
-            blob_versioned_hashes: Vec::new(),
+            blob_base_fee_per_gas:  EvmU256::zero(),
+            blob_versioned_hashes: vec![],
             chain_id,
         };
 
@@ -112,7 +112,7 @@ impl InMemoryStorage {
                 logs_bloom: Default::default(),
                 blob_gas_used: None,
                 excess_blob_gas: None,
-                parent_beacon_block_root: Some(B256::ZERO),
+                parent_beacon_block_root: None,
                 requests_hash: None,
             },
             body: alloy_consensus::BlockBody {
@@ -125,8 +125,8 @@ impl InMemoryStorage {
         info!("[Storage] Calculated genesis hash: {:?}", genesis_hash);
         
         // Also log some key fields to help debug CL/EL mismatches
-        info!("[Storage] Genesis header RLP fields: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}, parent_beacon_block_root={:?}", 
-            genesis_block.header.state_root, genesis_block.header.transactions_root, genesis_block.header.receipts_root, genesis_block.header.withdrawals_root, genesis_block.header.parent_beacon_block_root);
+        info!("[Storage] Genesis header RLP fields: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", 
+            genesis_block.header.state_root, genesis_block.header.transactions_root, genesis_block.header.receipts_root, genesis_block.header.withdrawals_root);
         
         info!("[Storage] Genesis header fields: nonce={:?}, mix_hash={:?}, difficulty={:?}, coinbase={:?}, timestamp={:?}, gas_limit={:?}, base_fee={:?}", 
             genesis.nonce, genesis.mix_hash, genesis.difficulty, genesis.coinbase, genesis.timestamp, genesis.gas_limit, genesis.base_fee_per_gas);
@@ -253,16 +253,6 @@ impl InMemoryStorage {
 
     pub fn get_latest_block_number(&self) -> u64 {
         self.blocks.keys().last().cloned().unwrap_or(0)
-    }
-
-    /// Get a mutable reference to the backend.
-    pub fn backend_mut(&mut self) -> &mut InMemoryBackend {
-        &mut self.backend
-    }
-
-    /// Set the backend.
-    pub fn set_backend(&mut self, backend: InMemoryBackend) {
-        self.backend = backend;
     }
 
     pub fn get_balance(&self, address: Address) -> U256 {
@@ -426,7 +416,24 @@ impl StorageProvider {
                 number: latest_block.header.number + 1,
                 parent_hash: latest_block.header.hash_slow(),
                 timestamp: latest_block.header.timestamp + 1,
-                ..Default::default()
+                beneficiary: latest_block.header.beneficiary,
+                gas_limit: latest_block.header.gas_limit,
+                difficulty: latest_block.header.difficulty,
+                mix_hash: latest_block.header.mix_hash,
+                base_fee_per_gas: latest_block.header.base_fee_per_gas,
+                ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
+                state_root: B256::ZERO,
+                transactions_root: B256::ZERO,
+                receipts_root: B256::ZERO,
+                logs_bloom: Default::default(),
+                gas_used: 0,
+                extra_data: Bytes::new(),
+                nonce: B64::ZERO,
+                withdrawals_root: None,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                parent_beacon_block_root: None,
+                requests_hash: None,
             },
             body: alloy_consensus::BlockBody {
                 transactions: transactions.clone(),

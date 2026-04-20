@@ -18,6 +18,7 @@ use crate::misc::error;
 use crate::misc::error::RpcResult;
 use crate::sync::controller::SyncController;
 
+#[derive(Clone)]
 pub struct EthService {
     pub block_storage: Arc<dyn BlockProvider>,
     pub state_storage: Arc<dyn StateProvider>,
