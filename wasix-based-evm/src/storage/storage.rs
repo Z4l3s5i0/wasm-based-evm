@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, U256, Bytes, B64};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
-use alloy_genesis::{Genesis, GenesisAccount};
+use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
 use crate::storage::traits::{StateProvider};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use crate::mempool::Mempool;
@@ -18,6 +18,47 @@ use serde::{Serialize, Deserialize};
 use std::fs::File;
 use std::path::Path;
 use crate::evm::executor::Executor;
+
+#[derive(Clone, Serialize, Deserialize, Debug)]
+#[serde(rename_all = "camelCase")]
+pub struct GenesisInit {
+    pub config: ChainConfig,
+    pub alloc: BTreeMap<Address, GenesisAccount>,
+    pub coinbase: Option<Address>,
+    pub difficulty: Option<U256>,
+    pub extra_data: Option<Bytes>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub gas_limit: Option<u64>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub nonce: Option<u64>,
+    pub mixhash: Option<B256>,
+    pub parent_hash: Option<B256>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub timestamp: Option<u64>,
+    #[serde(default, with = "alloy_serde::quantity::opt")]
+    pub number: Option<u64>,
+}
+
+impl From<GenesisInit> for Genesis {
+    fn from(init: GenesisInit) -> Self {
+        Self {
+            config: init.config,
+            alloc: init.alloc,
+            coinbase: init.coinbase.unwrap_or_default(),
+            difficulty: init.difficulty.unwrap_or_default(),
+            extra_data: init.extra_data.unwrap_or_default(),
+            gas_limit: init.gas_limit.unwrap_or_default(),
+            nonce: init.nonce.unwrap_or_default(),
+            mix_hash: init.mixhash.unwrap_or_default(),
+            parent_hash: Some(init.parent_hash.unwrap_or_default()),
+            timestamp: init.timestamp.unwrap_or_default(),
+            number: init.number,
+            base_fee_per_gas: None,
+            excess_blob_gas: None,
+            blob_gas_used: None,
+        }
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InMemoryStorage {
@@ -41,6 +82,121 @@ impl InMemoryStorage {
     }
 
     pub fn new_with_genesis(chain_id: EvmU256, genesis: Genesis) -> Self {
+        let (storage, genesis_block) = Self::create_from_genesis(chain_id, genesis);
+        let mut storage = storage;
+        let genesis_hash = genesis_block.header.hash_slow();
+        
+        // Ensure genesis hash is indexed
+        storage.blocks.insert(genesis_block.header.number, genesis_block);
+        storage.hash_to_number.insert(genesis_hash, 0);
+        storage.head_block_hash = genesis_hash;
+        storage.safe_block_hash = genesis_hash;
+        storage.finalized_block_hash = genesis_hash;
+        storage.snapshots.insert(0, storage.backend.clone());
+
+        storage
+    }
+
+    pub fn new_with_genesis_init(chain_id: EvmU256, genesis: GenesisInit) -> Self {
+        let (storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis);
+        let mut storage = storage;
+        let genesis_hash = genesis_block.header.hash_slow();
+        
+        // Ensure genesis hash is indexed
+        storage.blocks.insert(genesis_block.header.number, genesis_block);
+        storage.hash_to_number.insert(genesis_hash, 0);
+        storage.head_block_hash = genesis_hash;
+        storage.safe_block_hash = genesis_hash;
+        storage.finalized_block_hash = genesis_hash;
+        storage.snapshots.insert(0, storage.backend.clone());
+
+        storage
+    }
+
+    pub fn create_from_genesis_init(chain_id: EvmU256, genesis: GenesisInit) -> (Self, Block<Transaction>) {
+        let env = InMemoryEnvironment {
+            block_hashes: BTreeMap::new(),
+            block_number: EvmU256::zero(),
+            block_coinbase: address_to_h160(genesis.coinbase.unwrap_or_default()),
+            block_timestamp: EvmU256::from(genesis.timestamp.unwrap_or(0)),
+            block_difficulty: alloy_u256_to_evm_u256(genesis.difficulty.unwrap_or_default()),
+            block_randomness: Some(b256_to_h256(genesis.mixhash.unwrap_or_default())),
+            block_gas_limit: EvmU256::from(genesis.gas_limit.unwrap_or_default()),
+            block_base_fee_per_gas: alloy_u256_to_evm_u256(U256::from(1_000_000_000u64)),
+            blob_base_fee_per_gas: EvmU256::zero(),
+            blob_versioned_hashes: vec![],
+            chain_id,
+        };
+
+        let mut storage = Self {
+            backend: InMemoryBackend {
+                environment: env,
+                state: BTreeMap::new(),
+            },
+            blocks: BTreeMap::new(),
+            hash_to_number: BTreeMap::new(),
+            transactions: BTreeMap::new(),
+            receipts: BTreeMap::new(),
+            tx_location: BTreeMap::new(),
+            head_block_hash: B256::ZERO,
+            safe_block_hash: B256::ZERO,
+            finalized_block_hash: B256::ZERO,
+            snapshots: BTreeMap::new(),
+        };
+
+        for (addr, account) in genesis.alloc {
+            let mut storage_map = BTreeMap::new();
+            if let Some(s) = account.storage {
+                for (k, v) in s {
+                    storage_map.insert(H256(k.0), H256(v.0));
+                }
+            }
+            let im_account = InMemoryAccount {
+                balance: alloy_u256_to_evm_u256(account.balance),
+                nonce: EvmU256::from(account.nonce.unwrap_or(0)),
+                code: account.code.map(|c| c.to_vec()).unwrap_or_default(),
+                storage: storage_map,
+                transient_storage: Default::default(),
+            };
+            let evm_addr = address_to_h160(addr);
+            storage.backend.state.insert(evm_addr, im_account);
+        }
+
+        let state_root = storage.calculate_state_root();
+        let genesis_block: Block<Transaction> = Block {
+            header: Header {
+                number: genesis.number.unwrap_or(0),
+                timestamp: genesis.timestamp.unwrap_or(0),
+                gas_limit: genesis.gas_limit.unwrap_or_default(),
+                state_root,
+                beneficiary: genesis.coinbase.unwrap_or_default(),
+                difficulty: genesis.difficulty.unwrap_or_default(),
+                mix_hash: genesis.mixhash.unwrap_or_default(),
+                nonce: B64::from(genesis.nonce.unwrap_or_default()),
+                base_fee_per_gas: None,
+                extra_data: genesis.extra_data.unwrap_or_default(),
+                transactions_root: alloy_trie::EMPTY_ROOT_HASH,
+                receipts_root: alloy_trie::EMPTY_ROOT_HASH,
+                withdrawals_root: Some(alloy_trie::EMPTY_ROOT_HASH),
+                gas_used: 0,
+                parent_hash: genesis.parent_hash.unwrap_or_default(),
+                ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
+                logs_bloom: Default::default(),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                parent_beacon_block_root: None,
+                requests_hash: None,
+            },
+            body: alloy_consensus::BlockBody {
+                transactions: Vec::new(),
+                ommers: Vec::new(),
+                withdrawals: Some(alloy_eips::eip4895::Withdrawals::new(Vec::new())),
+            },
+        };
+        (storage, genesis_block)
+    }
+
+    pub fn create_from_genesis(chain_id: EvmU256, genesis: Genesis) -> (Self, Block<Transaction>) {
         let env = InMemoryEnvironment {
             block_hashes: BTreeMap::new(),
             block_number: EvmU256::zero(),
@@ -49,7 +205,7 @@ impl InMemoryStorage {
             block_difficulty: alloy_u256_to_evm_u256(genesis.difficulty),
             block_randomness: Some(b256_to_h256(genesis.mix_hash)),
             block_gas_limit: EvmU256::from(genesis.gas_limit),
-            block_base_fee_per_gas: alloy_u256_to_evm_u256(genesis.base_fee_per_gas.map(U256::from).unwrap_or_else(|| U256::from(1_000_000_000u64))),
+            block_base_fee_per_gas: alloy_u256_to_evm_u256(U256::from(1_000_000_000u64)),
             blob_base_fee_per_gas:  EvmU256::zero(),
             blob_versioned_hashes: vec![],
             chain_id,
@@ -86,24 +242,21 @@ impl InMemoryStorage {
                 transient_storage: Default::default(),
             };
             let evm_addr = address_to_h160(addr);
-            info!("[Storage] Initializing account {:?}: balance={}, nonce={}, code_len={}, storage_len={}", 
-                evm_addr, im_account.balance, im_account.nonce, im_account.code.len(), im_account.storage.len());
             storage.backend.state.insert(evm_addr, im_account);
         }
 
         let state_root = storage.calculate_state_root();
-        info!("[Storage] Calculated genesis state root: {:?}", state_root);
         let genesis_block: Block<Transaction> = Block {
             header: Header {
-                number: 0,
+                number: genesis.number.unwrap_or(0),
                 timestamp: genesis.timestamp,
                 gas_limit: genesis.gas_limit,
                 state_root,
                 beneficiary: genesis.coinbase,
                 difficulty: genesis.difficulty,
                 mix_hash: genesis.mix_hash,
-                nonce: B64::ZERO, // Nonce is meaningless post-merge, usually 0x0
-                base_fee_per_gas: Some(genesis.base_fee_per_gas.map(|v| v as u64).unwrap_or(1_000_000_000)),
+                nonce: B64::from(genesis.nonce),
+                base_fee_per_gas: None,
                 extra_data: genesis.extra_data,
                 transactions_root: alloy_trie::EMPTY_ROOT_HASH,
                 receipts_root: alloy_trie::EMPTY_ROOT_HASH,
@@ -123,17 +276,13 @@ impl InMemoryStorage {
                 withdrawals: Some(alloy_eips::eip4895::Withdrawals::new(Vec::new())),
             },
         };
+        (storage, genesis_block)
+    }
+
+    pub fn new_with_genesis_block(_chain_id: EvmU256, storage: Self, genesis_block: Block<Transaction>) -> Self {
+        let mut storage = storage;
         let genesis_hash = genesis_block.header.hash_slow();
-        info!("[Storage] Calculated genesis hash: {:?}", genesis_hash);
         
-        // Also log some key fields to help debug CL/EL mismatches
-        info!("[Storage] Genesis header RLP fields: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", 
-            genesis_block.header.state_root, genesis_block.header.transactions_root, genesis_block.header.receipts_root, genesis_block.header.withdrawals_root);
-        
-        info!("[Storage] Genesis header fields: nonce={:?}, mix_hash={:?}, difficulty={:?}, coinbase={:?}, timestamp={:?}, gas_limit={:?}, base_fee={:?}", 
-            genesis.nonce, genesis.mix_hash, genesis.difficulty, genesis.coinbase, genesis.timestamp, genesis.gas_limit, genesis.base_fee_per_gas);
-        
-        // Ensure genesis hash is indexed
         storage.blocks.insert(0, genesis_block);
         storage.hash_to_number.insert(genesis_hash, 0);
         storage.head_block_hash = genesis_hash;

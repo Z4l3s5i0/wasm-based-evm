@@ -1,7 +1,8 @@
 use std::net::SocketAddr;
 use crate::cli::Args;
-use crate::storage::storage::{InMemoryStorage, StorageProvider};
+use crate::storage::storage::{InMemoryStorage, StorageProvider, GenesisInit};
 use alloy_primitives::U256;
+use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_genesis::{Genesis as AlloyGenesis, Genesis};
 use std::sync::Arc;
 use crate::mempool::Mempool;
@@ -137,7 +138,7 @@ impl App {
 #[derive(Default)]
 pub struct AppBuilder {
     args: Option<Args>,
-    genesis: Option<Genesis>,
+    genesis: Option<GenesisInit>,
     genesis_configured: bool,
     storage: Option<Arc<RwLock<InMemoryStorage>>>,
     mempool: Option<Arc<RwLock<Mempool>>>,
@@ -155,7 +156,7 @@ impl AppBuilder {
         self
     }
 
-    pub fn with_genesis(mut self, genesis: Genesis) -> Self {
+    pub fn with_genesis(mut self, genesis: GenesisInit) -> Self {
         self.genesis = Some(genesis);
         self.genesis_configured = true;
         self
@@ -231,6 +232,18 @@ impl AppBuilder {
         }
     }
 
+    fn setup_genesis(&self, args: &Args, data_dir: &PathBuf) -> Result<GenesisInit, Box<dyn std::error::Error>> {
+        if self.genesis_configured {
+            self.genesis.clone().ok_or("Genesis marked as configured but not provided".into())
+        } else {
+            let genesis_path = args.genesis_path.clone().unwrap_or_else(|| data_dir.join("genesis.json"));
+            info!("[App] Loading genesis from {:?}", genesis_path);
+            let genesis_file = std::fs::File::open(genesis_path)?;
+            let genesis_init: GenesisInit = serde_json::from_reader(genesis_file)?;
+            Ok(genesis_init)
+        }
+    }
+
     async fn setup_storage(&self, args: &Args, data_dir: &PathBuf, peer_id: &str) -> Result<(Arc<RwLock<InMemoryStorage>>, String), Box<dyn std::error::Error>> {
         let storage_name = args.peer_name.clone().unwrap_or_else(|| peer_id.to_string());
         let state_filename = format!("state_{}.json", storage_name);
@@ -243,18 +256,10 @@ impl AppBuilder {
             let storage_inner = InMemoryStorage::load_from_file(storage_path)?;
             Arc::new(RwLock::new(storage_inner))
         } else {
-            let genesis = if self.genesis_configured {
-                self.genesis.clone().ok_or("Genesis marked as configured but not provided")?
-            } else {
-                let genesis_path = args.genesis_path.clone().unwrap_or_else(|| data_dir.join("genesis.json"));
-                info!("[App] Loading genesis from {:?}", genesis_path);
-                let genesis_file = std::fs::File::open(genesis_path)?;
-                let alloy_genesis: AlloyGenesis = serde_json::from_reader(genesis_file)?;
-                Genesis::from(alloy_genesis)
-            };
-            let chain_id = alloy_u256_to_evm_u256(U256::from(genesis.config.chain_id));
-            info!("[App] Initializing new storage with genesis. ChainId: {}", genesis.config.chain_id);
-            let storage_inner = InMemoryStorage::new_with_genesis(chain_id, genesis);
+            let genesis_init = self.setup_genesis(args, data_dir)?;
+            let chain_id = alloy_u256_to_evm_u256(U256::from(genesis_init.config.chain_id));
+            info!("[App] Initializing new storage with genesis block. ChainId: {}", chain_id.clone());
+            let storage_inner = InMemoryStorage::new_with_genesis_init(chain_id, genesis_init);
             Arc::new(RwLock::new(storage_inner))
         };
         Ok((storage, state_filename))
