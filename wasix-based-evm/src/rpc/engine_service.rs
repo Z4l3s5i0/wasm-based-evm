@@ -8,7 +8,7 @@ use alloy_rpc_types::engine::{
     PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadBodyV1,
 };
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
-use alloy_primitives::{B256, U256, Bytes};
+use alloy_primitives::{B256, U256, Bytes, B64};
 use crate::{info, error};
 use crate::storage::storage::InMemoryStorage;
 use crate::mempool::Mempool;
@@ -44,29 +44,17 @@ impl EngineService {
     pub async fn exchange_capabilities(&self, _capabilities: Vec<String>) -> RpcResult<Vec<String>> {
         Ok(vec![
             "engine_exchangeCapabilities".to_string(),
-            // "engine_exchangeTransitionConfigurationV1".to_string(),
             "engine_forkchoiceUpdatedV1".to_string(),
             "engine_forkchoiceUpdatedV2".to_string(),
-            // "engine_forkchoiceUpdatedV3".to_string(),
-            // "engine_forkchoiceUpdatedV4".to_string(),
-            // "engine_getBlobsV1".to_string(),
-            // "engine_getBlobsV2".to_string(),
-            // "engine_getBlobsV3".to_string(),
+            "engine_newPayloadV1".to_string(),
+            "engine_newPayloadV2".to_string(),
+            "engine_getPayloadV1".to_string(),
+            "engine_getPayloadV2".to_string(),
+            "engine_exchangeTransitionConfigurationV1".to_string(),
             "engine_getPayloadBodiesByHashV1".to_string(),
             "engine_getPayloadBodiesByHashV2".to_string(),
             "engine_getPayloadBodiesByRangeV1".to_string(),
             "engine_getPayloadBodiesByRangeV2".to_string(),
-            "engine_getPayloadV1".to_string(),
-            "engine_getPayloadV2".to_string(),
-            // "engine_getPayloadV3".to_string(),
-            // "engine_getPayloadV4".to_string(),
-            // "engine_getPayloadV5".to_string(),
-            // "engine_getPayloadV6".to_string(),
-            "engine_newPayloadV1".to_string(),
-            "engine_newPayloadV2".to_string(),
-            // "engine_newPayloadV3".to_string(),
-            // "engine_newPayloadV4".to_string(),
-            // "engine_newPayloadV5".to_string(),
         ])
     }
 
@@ -282,29 +270,46 @@ impl EngineService {
 
         // Check if head block is in storage
         let status = if let Some(head_block) = storage.get_block_by_hash(forkchoice_state.head_block_hash) {
-            info!("[EngineService] Head block found: #{} hash={:?}", head_block.header.number, forkchoice_state.head_block_hash);
+            info!("[EngineService] Head block found in storage: #{} hash={:?}", head_block.header.number, forkchoice_state.head_block_hash);
+            PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(forkchoice_state.head_block_hash),
+            }
+        } else if let Some(payload_block) = self.payloads.read().await.values().find(|b| b.header.hash_slow() == forkchoice_state.head_block_hash) {
+            info!("[EngineService] Head block found in payload map: #{} hash={:?}", payload_block.header.number, forkchoice_state.head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(forkchoice_state.head_block_hash),
             }
         } else {
-            // Trigger sync for missing head
-            let sync_engine = self.sync_engine.clone();
-            tokio::spawn(async move {
-                if let Err(e) = sync_engine.trigger_sync().await {
-                    error!("[EngineService] Failed to trigger sync for missing head: {}", e);
+            // Check if requested head is actually the genesis block (by hash)
+            let genesis_hash = storage.get_block_by_number(0).map(|b| b.header.hash_slow());
+            let is_genesis = genesis_hash == Some(forkchoice_state.head_block_hash);
+            
+            if is_genesis {
+                info!("[EngineService] Head block is GENESIS: hash={:?}", forkchoice_state.head_block_hash);
+                PayloadStatus {
+                    status: PayloadStatusEnum::Valid,
+                    latest_valid_hash: Some(forkchoice_state.head_block_hash),
                 }
-            });
+            } else {
+                // If it's not genesis and we don't have it, we might be syncing.
+                let local_head_hash = storage.head_block_hash;
+                info!("[EngineService] Head block NOT found: requested_hash={:?}. Local head is {:?} (genesis is {:?}). Returning Syncing.", 
+                    forkchoice_state.head_block_hash, local_head_hash, genesis_hash);
 
-            // If we are not currently in a sync process, we might just be missing this one block
-            // or the sync hasn't updated the status yet.
-            if let alloy_rpc_types::SyncStatus::None = self.sync_engine.status().await {
-                 info!("[EngineService] Head block NOT found: hash={:?}. SyncEngine reports NotSyncing. Returning Syncing for forkchoiceUpdated.", forkchoice_state.head_block_hash);
-            }
+                // Trigger sync for missing head
+                let sync_engine = self.sync_engine.clone();
+                tokio::spawn(async move {
+                    if let Err(e) = sync_engine.trigger_sync().await {
+                        error!("[EngineService] Failed to trigger sync for missing head: {}", e);
+                    }
+                });
 
-            PayloadStatus {
-                status: PayloadStatusEnum::Syncing,
-                latest_valid_hash: None,
+                PayloadStatus {
+                    status: PayloadStatusEnum::Syncing,
+                    latest_valid_hash: None,
+                }
             }
         };
 
@@ -322,6 +327,13 @@ impl EngineService {
                     // Validate attributes
                     let parent_block = storage.get_block_by_hash(forkchoice_state.head_block_hash)
                         .cloned()
+                        .or_else(|| {
+                            // Fallback to payloads map if head is not in storage yet
+                            let head_hash = forkchoice_state.head_block_hash;
+                            self.payloads.try_read().ok()?.values()
+                                .find(|b| b.header.hash_slow() == head_hash)
+                                .cloned()
+                        })
                         .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found: {:?}", forkchoice_state.head_block_hash)))?;
 
                     if attr.timestamp <= parent_block.header.timestamp {
@@ -350,8 +362,15 @@ impl EngineService {
                                 data.extend_from_slice(&w.amount.to_be_bytes());
                             }
                         }
+                        // For V3+, we should also include parent_beacon_block_root if it's there
+                        if let Some(root) = attr.parent_beacon_block_root {
+                            data.extend_from_slice(root.as_slice());
+                        }
+
                         let hash = keccak256(&data);
-                        PayloadId::new(hash[..8].try_into().unwrap())
+                        let id = PayloadId::new(hash[..8].try_into().unwrap());
+                        info!("[EngineService] Generated stable payload_id: {} for head={:?}, timestamp={}", id, forkchoice_state.head_block_hash, attr.timestamp);
+                        id
                     };
                     payload_id = Some(id);
 
@@ -372,7 +391,7 @@ impl EngineService {
                             Some(parent_fee.saturating_sub(fee_delta))
                         }
                     } else {
-                        None
+                        Some(1_000_000_000) // Default to 1 Gwei if parent has no base fee (should not happen post-London)
                     };
 
                     // Build block logic (simplified)
@@ -381,6 +400,7 @@ impl EngineService {
 
                     let header = Header {
                         parent_hash: forkchoice_state.head_block_hash,
+                        ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
                         number: parent_block.header.number + 1,
                         timestamp: attr.timestamp,
                         beneficiary: attr.suggested_fee_recipient,
@@ -388,9 +408,11 @@ impl EngineService {
                         base_fee_per_gas,
                         extra_data: Bytes::new(),
                         mix_hash: attr.prev_randao,
+                        nonce: B64::ZERO,
                         transactions_root: alloy_trie::EMPTY_ROOT_HASH,
                         receipts_root: alloy_trie::EMPTY_ROOT_HASH,
                         withdrawals_root: attr.withdrawals.as_ref().map(|_| alloy_trie::EMPTY_ROOT_HASH),
+                        parent_beacon_block_root: attr.parent_beacon_block_root.or(Some(B256::ZERO)),
                         ..Default::default()
                     };
 
@@ -506,6 +528,7 @@ impl EngineService {
             timestamp: payload_v1.timestamp,
             extra_data: payload_v1.extra_data.clone(),
             base_fee_per_gas: Some(payload_v1.base_fee_per_gas.to::<u128>().try_into().unwrap()),
+            requests_hash: None,
             ..Default::default()
         };
 
@@ -537,10 +560,15 @@ impl EngineService {
 
         // Check for parent block - if missing, return SYNCING
         if storage.get_block_by_hash(payload_v1.parent_hash).is_none() {
-            return Ok(PayloadStatus {
-                status: PayloadStatusEnum::Syncing,
-                latest_valid_hash: None,
-            });
+            // Check if it's the genesis block we're trying to execute against
+            let genesis_hash = storage.get_block_by_number(0).map(|b| b.header.hash_slow());
+            if Some(payload_v1.parent_hash) != genesis_hash {
+                info!("[EngineService] Parent block not found: requested_parent={:?}, genesis={:?}", payload_v1.parent_hash, genesis_hash);
+                return Ok(PayloadStatus {
+                    status: PayloadStatusEnum::Syncing,
+                    latest_valid_hash: None,
+                });
+            }
         }
 
         match self.executor.execute_block(&mut storage, transactions, block.clone()) {

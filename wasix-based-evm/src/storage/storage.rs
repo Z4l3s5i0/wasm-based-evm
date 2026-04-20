@@ -1,7 +1,7 @@
 use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256};
 use crate::{info, debug, error};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
-use alloy_primitives::{Address, B256, U256, Bytes};
+use alloy_primitives::{Address, B256, U256, Bytes, B64};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
@@ -46,7 +46,7 @@ impl InMemoryStorage {
             block_difficulty: alloy_u256_to_evm_u256(genesis.difficulty),
             block_randomness: Some(b256_to_h256(genesis.mix_hash)),
             block_gas_limit: EvmU256::from(genesis.gas_limit),
-            block_base_fee_per_gas: genesis.base_fee_per_gas.map(alloy_u256_to_evm_u256).unwrap_or(EvmU256::zero()),
+            block_base_fee_per_gas: alloy_u256_to_evm_u256(genesis.base_fee_per_gas.unwrap_or_else(|| U256::from(1_000_000_000u64))),
             blob_base_fee_per_gas: EvmU256::zero(),
             blob_versioned_hashes: Vec::new(),
             chain_id,
@@ -68,7 +68,6 @@ impl InMemoryStorage {
             snapshots: BTreeMap::new(),
         };
 
-        // Pre-fund and initialize accounts
         for account in genesis.accounts {
             let mut storage_map = BTreeMap::new();
             if let Some(s) = account.storage {
@@ -83,10 +82,14 @@ impl InMemoryStorage {
                 storage: storage_map,
                 transient_storage: Default::default(),
             };
-            storage.backend.state.insert(address_to_h160(account.address), im_account);
+            let addr = address_to_h160(account.address);
+            info!("[Storage] Initializing account {:?}: balance={}, nonce={}, code_len={}, storage_len={}", 
+                addr, im_account.balance, im_account.nonce, im_account.code.len(), im_account.storage.len());
+            storage.backend.state.insert(addr, im_account);
         }
 
         let state_root = storage.calculate_state_root();
+        info!("[Storage] Calculated genesis state root: {:?}", state_root);
         let genesis_block: Block<Transaction> = Block {
             header: Header {
                 number: 0,
@@ -96,19 +99,40 @@ impl InMemoryStorage {
                 beneficiary: genesis.coinbase,
                 difficulty: genesis.difficulty,
                 mix_hash: genesis.mix_hash,
-                nonce: genesis.nonce.into(),
-                base_fee_per_gas: genesis.base_fee_per_gas.map(|v| v.to::<u64>()),
+                nonce: B64::ZERO, // Nonce is meaningless post-merge, usually 0x0
+                base_fee_per_gas: Some(genesis.base_fee_per_gas.map(|v| v.to::<u64>()).unwrap_or(1_000_000_000)),
                 extra_data: genesis.extra_data.into(),
                 transactions_root: alloy_trie::EMPTY_ROOT_HASH,
                 receipts_root: alloy_trie::EMPTY_ROOT_HASH,
-                withdrawals_root: if genesis.base_fee_per_gas.is_some() { Some(alloy_trie::EMPTY_ROOT_HASH) } else { None },
+                withdrawals_root: Some(alloy_trie::EMPTY_ROOT_HASH),
                 gas_used: 0,
-                ..Default::default()
+                parent_hash: B256::ZERO,
+                ommers_hash: alloy_consensus::EMPTY_OMMER_ROOT_HASH,
+                logs_bloom: Default::default(),
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                parent_beacon_block_root: Some(B256::ZERO),
+                requests_hash: None,
             },
-            body: Default::default(),
+            body: alloy_consensus::BlockBody {
+                transactions: Vec::new(),
+                ommers: Vec::new(),
+                withdrawals: Some(alloy_eips::eip4895::Withdrawals::new(Vec::new())),
+            },
         };
         let genesis_hash = genesis_block.header.hash_slow();
-        storage.add_block(genesis_block);
+        info!("[Storage] Calculated genesis hash: {:?}", genesis_hash);
+        
+        // Also log some key fields to help debug CL/EL mismatches
+        info!("[Storage] Genesis header RLP fields: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}, parent_beacon_block_root={:?}", 
+            genesis_block.header.state_root, genesis_block.header.transactions_root, genesis_block.header.receipts_root, genesis_block.header.withdrawals_root, genesis_block.header.parent_beacon_block_root);
+        
+        info!("[Storage] Genesis header fields: nonce={:?}, mix_hash={:?}, difficulty={:?}, coinbase={:?}, timestamp={:?}, gas_limit={:?}, base_fee={:?}", 
+            genesis.nonce, genesis.mix_hash, genesis.difficulty, genesis.coinbase, genesis.timestamp, genesis.gas_limit, genesis.base_fee_per_gas);
+        
+        // Ensure genesis hash is indexed
+        storage.blocks.insert(0, genesis_block);
+        storage.hash_to_number.insert(genesis_hash, 0);
         storage.head_block_hash = genesis_hash;
         storage.safe_block_hash = genesis_hash;
         storage.finalized_block_hash = genesis_hash;
@@ -120,6 +144,13 @@ impl InMemoryStorage {
     pub fn add_block(&mut self, block: Block<Transaction>) {
         let block_number = block.header.number;
         let block_hash = block.header.hash_slow();
+        
+        // Check if we already have this block
+        if self.hash_to_number.contains_key(&block_hash) {
+            debug!("[Storage] Block #{} with hash {:?} already exists, skipping", block_number, block_hash);
+            return;
+        }
+
         info!("[Storage] Adding block #{} with hash {:?}", block_number, block_hash);
         
         for (i, tx) in block.body.transactions.iter().enumerate() {
@@ -288,7 +319,11 @@ impl InMemoryStorage {
                     U256::from_be_bytes(b)
                 },
                 storage_root,
-                code_hash: if acc.code.is_empty() { alloy_primitives::KECCAK256_EMPTY } else { alloy_primitives::keccak256(&acc.code) },
+                code_hash: if acc.code.is_empty() { 
+                    alloy_primitives::KECCAK256_EMPTY 
+                } else { 
+                    alloy_primitives::keccak256(&acc.code) 
+                },
             };
             (Address::from(addr.0), trie_acc)
         }))

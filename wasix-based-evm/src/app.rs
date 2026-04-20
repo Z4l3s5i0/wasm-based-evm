@@ -256,6 +256,7 @@ impl AppBuilder {
                 Genesis::from(alloy_genesis)
             };
             let chain_id = alloy_u256_to_evm_u256(U256::from(genesis.chain_id));
+            info!("[App] Initializing new storage with genesis. ChainId: {}", genesis.chain_id);
             let storage_inner = InMemoryStorage::new_with_genesis(chain_id, genesis);
             Arc::new(RwLock::new(storage_inner))
         };

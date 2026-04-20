@@ -73,6 +73,23 @@ pub struct Genesis {
     pub extra_data: Vec<u8>,
 }
 
+impl Default for Genesis {
+    fn default() -> Self {
+        Self {
+            accounts: Vec::new(),
+            timestamp: 1776674208, // 2026-Apr-20 08:36:48 AM UTC
+            chain_id: 31133,
+            gas_limit: 30_000_000,
+            difficulty: U256::ZERO,
+            mix_hash: B256::ZERO,
+            nonce: 0,
+            coinbase: Address::ZERO,
+            base_fee_per_gas: Some(U256::from(1_000_000_000)), // 1 Gwei
+            extra_data: Vec::new(),
+        }
+    }
+}
+
 impl Genesis {
     pub fn builder() -> GenesisBuilder {
         GenesisBuilder::default()
@@ -175,23 +192,6 @@ impl From<AlloyGenesis> for Genesis {
             coinbase: alloy_genesis.coinbase,
             base_fee_per_gas: alloy_genesis.base_fee_per_gas.map(U256::from),
             extra_data: alloy_genesis.extra_data.to_vec(),
-        }
-    }
-}
-
-impl Default for Genesis {
-    fn default() -> Self {
-        Self {
-            accounts: vec![],
-            timestamp: 1640995200, // Jan 1st 2022
-            chain_id: 1,
-            gas_limit: 30000000,
-            difficulty: U256::ZERO,
-            mix_hash: B256::ZERO,
-            nonce: 0,
-            coinbase: Address::ZERO,
-            base_fee_per_gas: None,
-            extra_data: vec![],
         }
     }
 }

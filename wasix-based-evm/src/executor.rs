@@ -1,7 +1,7 @@
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope, Header, Transaction as _, transaction::SignerRecoverable as _};
-use alloy_primitives::{logs_bloom, Log, B256, Address, LogData};
-use crate::ev::{H160, EvmU256, evm};
-use evm::backend::OverlayedChangeSet;
+use alloy_primitives::{logs_bloom, Log, B256, Address, LogData, B64, U256};
+use crate::ev::{H160, EvmU256, evm, address_to_h160};
+use evm::backend::{OverlayedChangeSet, InMemoryAccount};
 use crate::{info, debug};
 use evm::{
     transact,
@@ -231,18 +231,19 @@ impl Executor {
                 timestamp: block.header.timestamp,
                 extra_data: block.header.extra_data.clone(),
                 mix_hash: block.header.mix_hash,
-                nonce: block.header.nonce,
+                nonce: B64::ZERO,
                 base_fee_per_gas: block.header.base_fee_per_gas,
                 withdrawals_root: Some(withdrawals_root),
                 blob_gas_used: None,
                 excess_blob_gas: None,
-                parent_beacon_block_root: None,
+                parent_beacon_block_root: block.header.parent_beacon_block_root.or(Some(B256::ZERO)),
+                requests_hash: None,
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
                 transactions: transactions.clone(),
-                ommers: Vec::new(),
-                withdrawals: Some(withdrawals),
+                ommers: vec![],
+                withdrawals: Some(withdrawals.clone()),
             },
         };
 
@@ -255,6 +256,29 @@ impl Executor {
             storage.add_transaction(tx);
             storage.add_receipt(hash, receipt);
         }
+
+        // Apply withdrawals (Shanghai/Capella)
+        for withdrawal in &withdrawals {
+            let addr = withdrawal.address;
+            let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64); // Gwei to Wei
+            let evm_amount_wei = crate::ev::alloy_u256_to_evm_u256(amount_wei);
+            let h160_addr = address_to_h160(addr);
+            if let Some(account) = storage.backend.state.get_mut(&h160_addr) {
+                account.balance += evm_amount_wei;
+                info!("[Executor] Applied withdrawal: address={:?}, amount={} Gwei", addr, withdrawal.amount);
+            } else {
+                // If account doesn't exist, it should be created (standard Ethereum behavior)
+                storage.backend.state.insert(h160_addr, InMemoryAccount {
+                    balance: evm_amount_wei,
+                    nonce: EvmU256::zero(),
+                    code: Vec::new(),
+                    storage: std::collections::BTreeMap::new(),
+                    transient_storage: std::collections::BTreeMap::new(),
+                });
+                info!("[Executor] Applied withdrawal (new account): address={:?}, amount={} Gwei", addr, withdrawal.amount);
+            }
+        }
+
         storage.add_block(finalized_block);
         info!("[Executor] Block finalized and saved to storage: number={:?}", block.header.number);
 
