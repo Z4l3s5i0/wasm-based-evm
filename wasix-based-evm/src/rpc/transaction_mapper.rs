@@ -1,6 +1,6 @@
 use alloy_consensus::{TxEnvelope, ReceiptWithBloom as ConsensusReceipt, transaction::SignerRecoverable as _, transaction::Recovered};
-use alloy_primitives::{B256, Address};
-use alloy_rpc_types::{Transaction, TransactionReceipt};
+use alloy_primitives::{B256, Address, U256};
+use alloy_rpc_types::eth::{Transaction, TransactionReceipt};
 
 pub struct TransactionMapper;
 
@@ -29,7 +29,7 @@ impl TransactionMapper {
             None => (None, None, None),
         };
 
-        let rpc_logs: Vec<alloy_rpc_types::Log> = receipt.receipt.logs.iter().map(|l| alloy_rpc_types::Log {
+        let rpc_logs: Vec<alloy_rpc_types::eth::Log> = receipt.receipt.logs.iter().map(|l| alloy_rpc_types::eth::Log {
             inner: l.clone(),
             block_number,
             block_hash,
@@ -40,17 +40,17 @@ impl TransactionMapper {
             block_timestamp: None,
         }).collect();
 
-        let rpc_receipt_with_bloom = alloy_consensus::ReceiptWithBloom {
-            receipt: alloy_consensus::Receipt {
-                status: receipt.receipt.status,
-                cumulative_gas_used: receipt.receipt.cumulative_gas_used,
-                logs: rpc_logs,
-            },
-            logs_bloom: receipt.logs_bloom,
+        let rpc_receipt = alloy_rpc_types::eth::Receipt {
+            status: receipt.receipt.status,
+            cumulative_gas_used: receipt.receipt.cumulative_gas_used as u64,
+            logs: rpc_logs,
         };
 
         TransactionReceipt {
-            inner: alloy_rpc_types::ReceiptEnvelope::Legacy(rpc_receipt_with_bloom),
+            inner: alloy_rpc_types::eth::ReceiptEnvelope::Legacy(alloy_consensus::ReceiptWithBloom {
+                receipt: rpc_receipt,
+                logs_bloom: receipt.logs_bloom,
+            }),
             transaction_hash: B256::ZERO, 
             transaction_index,
             block_hash,

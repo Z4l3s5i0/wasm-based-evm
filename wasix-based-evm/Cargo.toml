@@ -25,14 +25,12 @@ alloy-consensus = { version = "=1.6.3", default-features = false, features = ["k
 alloy-signer-local = { version = "=1.6.3", default-features = false }
 alloy-signer = { version = "=1.6.3", default-features = false }
 alloy-network = { version = "=1.6.3", default-features = false }
-alloy-json-rpc = { version = "=1.6.3", default-features = false }
 alloy-tx-macros = { version = "=1.6.3", default-features = false }
 alloy-serde= { version = "=1.6.3", default-features = false }
 alloy-eips = { version = "=1.6.3", default-features = false }
 alloy-rpc-types = { version = "=1.6.3", default-features = false, features = ["eth", "engine", "admin", "txpool", "jsonrpsee-types"] }
 alloy-trie = { version = "0.9.5", default-features = false, features = ["std"] }
 alloy-rlp = { version = "0.3.15", default-features = false, features = ["derive"] }
-alloy-rlp-derive = { version = "0.3.15", default-features = false}
 
 rand = { version = "=0.8.5", default-features = false }
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" , default-features = false}

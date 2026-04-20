@@ -4,7 +4,7 @@ pub struct AccountMapper;
 
 impl AccountMapper {
     pub fn to_hex(value: U256) -> String {
-        format!("0x{:x}", value)
+        format!("{:#x}", value)
     }
 
     pub fn addresses_to_rpc(addresses: Vec<Address>) -> Vec<String> {

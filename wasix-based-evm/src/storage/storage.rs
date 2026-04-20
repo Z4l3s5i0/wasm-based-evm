@@ -6,7 +6,7 @@ use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
 use alloy_genesis::{Genesis, GenesisAccount};
-use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, LogProvider};
+use crate::storage::traits::{StateProvider};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use crate::mempool::Mempool;
 use alloy_eips::BlockId;
@@ -490,10 +490,7 @@ impl StateProvider for StorageProvider {
     async fn accounts(&self) -> Result<Vec<Address>> {
         self.inner.read().await.accounts().await
     }
-}
 
-#[async_trait]
-impl BlockProvider for StorageProvider {
     async fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
         self.inner.read().await.header(block_id).await
     }
@@ -513,10 +510,10 @@ impl BlockProvider for StorageProvider {
     async fn chain_id(&self) -> Result<u64> {
         self.inner.read().await.chain_id().await
     }
-}
+    async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>> {
+        self.inner.read().await.logs(filter).await
+    }
 
-#[async_trait]
-impl TransactionProvider for StorageProvider {
     async fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
         self.inner.read().await.transaction(hash).await
     }
@@ -527,13 +524,6 @@ impl TransactionProvider for StorageProvider {
 
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
         self.inner.read().await.transaction_block_reference(hash).await
-    }
-}
-
-#[async_trait]
-impl LogProvider for StorageProvider {
-    async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::Log>> {
-        self.inner.read().await.logs(filter).await
     }
 }
 
@@ -581,10 +571,7 @@ impl StateProvider for InMemoryStorage {
     async fn accounts(&self) -> Result<Vec<Address>> {
         Ok(self.get_accounts())
     }
-}
 
-#[async_trait]
-impl BlockProvider for InMemoryStorage {
     async fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
         Ok(self.get_block_by_id(block_id).map(|b| b.header.clone()))
     }
@@ -605,10 +592,12 @@ impl BlockProvider for InMemoryStorage {
         let chain_id = self.backend.environment.chain_id;
         Ok(evm_u256_to_alloy_u256(chain_id).to::<u64>())
     }
-}
 
-#[async_trait]
-impl TransactionProvider for InMemoryStorage {
+    async fn logs(&self, _filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>> {
+        // TODO use the filter on indexed logs
+        Ok(vec![])
+    }
+
     async fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
         Ok(self.get_transaction_by_hash(hash).cloned())
     }
@@ -622,10 +611,3 @@ impl TransactionProvider for InMemoryStorage {
     }
 }
 
-#[async_trait]
-impl LogProvider for InMemoryStorage {
-    async fn logs(&self, _filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::Log>> {
-        // TODO use the filter on indexed logs
-        Ok(vec![])
-    }
-}

@@ -21,10 +21,6 @@ use crate::misc::logging::LogLevel;
 use crate::rpc::RpcServerFacade;
 use crate::rpc::eth_service::EthService;
 use crate::rpc::debug_service::DebugService;
-use crate::rpc::account_service::AccountService;
-use crate::rpc::block_service::BlockService;
-use crate::rpc::transaction_service::TransactionService;
-use crate::rpc::log_service::LogService;
 use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
 use crate::sync::controller::SyncController;
@@ -368,7 +364,6 @@ impl AppBuilder {
         let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
 
         let eth_service = EthService {
-            block_storage: provider.clone(),
             state_storage: provider.clone(),
             mempool: mempool.clone(),
             peer_manager: peer_manager.clone(),
@@ -378,15 +373,8 @@ impl AppBuilder {
             sync_engine: sync_engine.clone(),
         };
 
-        eth_facade.register_accounts(AccountService { storage: provider.clone() })?;
         eth_facade.register_debug(DebugService { mempool: mempool.clone() })?;
         eth_facade.register_eth(eth_service.clone())?;
-
-        eth_facade.register_blocks(BlockService { storage: provider.clone() })?;
-        eth_facade.register_transactions(TransactionService { storage: provider.clone() })?;
-        eth_facade.register_logs(LogService { storage: provider.clone() })?;
-
-        auth_facade.register_blocks(BlockService { storage: provider.clone() })?;
 
         auth_facade.register_engine(EngineService::new(
             storage.clone(),

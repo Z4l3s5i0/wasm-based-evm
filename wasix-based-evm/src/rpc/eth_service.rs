@@ -1,7 +1,7 @@
 use std::sync::Arc;
-use alloy_primitives::{U256, Address, Bytes};
-use alloy_rpc_types::{SyncStatus, TransactionRequest};
-use crate::storage::traits::{BlockProvider, StateProvider};
+use alloy_primitives::{U256, Address, Bytes, B256};
+use alloy_rpc_types::{Block, Filter, Log, SyncStatus, TransactionReceipt, TransactionRequest};
+use crate::storage::traits::{StateProvider};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use tokio::sync::RwLock;
 use crate::mempool::Mempool;
@@ -11,16 +11,17 @@ use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRe
 use alloy_rlp::{Encodable, Decodable};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
-
 use crate::{info, error};
 use crate::evm::executor::Executor;
 use crate::misc::error;
-use crate::misc::error::RpcResult;
+use crate::misc::error::RpcError::Internal;
+use crate::misc::error::{RpcError, RpcResult};
+use crate::rpc::block_mapper::BlockMapper;
+use crate::rpc::transaction_mapper::TransactionMapper;
 use crate::sync::controller::SyncController;
 
 #[derive(Clone)]
 pub struct EthService {
-    pub block_storage: Arc<dyn BlockProvider>,
     pub state_storage: Arc<dyn StateProvider>,
     pub mempool: Arc<RwLock<Mempool>>,
     pub peer_manager: Arc<PeerManager>,
@@ -34,7 +35,7 @@ impl EthService {
     pub async fn gas_price(&self) -> RpcResult<U256> {
         // A real client might return the 60th percentile of gas prices from recent blocks
         // or base fee + a standard priority fee.
-        if let Ok(Some(header)) = self.block_storage.header(BlockId::Number(BlockNumberOrTag::Latest)).await {
+        if let Ok(Some(header)) = self.state_storage.header(BlockId::Number(BlockNumberOrTag::Latest)).await {
             if let Some(base_fee) = header.base_fee_per_gas {
                 // Return base_fee + 1.5 Gwei priority fee as a reasonable default
                 let priority_fee = 1_500_000_000u64;
@@ -62,7 +63,7 @@ impl EthService {
             return Err(error::RpcError::AccountNotFound(from));
         }
 
-        let chain_id = self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?;
+        let chain_id = self.state_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?;
         let nonce = if let Some(n) = request.nonce {
             n
         } else {
@@ -138,7 +139,7 @@ impl EthService {
         info!("[EthService] eth_call: to={:?}, data_len={}", request.to, request.input.data.as_ref().map(|d| d.len()).unwrap_or(0));
         
         let block_id = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
-        let block = self.block_storage.block(block_id).await
+        let block = self.state_storage.block(block_id).await
             .map_err(|e| error::RpcError::Internal(e.to_string()))?
             .ok_or(error::RpcError::BlockNotFound(block_id))?;
         
@@ -148,7 +149,7 @@ impl EthService {
         
         let tx_envelope = if let (Some(max_fee), Some(max_priority)) = (request.max_fee_per_gas, request.max_priority_fee_per_gas) {
             let tx = alloy_consensus::TxEip1559 {
-                chain_id: self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?,
+                chain_id: self.state_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?,
                 nonce: request.nonce.unwrap_or_default(),
                 gas_limit: request.gas.unwrap_or(30_000_000), // High default for call
                 max_fee_per_gas: max_fee,
@@ -161,7 +162,7 @@ impl EthService {
             Transaction::Eip1559(alloy_consensus::Signed::new_unchecked(tx, signature, hash))
         } else {
             let tx = TxLegacy {
-                chain_id: Some(self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?),
+                chain_id: Some(self.state_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?),
                 nonce: request.nonce.unwrap_or_default(),
                 gas_price: request.gas_price.unwrap_or(1_000_000_000u128),
                 gas_limit: request.gas.unwrap_or(30_000_000), // High default for call
@@ -187,7 +188,7 @@ impl EthService {
         info!("[EthService] eth_estimateGas: to={:?}, data_len={}", request.to, request.input.data.as_ref().map(|d| d.len()).unwrap_or(0));
         
         let block_id = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
-        let block = self.block_storage.block(block_id).await
+        let block = self.state_storage.block(block_id).await
             .map_err(|e| error::RpcError::Internal(e.to_string()))?
             .ok_or(error::RpcError::BlockNotFound(block_id))?;
         
@@ -196,7 +197,7 @@ impl EthService {
         
         let tx_envelope = if let (Some(max_fee), Some(max_priority)) = (request.max_fee_per_gas, request.max_priority_fee_per_gas) {
             let tx = alloy_consensus::TxEip1559 {
-                chain_id: self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?,
+                chain_id: self.state_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?,
                 nonce: request.nonce.unwrap_or_default(),
                 gas_limit: request.gas.unwrap_or(30_000_000), // Use block gas limit or a high enough value
                 max_fee_per_gas: max_fee,
@@ -209,7 +210,7 @@ impl EthService {
             Transaction::Eip1559(alloy_consensus::Signed::new_unchecked(tx, signature, hash))
         } else {
             let tx = TxLegacy {
-                chain_id: Some(self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?),
+                chain_id: Some(self.state_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?),
                 nonce: request.nonce.unwrap_or_default(),
                 gas_price: request.gas_price.unwrap_or(1_000_000_000u128),
                 gas_limit: request.gas.unwrap_or(30_000_000), 
@@ -262,7 +263,7 @@ impl EthService {
             return Err(error::RpcError::AccountNotFound(from));
         }
 
-        let chain_id = self.block_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?;
+        let chain_id = self.state_storage.chain_id().await.map_err(|e| error::RpcError::Internal(e.to_string()))?;
         let nonce = if let Some(n) = request.nonce {
             n
         } else {
@@ -323,5 +324,61 @@ impl EthService {
         };
 
         self.account_manager.sign(&address, &message_bytes).await
+    }
+
+    pub async fn get_block_by_id(&self, id: BlockId, full: bool) -> RpcResult<Option<Block>> {
+        let block = self.state_storage.block(id).await.map_err(|e| Internal(e.to_string()))?;
+        Ok(block.map(|b| BlockMapper::to_rpc_block(b, full)))
+    }
+
+    pub async fn latest_block_number(&self) -> RpcResult<u64> {
+        self.state_storage.latest_block_number().await.map_err(|e| Internal(e.to_string()))
+    }
+
+    pub async fn chain_id(&self) -> RpcResult<u64> {
+        self.state_storage.chain_id().await.map_err(|e| Internal(e.to_string()))
+    }
+
+    pub async fn get_block_transaction_count(&self, id: BlockId) -> RpcResult<Option<u64>> {
+        let block = self.state_storage.block(id).await.map_err(|e| Internal(e.to_string()))?;
+        Ok(block.map(|b| b.body.transactions.len() as u64))
+    }
+    
+    pub async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
+        self.state_storage.logs(filter).await.map_err(|e| Internal(e.to_string()))
+    }
+
+    pub async fn get_transaction_by_hash(&self, hash: B256) -> RpcResult<Option<alloy_rpc_types::Transaction>> {
+        let tx = self.state_storage.transaction(hash).await.map_err(|e| RpcError::Internal(e.to_string()))?;
+        let block_ref = self.state_storage.transaction_block_reference(hash).await.ok().flatten();
+
+        Ok(tx.map(|t| TransactionMapper::to_rpc_transaction(t, block_ref)))
+    }
+
+    pub async fn get_transaction_receipt(&self, hash: B256) -> RpcResult<Option<TransactionReceipt>> {
+        let receipt = self.state_storage.transaction_receipt(hash).await.map_err(|e| RpcError::Internal(e.to_string()))?;
+        let block_ref = self.state_storage.transaction_block_reference(hash).await.ok().flatten();
+
+        Ok(receipt.map(|r| TransactionMapper::to_rpc_receipt(r, block_ref)))
+    }
+
+    pub async fn get_balance(&self, address: Address, block_id: BlockId) -> RpcResult<U256> {
+        self.state_storage.balance(address, block_id).await.map_err(|e| Internal(e.to_string()))
+    }
+
+    pub async fn get_transaction_count(&self, address: Address, block_id: BlockId) -> RpcResult<u64> {
+        self.state_storage.transaction_count(address, block_id).await.map_err(|e| Internal(e.to_string()))
+    }
+
+    pub async fn get_code(&self, address: Address, block_id: BlockId) -> RpcResult<Bytes> {
+        let code = self.state_storage.code(address, block_id).await
+            .map_err(|e| Internal(e.to_string()))?;
+        Ok(code.unwrap_or_default())
+    }
+
+    pub async fn get_storage_at(&self, address: Address, slot: B256, block_id: BlockId) -> RpcResult<U256> {
+        let storage = self.state_storage.storage(address, slot, block_id).await
+            .map_err(|e| Internal(e.to_string()))?;
+        Ok(storage.unwrap_or_default())
     }
 }

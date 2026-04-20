@@ -13,25 +13,14 @@ pub trait StateProvider: Send + Sync {
     async fn balance(&self, address: Address, block_id: BlockId) -> Result<U256>;
     async fn transaction_count(&self, address: Address, block_id: BlockId) -> Result<u64>;
     async fn accounts(&self) -> Result<Vec<Address>>;
-}
-
-#[async_trait]
-pub trait BlockProvider: Send + Sync {
     async fn header(&self, block_id: BlockId) -> Result<Option<Header>>;
     async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>>;
     async fn block_hash(&self, number: u64) -> Result<Option<B256>>;
     async fn latest_block_number(&self) -> Result<u64>;
     async fn chain_id(&self) -> Result<u64>;
-}
-
-#[async_trait]
-pub trait TransactionProvider: Send + Sync {
+    async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>>;
     async fn transaction(&self, hash: B256) -> Result<Option<Transaction>>;
     async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>>;
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>>; // (number, hash, index)
 }
 
-#[async_trait]
-pub trait LogProvider: Send + Sync {
-    async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::Log>>;
-}

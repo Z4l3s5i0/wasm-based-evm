@@ -1,5 +1,5 @@
 use crate::info;
-use alloy_rpc_types::Transaction;
+use alloy_rpc_types::eth::Transaction;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use crate::misc::error::RpcResult;
