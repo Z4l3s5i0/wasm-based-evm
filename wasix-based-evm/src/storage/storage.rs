@@ -5,7 +5,7 @@ use alloy_primitives::{Address, B256, U256, Bytes, B64};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::BTreeMap;
-use crate::storage::genesis::Genesis;
+use alloy_genesis::{Genesis, GenesisAccount};
 use crate::storage::traits::{StateProvider, BlockProvider, TransactionProvider, LogProvider};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use crate::mempool::Mempool;
@@ -35,7 +35,9 @@ pub struct InMemoryStorage {
 
 impl InMemoryStorage {
     pub fn new(chain_id: EvmU256) -> Self {
-        Self::new_with_genesis(chain_id, Genesis::default())
+        let mut genesis = Genesis::default();
+        genesis.config.chain_id = evm_u256_to_alloy_u256(chain_id).to::<u64>();
+        Self::new_with_genesis(chain_id, genesis)
     }
 
     pub fn new_with_genesis(chain_id: EvmU256, genesis: Genesis) -> Self {
@@ -47,7 +49,7 @@ impl InMemoryStorage {
             block_difficulty: alloy_u256_to_evm_u256(genesis.difficulty),
             block_randomness: Some(b256_to_h256(genesis.mix_hash)),
             block_gas_limit: EvmU256::from(genesis.gas_limit),
-            block_base_fee_per_gas: alloy_u256_to_evm_u256(genesis.base_fee_per_gas.unwrap_or_else(|| U256::from(1_000_000_000u64))),
+            block_base_fee_per_gas: alloy_u256_to_evm_u256(genesis.base_fee_per_gas.map(U256::from).unwrap_or_else(|| U256::from(1_000_000_000u64))),
             blob_base_fee_per_gas:  EvmU256::zero(),
             blob_versioned_hashes: vec![],
             chain_id,
@@ -69,7 +71,7 @@ impl InMemoryStorage {
             snapshots: BTreeMap::new(),
         };
 
-        for account in genesis.accounts {
+        for (addr, account) in genesis.alloc {
             let mut storage_map = BTreeMap::new();
             if let Some(s) = account.storage {
                 for (k, v) in s {
@@ -79,14 +81,14 @@ impl InMemoryStorage {
             let im_account = InMemoryAccount {
                 balance: alloy_u256_to_evm_u256(account.balance),
                 nonce: EvmU256::from(account.nonce.unwrap_or(0)),
-                code: account.code.unwrap_or_default(),
+                code: account.code.map(|c| c.to_vec()).unwrap_or_default(),
                 storage: storage_map,
                 transient_storage: Default::default(),
             };
-            let addr = address_to_h160(account.address);
+            let evm_addr = address_to_h160(addr);
             info!("[Storage] Initializing account {:?}: balance={}, nonce={}, code_len={}, storage_len={}", 
-                addr, im_account.balance, im_account.nonce, im_account.code.len(), im_account.storage.len());
-            storage.backend.state.insert(addr, im_account);
+                evm_addr, im_account.balance, im_account.nonce, im_account.code.len(), im_account.storage.len());
+            storage.backend.state.insert(evm_addr, im_account);
         }
 
         let state_root = storage.calculate_state_root();
@@ -101,8 +103,8 @@ impl InMemoryStorage {
                 difficulty: genesis.difficulty,
                 mix_hash: genesis.mix_hash,
                 nonce: B64::ZERO, // Nonce is meaningless post-merge, usually 0x0
-                base_fee_per_gas: Some(genesis.base_fee_per_gas.map(|v| v.to::<u64>()).unwrap_or(1_000_000_000)),
-                extra_data: genesis.extra_data.into(),
+                base_fee_per_gas: Some(genesis.base_fee_per_gas.map(|v| v as u64).unwrap_or(1_000_000_000)),
+                extra_data: genesis.extra_data,
                 transactions_root: alloy_trie::EMPTY_ROOT_HASH,
                 receipts_root: alloy_trie::EMPTY_ROOT_HASH,
                 withdrawals_root: Some(alloy_trie::EMPTY_ROOT_HASH),
@@ -450,7 +452,7 @@ impl StorageProvider {
 
 #[async_trait]
 impl StateProvider for StorageProvider {
-    async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>> {
+    async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<GenesisAccount>> {
         if matches!(block_id, BlockId::Number(alloy_eips::BlockNumberOrTag::Pending)) {
             return self.get_pending_state().await?.account(address, block_id).await;
         }
@@ -537,18 +539,20 @@ impl LogProvider for StorageProvider {
 
 #[async_trait]
 impl StateProvider for InMemoryStorage {
-    async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>> {
+    async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<GenesisAccount>> {
         let h160 = H160::from_slice(address.as_slice());
-        Ok(self.backend.state.get(&h160).map(|acc| crate::storage::genesis::GenesisAccount {
-            address,
+        Ok(self.backend.state.get(&h160).map(|acc| GenesisAccount {
             balance: {
                 let mut b = [0u8; 32];
                 acc.balance.to_big_endian(&mut b);
                 U256::from_be_bytes(b)
             },
             nonce: Some(acc.nonce.as_u64()),
-            code: Some(acc.code.clone()),
-            storage: Some(acc.storage.iter().map(|(k, v)| (B256::from(k.0), B256::from(v.0))).collect()),
+            code: if acc.code.is_empty() { None } else { Some(acc.code.clone().into()) },
+            storage: if acc.storage.is_empty() { None } else {
+                Some(acc.storage.iter().map(|(k, v)| (B256::from(k.0), B256::from(v.0))).collect())
+            },
+            private_key: None,
         }))
     }
 

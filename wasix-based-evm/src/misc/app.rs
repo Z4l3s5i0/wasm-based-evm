@@ -1,9 +1,8 @@
 use std::net::SocketAddr;
 use crate::cli::Args;
-use crate::storage::genesis::Genesis;
 use crate::storage::storage::{InMemoryStorage, StorageProvider};
 use alloy_primitives::U256;
-use alloy_genesis::Genesis as AlloyGenesis;
+use alloy_genesis::{Genesis as AlloyGenesis, Genesis};
 use std::sync::Arc;
 use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
@@ -257,8 +256,8 @@ impl AppBuilder {
                 let alloy_genesis: AlloyGenesis = serde_json::from_reader(genesis_file)?;
                 Genesis::from(alloy_genesis)
             };
-            let chain_id = alloy_u256_to_evm_u256(U256::from(genesis.chain_id));
-            info!("[App] Initializing new storage with genesis. ChainId: {}", genesis.chain_id);
+            let chain_id = alloy_u256_to_evm_u256(U256::from(genesis.config.chain_id));
+            info!("[App] Initializing new storage with genesis. ChainId: {}", genesis.config.chain_id);
             let storage_inner = InMemoryStorage::new_with_genesis(chain_id, genesis);
             Arc::new(RwLock::new(storage_inner))
         };

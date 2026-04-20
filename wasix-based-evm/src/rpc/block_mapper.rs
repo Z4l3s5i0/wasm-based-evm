@@ -1,4 +1,4 @@
-use alloy_consensus::{Block as ConsensusBlock, Header, TxEnvelope as Transaction};
+use alloy_consensus::{Block as ConsensusBlock, TxEnvelope as Transaction};
 use alloy_rpc_types::{Block, BlockTransactions, Header as RpcHeader};
 use alloy_rlp::Encodable;
 use alloy_primitives::U256;

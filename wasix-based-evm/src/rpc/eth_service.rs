@@ -7,7 +7,7 @@ use tokio::sync::RwLock;
 use crate::mempool::Mempool;
 use crate::rpc::account_manager::AccountManager;
 use crate::p2p::peer_manager::PeerManager;
-use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRecoverable, TxReceipt};
+use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRecoverable};
 use alloy_rlp::{Encodable, Decodable};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;

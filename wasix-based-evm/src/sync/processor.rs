@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::storage::storage::InMemoryStorage;
 use crate::mempool::Mempool;
-use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
+use alloy_consensus::{Block, TxEnvelope as Transaction};
 use alloy_primitives::U256;
 use crate::evm::executor::Executor;
 use crate::info;

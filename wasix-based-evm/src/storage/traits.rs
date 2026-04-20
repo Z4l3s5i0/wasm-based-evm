@@ -1,12 +1,13 @@
 use alloy_primitives::{Address, B256, U256, Bytes};
 use alloy_consensus::{Header, Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_eips::BlockId;
+use alloy_genesis::GenesisAccount;
 use anyhow::Result;
 use async_trait::async_trait;
 
 #[async_trait]
 pub trait StateProvider: Send + Sync {
-    async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<crate::storage::genesis::GenesisAccount>>;
+    async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<GenesisAccount>>;
     async fn storage(&self, address: Address, slot: B256, block_id: BlockId) -> Result<Option<U256>>;
     async fn code(&self, address: Address, block_id: BlockId) -> Result<Option<Bytes>>;
     async fn balance(&self, address: Address, block_id: BlockId) -> Result<U256>;
