@@ -53,7 +53,13 @@ impl SyncController {
 
     pub async fn trigger_sync(&self) -> anyhow::Result<()> {
         info!("[Sync] Manual sync trigger received");
-        self.sync_step().await
+        let result = self.sync_step().await;
+        if result.is_ok() {
+            info!("[Sync] Manual sync step completed successfully");
+        } else {
+            error!("[Sync] Manual sync step failed: {:?}", result.as_ref().err());
+        }
+        result
     }
 
     pub async fn has_block(&self, hash: alloy_primitives::B256) -> bool {
@@ -147,6 +153,7 @@ impl SyncController {
     }
 
     async fn sync_range(&self, peer_url: &str, start: u64, end: u64) -> anyhow::Result<()> {
+        info!("[Sync] Starting sync range: {} to {}", start, end);
         self.is_syncing.store(true, Ordering::SeqCst);
         self.highest_block.store(end, Ordering::SeqCst);
         

@@ -281,7 +281,13 @@ impl EngineService {
         storage.update_forkchoice(forkchoice_state.head_block_hash, Some(forkchoice_state.safe_block_hash), Some(forkchoice_state.finalized_block_hash));
 
         // Check if head block is in storage
-        let status = if storage.get_block_by_hash(forkchoice_state.head_block_hash).is_none() {
+        let status = if let Some(head_block) = storage.get_block_by_hash(forkchoice_state.head_block_hash) {
+            info!("[EngineService] Head block found: #{} hash={:?}", head_block.header.number, forkchoice_state.head_block_hash);
+            PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(forkchoice_state.head_block_hash),
+            }
+        } else {
             // Trigger sync for missing head
             let sync_engine = self.sync_engine.clone();
             tokio::spawn(async move {
@@ -290,115 +296,121 @@ impl EngineService {
                 }
             });
 
+            // If we are not currently in a sync process, we might just be missing this one block
+            // or the sync hasn't updated the status yet.
+            if let alloy_rpc_types::SyncStatus::None = self.sync_engine.status().await {
+                 info!("[EngineService] Head block NOT found: hash={:?}. SyncEngine reports NotSyncing. Returning Syncing for forkchoiceUpdated.", forkchoice_state.head_block_hash);
+            }
+
             PayloadStatus {
                 status: PayloadStatusEnum::Syncing,
                 latest_valid_hash: None,
             }
-        } else {
-            PayloadStatus {
-                status: PayloadStatusEnum::Valid,
-                latest_valid_hash: Some(forkchoice_state.head_block_hash),
-            }
         };
 
         let mut payload_id = None;
-        if status.status == PayloadStatusEnum::Valid {
+        // EIP-3675: "If payloadAttributes is not null, the client MUST begin a payload build process"
+        // provided the status is VALID.
+        // However, if we are NOT syncing according to eth_syncing, but we don't have the head block yet,
+        // we are in a bit of a bind. The CL might expect us to be ready.
+        if status.status == PayloadStatusEnum::Valid || (status.status == PayloadStatusEnum::Syncing && payload_attributes.is_some()) {
             if let Some(attr) = payload_attributes {
-                // Validate attributes
-                let parent_block = storage.get_block_by_hash(forkchoice_state.head_block_hash)
-                    .cloned()
-                    .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found: {:?}", forkchoice_state.head_block_hash)))?;
-
-                if attr.timestamp <= parent_block.header.timestamp {
-                    return Ok(ForkchoiceUpdated {
-                        payload_status: PayloadStatus {
-                            status: PayloadStatusEnum::Invalid { validation_error: "Invalid timestamp".to_string() },
-                            latest_valid_hash: Some(forkchoice_state.head_block_hash),
-                        },
-                        payload_id: None,
-                    });
-                }
-
-                // Start building a block
-                let id = {
-                    use alloy_primitives::keccak256;
-                    let mut data = Vec::new();
-                    data.extend_from_slice(forkchoice_state.head_block_hash.as_slice());
-                    data.extend_from_slice(&attr.timestamp.to_be_bytes());
-                    data.extend_from_slice(attr.prev_randao.as_slice());
-                    data.extend_from_slice(attr.suggested_fee_recipient.as_slice());
-                    if let Some(withdrawals) = &attr.withdrawals {
-                        for w in withdrawals {
-                            data.extend_from_slice(&w.index.to_be_bytes());
-                            data.extend_from_slice(&w.validator_index.to_be_bytes());
-                            data.extend_from_slice(w.address.as_slice());
-                            data.extend_from_slice(&w.amount.to_be_bytes());
-                        }
-                    }
-                    if let Some(root) = &attr.parent_beacon_block_root {
-                        data.extend_from_slice(root.as_slice());
-                    }
-                    let hash = keccak256(&data);
-                    PayloadId::new(hash[..8].try_into().unwrap())
-                };
-                payload_id = Some(id);
-
-                // Calculate base fee (simplified EIP-1559)
-                let base_fee_per_gas = if let Some(parent_fee) = parent_block.header.base_fee_per_gas {
-                    let parent_gas_used = parent_block.header.gas_used;
-                    let parent_gas_target = parent_block.header.gas_limit / 2;
-                    
-                    if parent_gas_used == parent_gas_target {
-                        Some(parent_fee)
-                    } else if parent_gas_used > parent_gas_target {
-                        let gas_used_delta = parent_gas_used - parent_gas_target;
-                        let fee_delta = std::cmp::max(1u64, (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64);
-                        Some(parent_fee + fee_delta)
-                    } else {
-                        let gas_used_delta = parent_gas_target - parent_gas_used;
-                        let fee_delta = (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64;
-                        Some(parent_fee.saturating_sub(fee_delta))
-                    }
+                // If we are Syncing, we can't build a payload because we don't have the parent block
+                if status.status == PayloadStatusEnum::Syncing {
+                    info!("[EngineService] Cannot build payload: head block missing (status is Syncing)");
                 } else {
-                    None
-                };
+                    // Validate attributes
+                    let parent_block = storage.get_block_by_hash(forkchoice_state.head_block_hash)
+                        .cloned()
+                        .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found: {:?}", forkchoice_state.head_block_hash)))?;
 
-                // Build block logic (simplified)
-                let mempool = self.mempool.read().await;
-                let transactions = mempool.peek_transactions(50); // Take top 50 transactions
+                    if attr.timestamp <= parent_block.header.timestamp {
+                        return Ok(ForkchoiceUpdated {
+                            payload_status: PayloadStatus {
+                                status: PayloadStatusEnum::Invalid { validation_error: "Invalid timestamp".to_string() },
+                                latest_valid_hash: Some(forkchoice_state.head_block_hash),
+                            },
+                            payload_id: None,
+                        });
+                    }
 
-            let header = Header {
-                parent_hash: forkchoice_state.head_block_hash,
-                number: parent_block.header.number + 1,
-                timestamp: attr.timestamp,
-                beneficiary: attr.suggested_fee_recipient,
-                gas_limit: parent_block.header.gas_limit,
-                base_fee_per_gas,
-                extra_data: Bytes::new(),
-                mix_hash: attr.prev_randao,
-                parent_beacon_block_root: attr.parent_beacon_block_root,
-                transactions_root: alloy_trie::EMPTY_ROOT_HASH,
-                receipts_root: alloy_trie::EMPTY_ROOT_HASH,
-                withdrawals_root: attr.withdrawals.as_ref().map(|_| alloy_trie::EMPTY_ROOT_HASH),
-                ..Default::default()
-            };
+                    // Start building a block
+                    let id = {
+                        use alloy_primitives::keccak256;
+                        let mut data = Vec::new();
+                        data.extend_from_slice(forkchoice_state.head_block_hash.as_slice());
+                        data.extend_from_slice(&attr.timestamp.to_be_bytes());
+                        data.extend_from_slice(attr.prev_randao.as_slice());
+                        data.extend_from_slice(attr.suggested_fee_recipient.as_slice());
+                        if let Some(withdrawals) = &attr.withdrawals {
+                            for w in withdrawals {
+                                data.extend_from_slice(&w.index.to_be_bytes());
+                                data.extend_from_slice(&w.validator_index.to_be_bytes());
+                                data.extend_from_slice(w.address.as_slice());
+                                data.extend_from_slice(&w.amount.to_be_bytes());
+                            }
+                        }
+                        let hash = keccak256(&data);
+                        PayloadId::new(hash[..8].try_into().unwrap())
+                    };
+                    payload_id = Some(id);
 
-            let block = Block {
-                header,
-                body: alloy_consensus::BlockBody {
-                    transactions,
-                    ommers: vec![],
-                    withdrawals: attr.withdrawals.clone().map(|w| alloy_eips::eip4895::Withdrawals::new(w.into_iter().map(|wi| alloy_eips::eip4895::Withdrawal {
-                        index: wi.index,
-                        validator_index: wi.validator_index,
-                        address: wi.address,
-                        amount: wi.amount,
-                    }).collect())),
-                },
-            };
+                    // Calculate base fee (simplified EIP-1559)
+                    let base_fee_per_gas = if let Some(parent_fee) = parent_block.header.base_fee_per_gas {
+                        let parent_gas_used = parent_block.header.gas_used;
+                        let parent_gas_target = parent_block.header.gas_limit / 2;
+                        
+                        if parent_gas_used == parent_gas_target {
+                            Some(parent_fee)
+                        } else if parent_gas_used > parent_gas_target {
+                            let gas_used_delta = parent_gas_used - parent_gas_target;
+                            let fee_delta = std::cmp::max(1u64, (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64);
+                            Some(parent_fee + fee_delta)
+                        } else {
+                            let gas_used_delta = parent_gas_target - parent_gas_used;
+                            let fee_delta = (parent_fee as u128 * gas_used_delta as u128 / parent_gas_target as u128 / 8) as u64;
+                            Some(parent_fee.saturating_sub(fee_delta))
+                        }
+                    } else {
+                        None
+                    };
 
-            self.payloads.write().await.insert(id, block);
-            info!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
+                    // Build block logic (simplified)
+                    let mempool = self.mempool.read().await;
+                    let transactions = mempool.peek_transactions(50); // Take top 50 transactions
+
+                    let header = Header {
+                        parent_hash: forkchoice_state.head_block_hash,
+                        number: parent_block.header.number + 1,
+                        timestamp: attr.timestamp,
+                        beneficiary: attr.suggested_fee_recipient,
+                        gas_limit: parent_block.header.gas_limit,
+                        base_fee_per_gas,
+                        extra_data: Bytes::new(),
+                        mix_hash: attr.prev_randao,
+                        transactions_root: alloy_trie::EMPTY_ROOT_HASH,
+                        receipts_root: alloy_trie::EMPTY_ROOT_HASH,
+                        withdrawals_root: attr.withdrawals.as_ref().map(|_| alloy_trie::EMPTY_ROOT_HASH),
+                        ..Default::default()
+                    };
+
+                    let block = Block {
+                        header,
+                        body: alloy_consensus::BlockBody {
+                            transactions,
+                            ommers: vec![],
+                            withdrawals: attr.withdrawals.clone().map(|w| alloy_eips::eip4895::Withdrawals::new(w.into_iter().map(|wi| alloy_eips::eip4895::Withdrawal {
+                                index: wi.index,
+                                validator_index: wi.validator_index,
+                                address: wi.address,
+                                amount: wi.amount,
+                            }).collect())),
+                        },
+                    };
+
+                    self.payloads.write().await.insert(id, block);
+                    info!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
+                }
             }
         }
 

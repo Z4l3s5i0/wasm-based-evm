@@ -22,6 +22,7 @@ use std::path::Path;
 pub struct InMemoryStorage {
     pub backend: InMemoryBackend,
     pub blocks: BTreeMap<u64, Block<Transaction>>,
+    pub hash_to_number: BTreeMap<B256, u64>,
     pub transactions: BTreeMap<B256, Transaction>,
     pub receipts: BTreeMap<B256, Receipt>,
     pub tx_location: BTreeMap<B256, (u64, B256, usize)>, // hash -> (number, hash, index)
@@ -57,6 +58,7 @@ impl InMemoryStorage {
                 state: BTreeMap::new(),
             },
             blocks: BTreeMap::new(),
+            hash_to_number: BTreeMap::new(),
             transactions: BTreeMap::new(),
             receipts: BTreeMap::new(),
             tx_location: BTreeMap::new(),
@@ -100,9 +102,6 @@ impl InMemoryStorage {
                 transactions_root: alloy_trie::EMPTY_ROOT_HASH,
                 receipts_root: alloy_trie::EMPTY_ROOT_HASH,
                 withdrawals_root: if genesis.base_fee_per_gas.is_some() { Some(alloy_trie::EMPTY_ROOT_HASH) } else { None },
-                blob_gas_used: if genesis.base_fee_per_gas.is_some() { Some(0) } else { None },
-                excess_blob_gas: if genesis.base_fee_per_gas.is_some() { Some(0) } else { None },
-                parent_beacon_block_root: if genesis.base_fee_per_gas.is_some() { Some(B256::ZERO) } else { None },
                 gas_used: 0,
                 ..Default::default()
             },
@@ -131,6 +130,7 @@ impl InMemoryStorage {
         }
 
         self.blocks.insert(block_number, block);
+        self.hash_to_number.insert(block_hash, block_number);
         self.head_block_hash = block_hash;
         
         // Take snapshot after adding block
@@ -150,6 +150,8 @@ impl InMemoryStorage {
         let keys_to_remove: Vec<u64> = self.blocks.range((height + 1)..).map(|(k, _)| *k).collect();
         for k in keys_to_remove {
             if let Some(block) = self.blocks.remove(&k) {
+                let block_hash = block.header.hash_slow();
+                self.hash_to_number.remove(&block_hash);
                 for tx in block.body.transactions {
                     let hash = tx.hash();
                     self.tx_location.remove(hash);
@@ -192,7 +194,7 @@ impl InMemoryStorage {
     }
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<&Block<Transaction>> {
-        self.blocks.values().find(|b| b.header.hash_slow() == hash)
+        self.hash_to_number.get(&hash).and_then(|&num| self.blocks.get(&num))
     }
 
     pub fn get_transaction_by_hash(&self, hash: B256) -> Option<&Transaction> {

@@ -234,9 +234,9 @@ impl Executor {
                 nonce: block.header.nonce,
                 base_fee_per_gas: block.header.base_fee_per_gas,
                 withdrawals_root: Some(withdrawals_root),
-                blob_gas_used: block.header.blob_gas_used,
-                excess_blob_gas: block.header.excess_blob_gas,
-                parent_beacon_block_root: block.header.parent_beacon_block_root,
+                blob_gas_used: None,
+                excess_blob_gas: None,
+                parent_beacon_block_root: None,
                 ..Default::default()
             },
             body: alloy_consensus::BlockBody {
