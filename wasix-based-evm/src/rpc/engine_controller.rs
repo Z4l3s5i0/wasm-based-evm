@@ -1,5 +1,4 @@
 use crate::info;
-use crate::error::RpcResult;
 use alloy_rpc_types::engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, 
     ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
@@ -8,6 +7,7 @@ use alloy_rpc_types::engine::{
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::misc::error::RpcResult;
 use crate::rpc::engine_service::EngineService;
 
 #[rpc(server)]

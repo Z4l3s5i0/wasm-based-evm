@@ -1,4 +1,3 @@
-use crate::error::RpcError;
 use futures_util::Future;
 use jsonrpsee::server::middleware::rpc::{RpcServiceT, MethodResponse};
 use jsonrpsee::types::Request;
@@ -10,6 +9,7 @@ use base64::Engine;
 use base64::prelude::BASE64_URL_SAFE_NO_PAD;
 use std::pin::Pin;
 use std::task::{Context, Poll};
+use crate::misc::error::RpcError;
 
 #[derive(Clone)]
 pub struct HeaderInjectorLayer;

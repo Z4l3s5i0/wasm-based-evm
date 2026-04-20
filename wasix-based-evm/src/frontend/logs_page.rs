@@ -1,7 +1,7 @@
 use axum::response::Html;
 use maud::html;
 use crate::frontend::layout;
-use crate::logging::LOGS;
+use crate::misc::logging::LOGS;
 
 pub async fn index() -> Html<String> {
     let content = html! {

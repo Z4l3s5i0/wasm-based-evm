@@ -2,14 +2,10 @@ use std::net::SocketAddr;
 use crate::cli::Args;
 use crate::storage::genesis::Genesis;
 use crate::storage::storage::{InMemoryStorage, StorageProvider};
-use crate::executor::Executor;
-use crate::logging::{self, LogLevel};
-use crate::ev::alloy_u256_to_evm_u256;
 use alloy_primitives::U256;
 use alloy_genesis::Genesis as AlloyGenesis;
 use std::sync::Arc;
 use crate::mempool::Mempool;
-use crate::p2p::identity::Identity;
 use crate::p2p::peer_manager::PeerManager;
 use crate::{info, debug, error};
 
@@ -17,6 +13,12 @@ use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
 use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
+use crate::evm::ev::alloy_u256_to_evm_u256;
+use crate::evm::executor::Executor;
+use crate::identity::identity::Identity;
+use crate::identity::jwt::{HeaderInjectorLayer, JwtAuthLayer};
+use crate::misc::logging;
+use crate::misc::logging::LogLevel;
 use crate::rpc::RpcServerFacade;
 use crate::rpc::eth_service::EthService;
 use crate::rpc::debug_service::DebugService;
@@ -26,9 +28,7 @@ use crate::rpc::transaction_service::TransactionService;
 use crate::rpc::log_service::LogService;
 use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
-
-use crate::p2p::sync::SyncEngine;
-use crate::rpc::jwt::{JwtAuthLayer, HeaderInjectorLayer};
+use crate::sync::controller::SyncController;
 
 pub struct App {
     eth_rpc_addr: SocketAddr,
@@ -284,7 +284,7 @@ impl AppBuilder {
         )?;
         let peer_manager = Arc::new(peer_manager);
 
-        let sync_engine = Arc::new(SyncEngine::new(
+        let sync_engine = Arc::new(SyncController::new(
             storage.clone(),
             mempool.clone(),
             peer_manager.clone(),

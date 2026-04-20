@@ -1,19 +1,17 @@
-mod error;
-mod ev;
 mod rpc;
-mod executor;
 mod storage;
 mod mempool;
-mod cli;
-mod logging;
 mod dev;
-mod app;
 mod p2p;
 mod frontend;
-// mod network;
+mod misc;
+mod evm;
+mod identity;
+mod sync;
 
 use clap::Parser;
-use crate::app::App;
+use crate::misc::app::App;
+use crate::misc::cli;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

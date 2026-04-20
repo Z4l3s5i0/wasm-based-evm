@@ -3,11 +3,9 @@ use jsonrpsee::proc_macros::rpc;
 use serde::{Deserialize, Serialize};
 use alloy_primitives::B256;
 
-pub mod identity;
 pub mod peer_manager;
 pub mod rpc_client;
 pub mod gossip_handler;
-pub mod sync;
 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]

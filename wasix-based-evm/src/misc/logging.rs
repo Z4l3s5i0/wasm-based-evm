@@ -35,12 +35,12 @@ pub fn add_log(log: String) {
 macro_rules! info {
     ($($arg:tt)*) => {
         {
-            if $crate::logging::get_log_level() >= $crate::logging::LogLevel::Info {
+            if $crate::misc::logging::get_log_level() >= $crate::misc::logging::LogLevel::Info {
                 let now = chrono::Local::now();
                 let timestamp = now.format("%b %d %H:%M:%S%.3f").to_string();
                 let log = format!($($arg)*);
                 println!("{} INFO  {}", timestamp, log);
-                $crate::logging::add_log(format!("{} [INFO] {}", timestamp, log));
+                $crate::misc::logging::add_log(format!("{} [INFO] {}", timestamp, log));
             }
         }
     };
@@ -50,12 +50,12 @@ macro_rules! info {
 macro_rules! debug {
     ($($arg:tt)*) => {
         {
-            if $crate::logging::get_log_level() >= $crate::logging::LogLevel::Debug {
+            if $crate::misc::logging::get_log_level() >= $crate::misc::logging::LogLevel::Debug {
                 let now = chrono::Local::now();
                 let timestamp = now.format("%b %d %H:%M:%S%.3f").to_string();
                 let log = format!($($arg)*);
                 println!("{} DEBUG {}", timestamp, log);
-                $crate::logging::add_log(format!("{} [DEBUG] {}", timestamp, log));
+                $crate::misc::logging::add_log(format!("{} [DEBUG] {}", timestamp, log));
             }
         }
     };
@@ -69,7 +69,7 @@ macro_rules! error {
             let timestamp = now.format("%b %d %H:%M:%S%.3f").to_string();
             let log = format!($($arg)*);
             eprintln!("{} ERROR {}", timestamp, log);
-            $crate::logging::add_log(format!("{} [ERROR] {}", timestamp, log));
+            $crate::misc::logging::add_log(format!("{} [ERROR] {}", timestamp, log));
         }
     };
 }

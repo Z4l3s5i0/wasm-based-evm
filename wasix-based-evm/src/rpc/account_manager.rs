@@ -4,7 +4,7 @@ use alloy_signer_local::PrivateKeySigner;
 use alloy_network::TxSignerSync;
 use alloy_signer::SignerSync;
 use std::collections::HashMap;
-use crate::error::{RpcResult, RpcError};
+use crate::misc::error::{RpcError, RpcResult};
 
 /// Manages accounts and their private keys for node-side signing.
 pub struct AccountManager {

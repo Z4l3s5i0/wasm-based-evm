@@ -1,9 +1,9 @@
 use crate::info;
-use crate::error::RpcResult;
 use alloy_eips::BlockId;
 use alloy_rpc_types::Block;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::misc::error::RpcResult;
 use crate::rpc::block_service::BlockService;
 use crate::rpc::parse_b256;
 

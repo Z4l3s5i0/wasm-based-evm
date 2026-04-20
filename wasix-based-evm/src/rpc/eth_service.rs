@@ -1,5 +1,4 @@
 use std::sync::Arc;
-use crate::error::RpcResult;
 use alloy_primitives::{U256, Address, Bytes};
 use alloy_rpc_types::{SyncStatus, TransactionRequest};
 use crate::storage::traits::{BlockProvider, StateProvider};
@@ -8,15 +7,16 @@ use tokio::sync::RwLock;
 use crate::mempool::Mempool;
 use crate::rpc::account_manager::AccountManager;
 use crate::p2p::peer_manager::PeerManager;
-use crate::executor::Executor;
-use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRecoverable};
+use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRecoverable, TxReceipt};
 use alloy_rlp::{Encodable, Decodable};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
 
 use crate::{info, error};
-
-use crate::p2p::sync::SyncEngine;
+use crate::evm::executor::Executor;
+use crate::misc::error;
+use crate::misc::error::RpcResult;
+use crate::sync::controller::SyncController;
 
 pub struct EthService {
     pub block_storage: Arc<dyn BlockProvider>,
@@ -26,7 +26,7 @@ pub struct EthService {
     pub executor: Executor,
     pub storage: Arc<RwLock<InMemoryStorage>>,
     pub account_manager: Arc<AccountManager>,
-    pub sync_engine: Arc<SyncEngine>,
+    pub sync_engine: Arc<SyncController>,
 }
 
 impl EthService {

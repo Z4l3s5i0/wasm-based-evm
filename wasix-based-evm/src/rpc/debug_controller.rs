@@ -1,8 +1,8 @@
 use crate::info;
-use crate::error::RpcResult;
 use alloy_rpc_types::Transaction;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::misc::error::RpcResult;
 use crate::rpc::debug_service::DebugService;
 use crate::rpc::transaction_mapper::TransactionMapper;
 

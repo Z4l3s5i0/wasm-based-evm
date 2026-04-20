@@ -1,4 +1,4 @@
-use crate::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256};
+use crate::evm::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256, evm_u256_to_alloy_u256};
 use crate::{info, debug, error};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, B256, U256, Bytes, B64};
@@ -17,6 +17,7 @@ use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use std::fs::File;
 use std::path::Path;
+use crate::evm::executor::Executor;
 
 #[derive(Clone, Serialize, Deserialize)]
 pub struct InMemoryStorage {
@@ -394,14 +395,14 @@ impl InMemoryStorage {
 pub struct StorageProvider {
     inner: Arc<RwLock<InMemoryStorage>>,
     mempool: Arc<RwLock<Mempool>>,
-    executor: Arc<crate::executor::Executor>,
+    executor: Arc<Executor>,
 }
 
 impl StorageProvider {
     pub fn new(
         storage: Arc<RwLock<InMemoryStorage>>,
         mempool: Arc<RwLock<Mempool>>,
-        executor: Arc<crate::executor::Executor>,
+        executor: Arc<Executor>,
     ) -> Self {
         Self {
             inner: storage,
@@ -591,7 +592,7 @@ impl BlockProvider for InMemoryStorage {
 
     async fn chain_id(&self) -> Result<u64> {
         let chain_id = self.backend.environment.chain_id;
-        Ok(crate::ev::evm_u256_to_alloy_u256(chain_id).to::<u64>())
+        Ok(evm_u256_to_alloy_u256(chain_id).to::<u64>())
     }
 }
 

@@ -1,5 +1,5 @@
 use crate::info;
-use crate::error::RpcResult;
+use crate::misc::error::RpcResult;
 use alloy_rpc_types::{Filter, Log};
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;

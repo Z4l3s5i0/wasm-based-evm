@@ -1,5 +1,4 @@
 use crate::info;
-use crate::error::RpcResult;
 use alloy_rpc_types::{SyncStatus, TransactionRequest};
 use alloy_eips::BlockId;
 use async_trait::async_trait;
@@ -9,6 +8,7 @@ use crate::rpc::eth_service::EthService;
 use crate::rpc::account_mapper::AccountMapper;
 
 use serde::Serialize;
+use crate::misc::error::RpcResult;
 
 #[derive(Serialize, Debug, Clone)]
 #[serde(untagged)]

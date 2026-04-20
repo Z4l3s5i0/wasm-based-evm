@@ -1,8 +1,8 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::error::RpcResult;
 use crate::mempool::Mempool;
 use alloy_consensus::TxEnvelope as Transaction;
+use crate::misc::error::RpcResult;
 
 pub struct DebugService {
     pub mempool: Arc<RwLock<Mempool>>,

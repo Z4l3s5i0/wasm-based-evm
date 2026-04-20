@@ -1,6 +1,5 @@
 use crate::p2p::{DiscoveryApiServer, P2pApiServer, HelloResponse, PeerInfoRlp, DiscoveryApiClient, P2pApiClient};
 use crate::p2p::rpc_client::RpcClient;
-use crate::p2p::identity::Identity;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
@@ -14,6 +13,7 @@ use tokio::sync::mpsc;
 
 use crate::storage::storage::InMemoryStorage;
 use alloy_rlp::Encodable;
+use crate::identity::identity::Identity;
 
 const MAX_PEERS: usize = 50;
 

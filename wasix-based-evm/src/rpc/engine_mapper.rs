@@ -1,10 +1,10 @@
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
-use alloy_rpc_types::engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4,
-    ExecutionPayloadBodyV1,
-};
-use alloy_primitives::{U256, B256, Bytes};
+use alloy_primitives::U256;
 use alloy_rlp::Encodable;
+use alloy_rpc_types::engine::{
+    ExecutionPayloadBodyV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
+    ExecutionPayloadV4,
+};
 
 pub struct EngineMapper;
 

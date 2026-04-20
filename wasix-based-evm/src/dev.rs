@@ -3,10 +3,10 @@ use tokio::sync::RwLock;
 use crate::mempool::Mempool;
 use crate::storage::storage::InMemoryStorage;
 use crate::storage::traits::StateProvider;
-use crate::executor::Executor;
 use alloy_consensus::{Block, Header, transaction::SignerRecoverable};
 use alloy_primitives::{Bytes, B256, U256};
 use crate::{info, error};
+use crate::evm::executor::Executor;
 
 pub struct DevMode {
     mempool: Arc<RwLock<Mempool>>,

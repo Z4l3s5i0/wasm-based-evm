@@ -1,9 +1,10 @@
 use crate::info;
-use crate::error::RpcResult;
 use alloy_eips::BlockId;
 use alloy_primitives::{U256, Bytes, B256};
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
+use crate::misc::error::RpcError::InvalidParams;
+use crate::misc::error::RpcResult;
 use crate::rpc::account_mapper::AccountMapper;
 use crate::rpc::account_service::AccountService;
 use crate::rpc::parse_address;
@@ -58,7 +59,7 @@ impl AccountRpcServer for AccountController {
     async fn get_storage_at(&self, address: String, slot: String, block_id: Option<BlockId>) -> RpcResult<String> {
         info!("[RPC] eth_getStorageAt: address={}, slot={}, block_id={:?}", address, slot, block_id);
         let addr = parse_address(&address)?;
-        let slot = slot.parse::<B256>().map_err(|e| crate::error::RpcError::InvalidParams(format!("Invalid slot: {}", e)))?;
+        let slot = slot.parse::<B256>().map_err(|e| InvalidParams(format!("Invalid slot: {}", e)))?;
         let block_id = block_id.unwrap_or(BlockId::latest());
         let value = self.service.get_storage_at(addr, slot, block_id).await?;
         let result = AccountMapper::to_hex(value);

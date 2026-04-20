@@ -7,13 +7,13 @@ use alloy_consensus::transaction::SignerRecoverable;
 use alloy_rlp::Decodable;
 use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
-use crate::p2p::sync::SyncEngine;
 use crate::{info, error, debug};
+use crate::sync::controller::SyncController;
 
 pub struct GossipHandler {
     mempool: Arc<RwLock<Mempool>>,
     peer_manager: Arc<PeerManager>,
-    sync_engine: Arc<SyncEngine>,
+    sync_engine: Arc<SyncController>,
     gossip_rx: Receiver<Vec<u8>>,
 }
 
@@ -21,7 +21,7 @@ impl GossipHandler {
     pub fn new(
         mempool: Arc<RwLock<Mempool>>,
         peer_manager: Arc<PeerManager>,
-        sync_engine: Arc<SyncEngine>,
+        sync_engine: Arc<SyncController>,
         gossip_rx: Receiver<Vec<u8>>,
     ) -> Self {
         Self {

@@ -1,11 +1,11 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::storage::storage::InMemoryStorage;
-use crate::executor::Executor;
 use crate::mempool::Mempool;
 use alloy_consensus::Block as ConsensusBlock;
 use alloy_consensus::TxEnvelope as Transaction;
 use alloy_primitives::U256;
+use crate::evm::executor::Executor;
 use crate::info;
 
 pub struct BlockProcessor {

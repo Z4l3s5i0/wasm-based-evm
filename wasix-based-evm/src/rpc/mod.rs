@@ -13,17 +13,16 @@ pub mod account_manager;
 pub mod block_service;
 pub mod transaction_service;
 pub mod log_service;
-pub mod jwt;
 
 mod account_mapper;
 mod block_mapper;
 mod engine_mapper;
 mod transaction_mapper;
-mod log_mapper;
 mod debug_controller;
 
-use crate::error::RpcResult;
 use alloy_primitives::{Address, B256};
+use crate::misc::error::RpcError::InvalidParams;
+use crate::misc::error::RpcResult;
 use crate::rpc::eth_controller::{EthController, EthRpcServer};
 use crate::rpc::eth_service::EthService;
 use crate::rpc::engine_controller::{EngineController, EngineRpcServer};
@@ -85,10 +84,10 @@ impl RpcServerFacade {
 }
 
 pub fn parse_address(addr: &str) -> RpcResult<Address> {
-    addr.parse().map_err(|e| crate::error::RpcError::InvalidParams(format!("Invalid address: {}", e)))
+    addr.parse().map_err(|e| InvalidParams(format!("Invalid address: {}", e)))
 }
 
 pub fn parse_b256(hash: &str) -> RpcResult<B256> {
-    hash.parse().map_err(|e| crate::error::RpcError::InvalidParams(format!("Invalid hash: {}", e)))
+    hash.parse().map_err(|e| InvalidParams(format!("Invalid hash: {}", e)))
 }
 

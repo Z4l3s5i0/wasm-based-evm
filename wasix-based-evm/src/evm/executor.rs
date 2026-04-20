@@ -1,7 +1,7 @@
 use alloy_consensus::{Block, ReceiptWithBloom as Receipt, TxEnvelope, Header, Transaction as _, transaction::SignerRecoverable as _};
 use alloy_rpc_types::Withdrawal;
 use alloy_primitives::{logs_bloom, Log, B256, Address, LogData, B64, U256, Bytes};
-use crate::ev::{H160, EvmU256, evm, address_to_h160};
+use crate::evm::ev::{H160, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256};
 use evm::backend::{OverlayedChangeSet, InMemoryAccount};
 use crate::{info, debug};
 use evm::{
@@ -126,7 +126,7 @@ impl Executor {
         Ok((results, receipts, total_changeset))
     }
 
-    fn tx_to_transact_args(&self, tx: &TxEnvelope, sender: Address) -> Result<TransactArgs, String> {
+    fn tx_to_transact_args(&self, tx: &TxEnvelope, sender: Address) -> Result<TransactArgs<'_>, String> {
         let gas_price = TransactGasPrice::Legacy(EvmU256::from(tx.gas_price().unwrap_or_default()));
         
         let call_create = match tx.to() {
@@ -330,7 +330,7 @@ impl Executor {
         for withdrawal in withdrawals {
             let addr = withdrawal.address;
             let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64);
-            let evm_amount_wei = crate::ev::alloy_u256_to_evm_u256(amount_wei);
+            let evm_amount_wei = alloy_u256_to_evm_u256(amount_wei);
             let h160_addr = address_to_h160(addr);
             
             if let Some(account) = storage.backend.state.get_mut(&h160_addr) {

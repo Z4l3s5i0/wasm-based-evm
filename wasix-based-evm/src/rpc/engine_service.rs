@@ -1,27 +1,27 @@
-use std::sync::Arc;
-use std::collections::HashMap;
-use tokio::sync::RwLock;
-use crate::error::{RpcResult, RpcError};
-use alloy_rpc_types::engine::{
-    ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, 
-    ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
-    PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadBodyV1,
-};
-use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
-use alloy_primitives::{B256, U256, Bytes, B64};
-use crate::{info, error};
-use crate::storage::storage::InMemoryStorage;
+use crate::evm::executor::Executor;
 use crate::mempool::Mempool;
-use crate::executor::Executor;
-use crate::p2p::sync::SyncEngine;
+use crate::misc::error::{RpcError, RpcResult};
 use crate::rpc::engine_mapper::EngineMapper;
+use crate::storage::storage::InMemoryStorage;
+use crate::sync::controller::SyncController;
+use crate::{error, info};
+use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
+use alloy_primitives::{Bytes, B256};
 use alloy_rlp::Decodable;
+use alloy_rpc_types::engine::{
+    ExecutionPayloadBodyV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
+    ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId,
+    PayloadStatus, PayloadStatusEnum, TransitionConfiguration,
+};
+use std::collections::HashMap;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct EngineService {
     pub storage: Arc<RwLock<InMemoryStorage>>,
     pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
-    pub sync_engine: Arc<SyncEngine>,
+    pub sync_engine: Arc<SyncController>,
     pub payloads: Arc<RwLock<HashMap<PayloadId, Block<Transaction>>>>,
 }
 
@@ -30,7 +30,7 @@ impl EngineService {
         storage: Arc<RwLock<InMemoryStorage>>,
         mempool: Arc<RwLock<Mempool>>,
         executor: Executor,
-        sync_engine: Arc<SyncEngine>,
+        sync_engine: Arc<SyncController>,
     ) -> Self {
         info!("[EngineService] Initializing engine service");
         Self {
