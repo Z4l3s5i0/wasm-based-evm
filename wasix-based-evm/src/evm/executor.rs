@@ -99,10 +99,14 @@ impl Executor {
 
             match result {
                 Ok(value) => {
-                    debug!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}", tx.hash(), value.used_gas);
+                    info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}, status={:?}", tx.hash(), value.used_gas, value.call_create);
                     cumulative_gas_used += value.used_gas.as_u64();
                     
                     let (_, changeset) = overlayed.deconstruct();
+                    info!("[Executor] Changeset for tx {:?}: balances={:?}, storages={:?}", tx.hash(), changeset.balances.len(), changeset.storages.len());
+                    for ((addr, slot), val) in &changeset.storages {
+                        info!("[Executor]   Storage update: addr={:?}, slot={:?}, val={:?}", addr, slot, val);
+                    }
                     total_changeset.merge(changeset.clone());
 
                     let receipt = self.create_receipt(&value, &changeset, cumulative_gas_used);

@@ -81,10 +81,8 @@ mod tests {
         let (executor, mut storage, signer, addr) = setup_executor();
         let chain_id = 1337u64;
 
-        // PUSH1 0x42 PUSH1 0x00 SSTORE PUSH1 0x00 PUSH1 0x00 RETURN
         let runtime = hex::decode("604260005560006000f3").unwrap();
-        // Constructor: copy runtime and return it
-        let mut init = hex::decode("600a80600c6000396000f3").unwrap();
+        let mut init = hex::decode("600a80600b6000396000f3").unwrap();
         init.extend(&runtime);
 
         let mut tx_deploy = TxLegacy {
@@ -105,8 +103,8 @@ mod tests {
         };
 
         executor.execute_block(&mut storage, vec![envelope_deploy], block1).unwrap();
-
         let contract_addr = calculate_contract_address(addr, 0);
+        println!("CODE: {:x?}", storage.get_code(contract_addr));
         assert!(!storage.get_code(contract_addr).is_empty());
 
         let mut tx_call = TxLegacy {
@@ -129,8 +127,12 @@ mod tests {
         executor.execute_block(&mut storage, vec![envelope_call], block2).unwrap();
 
         let contract_addr_h160 = H160::from_slice(contract_addr.as_slice());
-        let val = storage.backend.state.get(&contract_addr_h160)
-            .and_then(|acc| acc.storage.get(&evm_interpreter::uint::H256::zero()))
+        let account = storage.backend.state.get(&contract_addr_h160).expect("Account not found");
+        println!("Account balance: {:?}", account.balance);
+        println!("Account nonce: {:?}", account.nonce);
+        println!("Account storage: {:?}", account.storage);
+        
+        let val = account.storage.get(&evm_interpreter::uint::H256::zero())
             .expect("Storage slot 0 not found in contract account after call");
         assert_eq!(U256::from_be_bytes(val.0), U256::from(0x42));
     }
