@@ -17,7 +17,7 @@ pub fn get_logs_markup() -> maud::Markup {
     let logs = LOGS.lock().unwrap();
     html! {
         @for log in logs.iter().rev() {
-            @let level = if log.contains("[INFO]") { "INFO" } else if log.contains("[DEBUG]") { "DEBUG" } else if log.contains("[ERROR]") { "ERROR" } else { "" };
+            @let level: &str = if log.contains("[INFO]") { "INFO" } else if log.contains("[DEBUG]") { "DEBUG" } else if log.contains("[ERROR]") { "ERROR" } else { "" };
             div class=(format!("log-entry {}", level)) {
                 (log)
             }

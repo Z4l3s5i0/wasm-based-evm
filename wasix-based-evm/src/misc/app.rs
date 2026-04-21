@@ -25,6 +25,16 @@ use crate::rpc::debug_service::DebugService;
 use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
 use crate::sync::controller::SyncController;
+use axum::{routing::get, Router};
+use prometheus::{TextEncoder, Encoder};
+
+async fn metrics_handler() -> String {
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = Vec::new();
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    String::from_utf8(buffer).unwrap()
+}
 
 pub struct App {
     eth_rpc_addr: SocketAddr,
@@ -41,6 +51,7 @@ pub struct App {
     data_dir: PathBuf,
     state_filename: String,
     dev_interval: Option<u64>,
+    metrics_port: u16,
     auth_rpc_jwt_secret: Option<[u8; 32]>,
 }
 
@@ -91,6 +102,16 @@ impl App {
         // });
 
         let _eth_handle = eth_server.start(self.eth_module);
+
+        // Start metrics server
+        crate::misc::metrics::init_metrics();
+        let metrics_addr: SocketAddr = format!("0.0.0.0:{}", self.metrics_port).parse().unwrap();
+        let metrics_app: Router = Router::new().route("/metrics", get(metrics_handler));
+        info!("[App] Prometheus metrics server listening on {}", metrics_addr);
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(metrics_addr).await.unwrap();
+            axum::serve(listener, metrics_app).await.unwrap();
+        });
 
         if let Some(interval) = self.dev_interval {
             let dev_mode = crate::dev::DevMode::new(
@@ -441,6 +462,7 @@ impl AppBuilder {
             data_dir,
             state_filename,
             dev_interval: args.dev,
+            metrics_port: args.metrics_port,
             auth_rpc_jwt_secret,
         })
     }

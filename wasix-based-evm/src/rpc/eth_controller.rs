@@ -121,6 +121,7 @@ impl EthRpcServer for EthController {
     }
 
     async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<Bytes> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.start_timer();
         debug!("[RPC] eth_call: request={:?}, block_id={:?}", request, block_id);
         let result_bytes = self.service.call(request, block_id).await?;
         debug!("[RPC] eth_call result size: {}", result_bytes.len());
@@ -150,6 +151,7 @@ impl EthRpcServer for EthController {
     }
 
     async fn block_number(&self) -> RpcResult<U256> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.start_timer();
         debug!("[RPC] eth_blockNumber");
         let num = self.service.latest_block_number().await?;
         debug!("[RPC] eth_blockNumber result: {}", num);
@@ -198,6 +200,7 @@ impl EthRpcServer for EthController {
     }
 
     async fn get_balance(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<U256> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.start_timer();
         debug!("[RPC] eth_getBalance: address={}, block_id={:?}", address, block_id);
         let block_id = block_id.unwrap_or(BlockId::latest());
         let balance = self.service.get_balance(address, block_id).await?;

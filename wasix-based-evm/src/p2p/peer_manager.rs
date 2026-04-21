@@ -266,6 +266,7 @@ impl PeerManager {
                 peers_lock.remove(&id);
                 debug!("[P2P] Successfully removed stale peer {}", id);
             }
+            crate::misc::metrics::CONNECTED_PEERS.set(peers_lock.len() as f64);
             debug!("[P2P] Current active peer count: {}", peers_lock.len());
         } else {
             debug!("[P2P] All peers are healthy.");
@@ -329,6 +330,7 @@ impl PeerManager {
                         discovery_url: discovery_url.clone(),
                         p2p_url,
                     });
+                    crate::misc::metrics::CONNECTED_PEERS.set(peers_lock.len() as f64);
                     debug!("[P2P] Active peer pool size: {}", peers_lock.len());
                 }
                 Err(e) => error!("[P2P] Bonding failed with {}: {}", addr, e),

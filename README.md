@@ -87,5 +87,3 @@ For example use cases to test, see the Readme [here](./tester/README.md).
 - [ ] implementing persistent storage
 - [ ] complete engine_api specs
 - [ ] including features of forks after shanghai-capella
-
-For an AI analysis of missing components see [here](KI_Analysis_missing_pieces.md) 

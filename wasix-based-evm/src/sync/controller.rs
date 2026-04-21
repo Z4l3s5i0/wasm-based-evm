@@ -87,6 +87,7 @@ impl SyncController {
     }
 
     async fn sync_step(&self) -> anyhow::Result<()> {
+        let timer = crate::misc::metrics::BLOCK_PROCESSING_SECONDS.start_timer();
         let (local_height, local_hash) = {
             let storage_read = self.storage.read().await;
             let height = storage_read.get_latest_block_number();
@@ -95,6 +96,10 @@ impl SyncController {
         };
 
         if let Some((best_peer_url, best_height)) = self.downloader.get_best_peer(local_height).await {
+            crate::misc::metrics::CURRENT_HEAD_BLOCK.set(local_height as f64);
+            crate::misc::metrics::NETWORK_HEAD.set(best_height as f64);
+            crate::misc::metrics::SYNC_GAP.set((best_height as i64 - local_height as i64) as f64);
+            crate::misc::metrics::PROCESSED_BLOCKS.inc();
             // Check for divergence
             if local_height > 0 {
                 match self.downloader.get_block_hash(&best_peer_url, local_height).await {
@@ -114,6 +119,7 @@ impl SyncController {
                         }
                         
                         // Reorg
+                        crate::misc::metrics::REORGS_TOTAL.inc();
                         let reverted_txs = {
                             let mut storage_write = self.storage.write().await;
                             storage_write.revert_to_height(ancestor_height)
@@ -149,6 +155,7 @@ impl SyncController {
             debug!("[Sync] No peers found with height greater than local {}", local_height);
         }
 
+        timer.observe_duration();
         Ok(())
     }
 

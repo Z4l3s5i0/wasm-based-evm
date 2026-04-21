@@ -63,4 +63,8 @@ pub struct Args {
     /// Descriptive name for the node, used in storage filenames
     #[arg(long)]
     pub peer_name: Option<String>,
+
+    /// TCP port for Prometheus metrics
+    #[arg(long, default_value_t = 9090)]
+    pub metrics_port: u16,
 }

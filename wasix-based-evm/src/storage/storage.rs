@@ -304,6 +304,10 @@ impl InMemoryStorage {
     }
 
     pub fn add_block(&mut self, block: Block<Transaction>) {
+        let mut buf = Vec::new();
+        alloy_rlp::Encodable::encode(&block, &mut buf);
+        crate::misc::metrics::DB_SIZE_BYTES.add(buf.len() as f64);
+
         let block_number = block.header.number;
         let block_hash = block.header.hash_slow();
         
@@ -419,10 +423,12 @@ impl InMemoryStorage {
     pub fn get_balance(&self, address: Address) -> U256 {
         let h160 = H160::from_slice(address.as_slice());
         if let Some(a) = self.backend.state.get(&h160) {
+            crate::misc::metrics::CACHE_HITS.inc();
             let mut bytes = [0u8; 32];
             a.balance.to_big_endian(&mut bytes);
             U256::from_be_bytes(bytes)
         } else {
+            crate::misc::metrics::CACHE_MISSES.inc();
             U256::ZERO
         }
     }
@@ -432,9 +438,13 @@ impl InMemoryStorage {
     }
 
     pub fn get_code(&self, address: Address) -> Vec<u8> {
-        self.backend.state.get(&H160::from_slice(address.as_slice()))
-            .map(|a| a.code.clone())
-            .unwrap_or_default()
+        if let Some(a) = self.backend.state.get(&H160::from_slice(address.as_slice())) {
+            crate::misc::metrics::CACHE_HITS.inc();
+            a.code.clone()
+        } else {
+            crate::misc::metrics::CACHE_MISSES.inc();
+            Vec::new()
+        }
     }
 
     pub fn set_balance(&mut self, address: Address, balance: U256) {

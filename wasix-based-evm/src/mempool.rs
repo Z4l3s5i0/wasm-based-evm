@@ -34,6 +34,15 @@ impl Mempool {
     /// Add a transaction to the mempool, considering its nonce and the current state nonce.
     /// Returns true if the transaction was newly added or replaced an existing one.
     pub fn add_transaction(&mut self, tx: Transaction, current_nonce: u64) -> bool {
+        let success = self.add_transaction_internal(tx, current_nonce);
+        if success {
+            crate::misc::metrics::TRANSACTIONS_TOTAL.inc();
+            crate::misc::metrics::MEMPOOL_SIZE.set(self.len() as f64);
+        }
+        success
+    }
+
+    fn add_transaction_internal(&mut self, tx: Transaction, current_nonce: u64) -> bool {
         let hash = tx.hash();
         let from = tx.recover_signer().unwrap_or_default();
         let tx_nonce = tx.nonce();

@@ -90,17 +90,20 @@ impl Executor {
             current_backend.apply_overlayed(&total_changeset);
             let mut overlayed = OverlayedBackend::new(&current_backend, &self.config.runtime);
 
+            let tx_timer = crate::misc::metrics::TX_EXECUTION_SECONDS.start_timer();
             let result = transact(
                 args,
                 None,
                 &mut overlayed,
                 &invoker,
             );
+            tx_timer.observe_duration();
 
             match result {
                 Ok(value) => {
                     info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}, status={:?}", tx.hash(), value.used_gas, value.call_create);
                     cumulative_gas_used += value.used_gas.as_u64();
+                    crate::misc::metrics::GAS_USED_PER_BLOCK.set(cumulative_gas_used as f64);
                     
                     let (_, changeset) = overlayed.deconstruct();
                     info!("[Executor] Changeset for tx {:?}: balances={:?}, storages={:?}", tx.hash(), changeset.balances.len(), changeset.storages.len());
