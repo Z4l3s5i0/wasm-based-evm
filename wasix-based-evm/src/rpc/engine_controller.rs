@@ -260,11 +260,7 @@ impl EngineRpcServer for EngineController {
     async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
         info!("[RPC] engine_getPayloadV2: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v2(payload_id).await?;
-        match &result.execution_payload {
-            ExecutionPayloadFieldV2::V2(payload) => {
-                info!("[RPC] engine_getPayloadV2 result: hash={:?}", payload.block_hash);
-            }
-        }
+        info!("[RPC] engine_getPayloadV2 blockValue: value={:?}", result.block_value);
         Ok(result)
     }
 

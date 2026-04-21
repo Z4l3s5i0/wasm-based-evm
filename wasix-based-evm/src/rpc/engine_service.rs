@@ -22,7 +22,6 @@ pub struct EngineService {
     pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
     pub sync_engine: Arc<SyncController>,
-    pub payloads: Arc<RwLock<HashMap<PayloadId, Block<TxEnvelope>>>>,
 }
 
 impl EngineService {
@@ -38,7 +37,6 @@ impl EngineService {
             mempool,
             executor,
             sync_engine,
-            payloads: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -144,19 +142,21 @@ impl EngineService {
     }
 
     pub async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3> {
-        let payloads_lock = self.payloads.read().await;
-        let block = payloads_lock.get(&payload_id)
-            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
+        let storage = self.storage.read().await;
+        let block = storage.get_payload(&payload_id)
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?
+            .clone();
 
-        Ok(EngineMapper::to_execution_payload_v3(block))
+        Ok(EngineMapper::to_execution_payload_v3(&block))
     }
 
     pub async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
-        let payloads_lock = self.payloads.read().await;
-        let block = payloads_lock.get(&payload_id)
-            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
+        let storage = self.storage.read().await;
+        let block = storage.get_payload(&payload_id)
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?
+            .clone();
 
-        Ok(EngineMapper::to_execution_payload_v4(block))
+        Ok(EngineMapper::to_execution_payload_v4(&block))
     }
 
     pub async fn get_payload_v5(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
@@ -261,7 +261,7 @@ impl EngineService {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),
             }
-        } else if let Some(payload_block) = self.payloads.read().await.values().find(|b| b.header.hash_slow() == head_block_hash) {
+        } else if let Some(payload_block) = storage.payloads.values().find(|b| b.header.hash_slow() == head_block_hash) {
             info!("[EngineService] Head block found in payload map: #{} hash={:?}", payload_block.header.number, head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
@@ -314,7 +314,7 @@ impl EngineService {
             .cloned()
             .or_else(|| {
                 // Fallback to payloads map if head is not in storage yet
-                self.payloads.try_read().ok()?.values()
+                storage.payloads.values()
                     .find(|b| b.header.hash_slow() == head_block_hash)
                     .cloned()
             })
@@ -349,7 +349,7 @@ impl EngineService {
             base_fee_per_gas,
         ).map_err(|e| RpcError::Internal(format!("Failed to build block: {}", e)))?;
 
-        self.payloads.write().await.insert(id, finalized_block);
+        storage.add_payload(id, finalized_block);
         info!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
         
         Ok(Some(id))
@@ -400,8 +400,8 @@ impl EngineService {
     }
 
     pub async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
-        let payloads_lock = self.payloads.read().await;
-        let block = payloads_lock.get(&payload_id)
+        let storage = self.storage.read().await;
+        let block = storage.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(EngineMapper::to_execution_payload_v1(block))
@@ -429,8 +429,8 @@ impl EngineService {
     }
 
     pub async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
-        let payloads_lock = self.payloads.read().await;
-        let block = payloads_lock.get(&payload_id)
+        let storage = self.storage.read().await;
+        let block = storage.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         let execution_payload = EngineMapper::to_execution_payload_v2(block);

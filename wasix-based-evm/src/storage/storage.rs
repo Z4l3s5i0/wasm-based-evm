@@ -4,10 +4,11 @@ use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, B256, U256, Bytes, B64};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
 use crate::storage::traits::{StateProvider};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
+use alloy_rpc_types::engine::PayloadId;
 use crate::mempool::Mempool;
 use alloy_eips::BlockId;
 use anyhow::Result;
@@ -72,6 +73,7 @@ pub struct InMemoryStorage {
     pub safe_block_hash: B256,
     pub finalized_block_hash: B256,
     pub snapshots: BTreeMap<u64, InMemoryBackend>,
+    pub payloads: HashMap<PayloadId, Block<Transaction>>,
 }
 
 impl InMemoryStorage {
@@ -145,6 +147,7 @@ impl InMemoryStorage {
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
             snapshots: BTreeMap::new(),
+            payloads: HashMap::new(),
         };
 
         for (addr, account) in genesis.alloc {
@@ -231,6 +234,7 @@ impl InMemoryStorage {
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
             snapshots: BTreeMap::new(),
+            payloads: HashMap::new(),
         };
 
         for (addr, account) in genesis.alloc {
@@ -433,8 +437,6 @@ impl InMemoryStorage {
             .unwrap_or_default()
     }
 
-
-
     pub fn set_balance(&mut self, address: Address, balance: U256) {
         debug!("[Storage] Setting balance for address {:?} to {}", address, balance);
         let bytes = balance.to_be_bytes::<32>();
@@ -513,6 +515,18 @@ impl InMemoryStorage {
                 alloy_eips::BlockNumberOrTag::Earliest => self.get_block_hash(0),
             },
         }
+    }
+
+    pub fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>) {
+        self.payloads.insert(payload_id, block);
+    }
+
+    pub fn get_payload(&self, payload_id: &PayloadId) -> Option<&Block<Transaction>> {
+        self.payloads.get(payload_id)
+    }
+
+    pub fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<Block<Transaction>> {
+        self.payloads.remove(payload_id)
     }
 
     pub fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>) {
@@ -665,6 +679,7 @@ impl StateProvider for StorageProvider {
     async fn chain_id(&self) -> Result<u64> {
         self.inner.read().await.chain_id().await
     }
+
     async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>> {
         self.inner.read().await.logs(filter).await
     }
