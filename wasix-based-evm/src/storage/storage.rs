@@ -530,7 +530,7 @@ impl InMemoryStorage {
     }
 
     pub fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>) {
-        info!("[Storage] Updating forkchoice: head={:?}, safe={:?}, finalized={:?}", head, safe, finalized);
+        debug!("[Storage] Updating forkchoice: head={:?}, safe={:?}, finalized={:?}", head, safe, finalized);
         self.head_block_hash = head;
         if let Some(s) = safe {
             self.safe_block_hash = s;

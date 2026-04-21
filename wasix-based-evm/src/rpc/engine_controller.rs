@@ -1,4 +1,4 @@
-use crate::info;
+use crate::{info, debug};
 use alloy_rpc_types::engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, 
     ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
@@ -127,9 +127,9 @@ pub struct EngineController {
 #[async_trait]
 impl EngineRpcServer for EngineController {
     async fn exchange_capabilities(&self, capabilities: Vec<String>) -> RpcResult<Vec<String>> {
-        info!("[RPC] engine_exchangeCapabilities: capabilities={:?}", capabilities);
+        debug!("[RPC] engine_exchangeCapabilities: capabilities={:?}", capabilities);
         let result = self.service.exchange_capabilities(capabilities).await?;
-        info!("[RPC] engine_exchangeCapabilities result: {:?}", result);
+        debug!("[RPC] engine_exchangeCapabilities result: {:?}", result);
         Ok(result)
     }
 
@@ -138,9 +138,9 @@ impl EngineRpcServer for EngineController {
         forkchoice_state: ForkchoiceState,
         payload_attributes: Option<PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        info!("[RPC] engine_forkchoiceUpdatedV1: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
+        debug!("[RPC] engine_forkchoiceUpdatedV1: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let result = self.service.forkchoice_updated_v1(forkchoice_state, payload_attributes).await?;
-        info!("[RPC] engine_forkchoiceUpdatedV1 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
+        debug!("[RPC] engine_forkchoiceUpdatedV1 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
         Ok(result)
     }
 
@@ -149,9 +149,9 @@ impl EngineRpcServer for EngineController {
         forkchoice_state: ForkchoiceState,
         payload_attributes: Option<PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        info!("[RPC] engine_forkchoiceUpdatedV2: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
+        debug!("[RPC] engine_forkchoiceUpdatedV2: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let result = self.service.forkchoice_updated_v2(forkchoice_state, payload_attributes).await?;
-        info!("[RPC] engine_forkchoiceUpdatedV2 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
+        debug!("[RPC] engine_forkchoiceUpdatedV2 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
         Ok(result)
     }
 
@@ -160,9 +160,9 @@ impl EngineRpcServer for EngineController {
         forkchoice_state: ForkchoiceState,
         payload_attributes: Option<PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        info!("[RPC] engine_forkchoiceUpdatedV3: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
+        debug!("[RPC] engine_forkchoiceUpdatedV3: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let result = self.service.forkchoice_updated_v3(forkchoice_state, payload_attributes).await?;
-        info!("[RPC] engine_forkchoiceUpdatedV3 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
+        debug!("[RPC] engine_forkchoiceUpdatedV3 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
         Ok(result)
     }
 
@@ -171,9 +171,9 @@ impl EngineRpcServer for EngineController {
         forkchoice_state: ForkchoiceState,
         payload_attributes: Option<PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
-        info!("[RPC] engine_forkchoiceUpdatedV4: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
+        debug!("[RPC] engine_forkchoiceUpdatedV4: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let result = self.service.forkchoice_updated_v4(forkchoice_state, payload_attributes).await?;
-        info!("[RPC] engine_forkchoiceUpdatedV4 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
+        debug!("[RPC] engine_forkchoiceUpdatedV4 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
         Ok(result)
     }
 
@@ -181,30 +181,30 @@ impl EngineRpcServer for EngineController {
         &self,
         config: TransitionConfiguration,
     ) -> RpcResult<TransitionConfiguration> {
-        info!("[RPC] engine_exchangeTransitionConfigurationV1: config={:?}", config);
+        debug!("[RPC] engine_exchangeTransitionConfigurationV1: config={:?}", config);
         let result = self.service.exchange_transition_configuration_v1(config).await?;
-        info!("[RPC] engine_exchangeTransitionConfigurationV1 result: {:?}", result);
+        debug!("[RPC] engine_exchangeTransitionConfigurationV1 result: {:?}", result);
         Ok(result)
     }
 
     async fn get_blobs_v1(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
-        info!("[RPC] engine_getBlobsV1: count={}", indices.len());
+        debug!("[RPC] engine_getBlobsV1: count={}", indices.len());
         let result = self.service.get_blobs_v1(indices).await?;
-        info!("[RPC] engine_getBlobsV1 result count={}", result.len());
+        debug!("[RPC] engine_getBlobsV1 result count={}", result.len());
         Ok(result)
     }
 
     async fn get_blobs_v2(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
-        info!("[RPC] engine_getBlobsV2: count={}", indices.len());
+        debug!("[RPC] engine_getBlobsV2: count={}", indices.len());
         let result = self.service.get_blobs_v2(indices).await?;
-        info!("[RPC] engine_getBlobsV2 result count={}", result.len());
+        debug!("[RPC] engine_getBlobsV2 result count={}", result.len());
         Ok(result)
     }
 
     async fn get_blobs_v3(&self, indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
-        info!("[RPC] engine_getBlobsV3: count={}", indices.len());
+        debug!("[RPC] engine_getBlobsV3: count={}", indices.len());
         let result = self.service.get_blobs_v3(indices).await?;
-        info!("[RPC] engine_getBlobsV3 result count={}", result.len());
+        debug!("[RPC] engine_getBlobsV3 result count={}", result.len());
         Ok(result)
     }
 
@@ -212,9 +212,9 @@ impl EngineRpcServer for EngineController {
         &self,
         hashes: Vec<B256>,
     ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
-        info!("[RPC] engine_getPayloadBodiesByHashV1: count={}", hashes.len());
+        debug!("[RPC] engine_getPayloadBodiesByHashV1: count={}", hashes.len());
         let result = self.service.get_payload_bodies_by_hash_v1(hashes).await?;
-        info!("[RPC] engine_getPayloadBodiesByHashV1 result count={}", result.len());
+        debug!("[RPC] engine_getPayloadBodiesByHashV1 result count={}", result.len());
         Ok(result)
     }
 
@@ -222,9 +222,9 @@ impl EngineRpcServer for EngineController {
         &self,
         hashes: Vec<B256>,
     ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
-        info!("[RPC] engine_getPayloadBodiesByHashV2: count={}", hashes.len());
+        debug!("[RPC] engine_getPayloadBodiesByHashV2: count={}", hashes.len());
         let result = self.service.get_payload_bodies_by_hash_v2(hashes).await?;
-        info!("[RPC] engine_getPayloadBodiesByHashV2 result count={}", result.len());
+        debug!("[RPC] engine_getPayloadBodiesByHashV2 result count={}", result.len());
         Ok(result)
     }
 
@@ -233,9 +233,9 @@ impl EngineRpcServer for EngineController {
         start: u64,
         count: u64,
     ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
-        info!("[RPC] engine_getPayloadBodiesByRangeV1: start={}, count={}", start, count);
+        debug!("[RPC] engine_getPayloadBodiesByRangeV1: start={}, count={}", start, count);
         let result = self.service.get_payload_bodies_by_range_v1(start, count).await?;
-        info!("[RPC] engine_getPayloadBodiesByRangeV1 result count={}", result.len());
+        debug!("[RPC] engine_getPayloadBodiesByRangeV1 result count={}", result.len());
         Ok(result)
     }
 
@@ -244,86 +244,86 @@ impl EngineRpcServer for EngineController {
         start: u64,
         count: u64,
     ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
-        info!("[RPC] engine_getPayloadBodiesByRangeV2: start={}, count={}", start, count);
+        debug!("[RPC] engine_getPayloadBodiesByRangeV2: start={}, count={}", start, count);
         let result = self.service.get_payload_bodies_by_range_v2(start, count).await?;
-        info!("[RPC] engine_getPayloadBodiesByRangeV2 result count={}", result.len());
+        debug!("[RPC] engine_getPayloadBodiesByRangeV2 result count={}", result.len());
         Ok(result)
     }
 
     async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
-        info!("[RPC] engine_getPayloadV1: payload_id={:?}", payload_id);
+        debug!("[RPC] engine_getPayloadV1: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v1(payload_id).await?;
-        info!("[RPC] engine_getPayloadV1 result: hash={:?}", result.block_hash);
+        debug!("[RPC] engine_getPayloadV1 result: hash={:?}", result.block_hash);
         Ok(result)
     }
 
     async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
-        info!("[RPC] engine_getPayloadV2: payload_id={:?}", payload_id);
+        debug!("[RPC] engine_getPayloadV2: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v2(payload_id).await?;
-        info!("[RPC] engine_getPayloadV2 blockValue: value={:?}", result.block_value);
+        debug!("[RPC] engine_getPayloadV2 blockValue: value={:?}", result.block_value);
         Ok(result)
     }
 
     async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3> {
-        info!("[RPC] engine_getPayloadV3: payload_id={:?}", payload_id);
+        debug!("[RPC] engine_getPayloadV3: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v3(payload_id).await?;
-        info!("[RPC] engine_getPayloadV3 result: hash={:?}", result.payload_inner.payload_inner.block_hash);
+        debug!("[RPC] engine_getPayloadV3 result: hash={:?}", result.payload_inner.payload_inner.block_hash);
         Ok(result)
     }
 
     async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
-        info!("[RPC] engine_getPayloadV4: payload_id={:?}", payload_id);
+        debug!("[RPC] engine_getPayloadV4: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v4(payload_id).await?;
-        info!("[RPC] engine_getPayloadV4 result: hash={:?}", result.payload_inner.payload_inner.payload_inner.block_hash);
+        debug!("[RPC] engine_getPayloadV4 result: hash={:?}", result.payload_inner.payload_inner.payload_inner.block_hash);
         Ok(result)
     }
 
     async fn get_payload_v5(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
-        info!("[RPC] engine_getPayloadV5: payload_id={:?}", payload_id);
+        debug!("[RPC] engine_getPayloadV5: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v5(payload_id).await?;
-        info!("[RPC] engine_getPayloadV5 result: hash={:?}", result.payload_inner.payload_inner.payload_inner.block_hash);
+        debug!("[RPC] engine_getPayloadV5 result: hash={:?}", result.payload_inner.payload_inner.payload_inner.block_hash);
         Ok(result)
     }
 
     async fn get_payload_v6(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
-        info!("[RPC] engine_getPayloadV6: payload_id={:?}", payload_id);
+        debug!("[RPC] engine_getPayloadV6: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v6(payload_id).await?;
-        info!("[RPC] engine_getPayloadV6 result: hash={:?}", result.payload_inner.payload_inner.payload_inner.block_hash);
+        debug!("[RPC] engine_getPayloadV6 result: hash={:?}", result.payload_inner.payload_inner.payload_inner.block_hash);
         Ok(result)
     }
 
     async fn new_payload_v1(&self, payload: ExecutionPayloadV1) -> RpcResult<PayloadStatus> {
-        info!("[RPC] engine_newPayloadV1: block_number={}, block_hash={:?}", payload.block_number, payload.block_hash);
+        debug!("[RPC] engine_newPayloadV1: block_number={}, block_hash={:?}", payload.block_number, payload.block_hash);
         let result = self.service.new_payload_v1(payload).await?;
-        info!("[RPC] engine_newPayloadV1 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
+        debug!("[RPC] engine_newPayloadV1 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
         Ok(result)
     }
 
     async fn new_payload_v2(&self, payload: ExecutionPayloadV2) -> RpcResult<PayloadStatus> {
-        info!("[RPC] engine_newPayloadV2: block_number={}, block_hash={:?}", payload.payload_inner.block_number, payload.payload_inner.block_hash);
+        debug!("[RPC] engine_newPayloadV2: block_number={}, block_hash={:?}", payload.payload_inner.block_number, payload.payload_inner.block_hash);
         let result = self.service.new_payload_v2(payload).await?;
-        info!("[RPC] engine_newPayloadV2 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
+        debug!("[RPC] engine_newPayloadV2 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
         Ok(result)
     }
 
     async fn new_payload_v3(&self, payload: ExecutionPayloadV3) -> RpcResult<PayloadStatus> {
-        info!("[RPC] engine_newPayloadV3: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.block_hash);
+        debug!("[RPC] engine_newPayloadV3: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.block_hash);
         let result = self.service.new_payload_v3(payload).await?;
-        info!("[RPC] engine_newPayloadV3 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
+        debug!("[RPC] engine_newPayloadV3 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
         Ok(result)
     }
 
     async fn new_payload_v4(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus> {
-        info!("[RPC] engine_newPayloadV4: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.payload_inner.block_hash);
+        debug!("[RPC] engine_newPayloadV4: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.payload_inner.block_hash);
         let result = self.service.new_payload_v4(payload).await?;
-        info!("[RPC] engine_newPayloadV4 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
+        debug!("[RPC] engine_newPayloadV4 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
         Ok(result)
     }
 
     async fn new_payload_v5(&self, payload: ExecutionPayloadV4) -> RpcResult<PayloadStatus> {
-        info!("[RPC] engine_newPayloadV5: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.payload_inner.block_hash);
+        debug!("[RPC] engine_newPayloadV5: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.payload_inner.block_hash);
         let result = self.service.new_payload_v5(payload).await?;
-        info!("[RPC] engine_newPayloadV5 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
+        debug!("[RPC] engine_newPayloadV5 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
         Ok(result)
     }
 

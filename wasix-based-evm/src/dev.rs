@@ -5,7 +5,7 @@ use crate::storage::storage::InMemoryStorage;
 use crate::storage::traits::StateProvider;
 use alloy_consensus::{Block, Header, transaction::SignerRecoverable};
 use alloy_primitives::{Bytes, B256, U256};
-use crate::{info, error};
+use crate::{info, debug, error};
 use crate::evm::executor::Executor;
 
 pub struct DevMode {
@@ -95,7 +95,7 @@ impl DevMode {
             },
         };
 
-        info!("[DevMode] Producing block #{} with {} transactions", number, transactions.len());
+        debug!("[DevMode] Producing block #{} with {} transactions", number, transactions.len());
 
         match self.executor.execute_block(&mut storage, transactions.clone(), block.clone()) {
             Ok(_) => {
@@ -104,7 +104,7 @@ impl DevMode {
                 storage.add_block(block);
                 storage.update_forkchoice(block_hash, Some(block_hash), Some(block_hash));
                 
-                info!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);
+                debug!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);
 
                 // Update mempool base fee (this will trigger revalidation and eviction if needed)
                 mempool.update_base_fee(new_base_fee, &*storage).await;

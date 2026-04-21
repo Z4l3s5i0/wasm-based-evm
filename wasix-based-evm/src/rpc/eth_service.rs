@@ -11,7 +11,7 @@ use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRe
 use alloy_rlp::{Encodable, Decodable};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
-use crate::{info, error};
+use crate::{info, error, debug};
 use crate::evm::executor::Executor;
 use crate::misc::error;
 use crate::misc::error::RpcError::Internal;
@@ -55,7 +55,7 @@ impl EthService {
     }
 
     pub async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<alloy_primitives::B256> {
-        info!("[EthService] eth_sendTransaction from: {:?}", request.from);
+        debug!("[EthService] eth_sendTransaction from: {:?}", request.from);
         
         let from = request.from.ok_or_else(|| error::RpcError::InvalidParams("from address is required".to_string()))?;
         
@@ -119,14 +119,14 @@ impl EthService {
         };
 
         let hash = tx.hash().clone();
-        info!("[EthService] Adding signed transaction {:?} to mempool", hash);
+        debug!("[EthService] Adding signed transaction {:?} to mempool", hash);
         self.mempool.write().await.add_transaction(tx.clone(), nonce);
 
         // Gossip the transaction to the P2P network
         let mut rlp_data = Vec::new();
         tx.encode(&mut rlp_data);
         if !rlp_data.is_empty() {
-            info!("[EthService] Gossiping transaction {:?}", hash);
+            debug!("[EthService] Gossiping transaction {:?}", hash);
             self.peer_manager.broadcast_gossip(rlp_data).await;
         } else {
             error!("[EthService] Failed to RLP-encode transaction {:?}", hash);
@@ -136,7 +136,7 @@ impl EthService {
     }
 
     pub async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<Bytes> {
-        info!("[EthService] eth_call: to={:?}, data_len={}", request.to, request.input.data.as_ref().map(|d| d.len()).unwrap_or(0));
+        debug!("[EthService] eth_call: to={:?}, data_len={}", request.to, request.input.data.as_ref().map(|d| d.len()).unwrap_or(0));
         
         let block_id = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let block = self.state_storage.block(block_id).await
@@ -185,7 +185,7 @@ impl EthService {
     }
 
     pub async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<U256> {
-        info!("[EthService] eth_estimateGas: to={:?}, data_len={}", request.to, request.input.data.as_ref().map(|d| d.len()).unwrap_or(0));
+        debug!("[EthService] eth_estimateGas: to={:?}, data_len={}", request.to, request.input.data.as_ref().map(|d| d.len()).unwrap_or(0));
         
         let block_id = block_id.unwrap_or(BlockId::Number(BlockNumberOrTag::Latest));
         let block = self.state_storage.block(block_id).await
@@ -237,7 +237,7 @@ impl EthService {
             .map_err(|e| error::RpcError::InvalidParams(format!("Invalid RLP: {}", e)))?;
         
         let hash = signed_tx.hash().clone();
-        info!("[EthService] eth_sendRawTransaction hash: {:?}", hash);
+        debug!("[EthService] eth_sendRawTransaction hash: {:?}", hash);
 
         let from = signed_tx.recover_signer().unwrap_or_default();
         let current_nonce = self.state_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest)).await
@@ -249,7 +249,7 @@ impl EthService {
         let mut rlp_data = Vec::new();
         signed_tx.encode(&mut rlp_data);
         if !rlp_data.is_empty() {
-            info!("[EthService] Gossiping transaction {:?}", hash);
+            debug!("[EthService] Gossiping transaction {:?}", hash);
             self.peer_manager.broadcast_gossip(rlp_data).await;
         }
 

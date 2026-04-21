@@ -4,7 +4,7 @@ use crate::misc::error::{RpcError, RpcResult};
 use crate::rpc::engine_mapper::EngineMapper;
 use crate::storage::storage::InMemoryStorage;
 use crate::sync::controller::SyncController;
-use crate::{error, info};
+use crate::{error, info, debug};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, Transaction, TxEnvelope};
 use alloy_primitives::{Bytes, B256, U256};
 use alloy_rlp::Decodable;
@@ -208,7 +208,7 @@ impl EngineService {
         payload_attributes: Option<PayloadAttributes>,
         _version: u8,
     ) -> RpcResult<ForkchoiceUpdated> {
-        info!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
+        debug!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let mut storage = self.storage.write().await;
 
         // Save current forkchoice state for potential rollback
@@ -254,13 +254,13 @@ impl EngineService {
 
     async fn determine_payload_status(&self, storage: &InMemoryStorage, head_block_hash: B256) -> PayloadStatus {
         if let Some(head_block) = storage.get_block_by_hash(head_block_hash) {
-            info!("[EngineService] Head block found in storage: #{} hash={:?}", head_block.header.number, head_block_hash);
+            debug!("[EngineService] Head block found in storage: #{} hash={:?}", head_block.header.number, head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),
             }
         } else if let Some((payload_block, _)) = storage.payloads.values().find(|(b, _)| b.header.hash_slow() == head_block_hash) {
-            info!("[EngineService] Head block found in payload map: #{} hash={:?}", payload_block.header.number, head_block_hash);
+            debug!("[EngineService] Head block found in payload map: #{} hash={:?}", payload_block.header.number, head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),
@@ -269,14 +269,14 @@ impl EngineService {
             // Check if requested head is actually the genesis block (by hash)
             let genesis_hash = storage.get_block_by_number(0).map(|b| b.header.hash_slow());
             if genesis_hash == Some(head_block_hash) {
-                info!("[EngineService] Head block is GENESIS: hash={:?}", head_block_hash);
+                debug!("[EngineService] Head block is GENESIS: hash={:?}", head_block_hash);
                 PayloadStatus {
                     status: PayloadStatusEnum::Valid,
                     latest_valid_hash: Some(head_block_hash),
                 }
             } else {
                 let local_head_hash = storage.head_block_hash;
-                info!("[EngineService] Head block NOT found: requested_hash={:?}. Local head is {:?} (genesis is {:?}). Returning Syncing.", 
+                debug!("[EngineService] Head block NOT found: requested_hash={:?}. Local head is {:?} (genesis is {:?}). Returning Syncing.", 
                     head_block_hash, local_head_hash, genesis_hash);
 
                 // Trigger sync for missing head
@@ -303,7 +303,7 @@ impl EngineService {
         status: &PayloadStatus,
     ) -> RpcResult<Option<PayloadId>> {
         if status.status == PayloadStatusEnum::Syncing {
-            info!("[EngineService] Cannot build payload: head block missing (status is Syncing)");
+            debug!("[EngineService] Cannot build payload: head block missing (status is Syncing)");
             return Ok(None);
         }
 
@@ -343,7 +343,7 @@ impl EngineService {
         ).map_err(|e| RpcError::Internal(format!("Failed to build block: {}", e)))?;
 
         storage.add_payload(id, finalized_block, receipts);
-        info!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
+        debug!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
         
         Ok(Some(id))
     }
@@ -441,7 +441,7 @@ impl EngineService {
         payload_v1: ExecutionPayloadV1,
         withdrawals: Option<Vec<alloy_rpc_types::Withdrawal>>,
     ) -> RpcResult<PayloadStatus> {
-        info!("[EngineService] newPayload: block_number={}, block_hash={:?}, parent_hash={:?}", payload_v1.block_number, payload_v1.block_hash, payload_v1.parent_hash);
+        debug!("[EngineService] newPayload: block_number={}, block_hash={:?}, parent_hash={:?}", payload_v1.block_number, payload_v1.block_hash, payload_v1.parent_hash);
         
         // 1. Convert ExecutionPayload to Block
         let transactions = self.decode_transactions(&payload_v1.transactions)?;
@@ -493,7 +493,7 @@ impl EngineService {
         if storage.get_block_by_hash(parent_hash).is_none() {
             let genesis_hash = storage.get_block_by_number(0).map(|b| b.header.hash_slow());
             if Some(parent_hash) != genesis_hash {
-                info!("[EngineService] Parent block not found: requested_parent={:?}, genesis={:?}", parent_hash, genesis_hash);
+                debug!("[EngineService] Parent block not found: requested_parent={:?}, genesis={:?}", parent_hash, genesis_hash);
                 return Some(PayloadStatus {
                     status: PayloadStatusEnum::Syncing,
                     latest_valid_hash: None,

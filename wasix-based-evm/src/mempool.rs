@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use alloy_primitives::{Address, B256, U256};
 use alloy_consensus::{TxEnvelope as Transaction, Transaction as _, transaction::SignerRecoverable as _};
 use crate::storage::traits::StateProvider;
-use crate::info;
+use crate::{info, debug};
 
 #[derive(Debug, Default, Clone)]
 pub struct Mempool {
@@ -39,7 +39,7 @@ impl Mempool {
         let tx_nonce = tx.nonce();
 
         if tx_nonce < current_nonce {
-            info!("[Mempool] Rejecting transaction {:?} (nonce: {}) because it is below current nonce ({})", hash, tx_nonce, current_nonce);
+            debug!("[Mempool] Rejecting transaction {:?} (nonce: {}) because it is below current nonce ({})", hash, tx_nonce, current_nonce);
             return false;
         }
 

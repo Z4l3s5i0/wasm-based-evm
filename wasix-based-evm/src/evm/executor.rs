@@ -98,7 +98,7 @@ impl Executor {
 
             match result {
                 Ok(value) => {
-                    info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}", tx.hash(), value.used_gas);
+                    debug!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}", tx.hash(), value.used_gas);
                     cumulative_gas_used += value.used_gas.as_u64();
                     
                     let (_, changeset) = overlayed.deconstruct();
@@ -109,7 +109,7 @@ impl Executor {
                     results.push(value);
                 }
                 Err(e) => {
-                    info!("[Executor] Transaction execution failed: hash={:?}, error={:?}", tx.hash(), e);
+                    debug!("[Executor] Transaction execution failed: hash={:?}, error={:?}", tx.hash(), e);
                     return Err(format!("Transaction execution failed: {:?}", e));
                 }
             }
@@ -326,7 +326,7 @@ impl Executor {
             
             if let Some(account) = storage.backend.state.get_mut(&h160_addr) {
                 account.balance += evm_amount_wei;
-                info!("[Executor] Applied withdrawal: address={:?}, amount={} Gwei", addr, withdrawal.amount);
+                debug!("[Executor] Applied withdrawal: address={:?}, amount={} Gwei", addr, withdrawal.amount);
             } else {
                 storage.backend.state.insert(h160_addr, InMemoryAccount {
                     balance: evm_amount_wei,
@@ -335,13 +335,13 @@ impl Executor {
                     storage: std::collections::BTreeMap::new(),
                     transient_storage: std::collections::BTreeMap::new(),
                 });
-                info!("[Executor] Applied withdrawal (new account): address={:?}, amount={} Gwei", addr, withdrawal.amount);
+                debug!("[Executor] Applied withdrawal (new account): address={:?}, amount={} Gwei", addr, withdrawal.amount);
             }
         }
 
         let block_number = finalized_block.header.number;
         storage.add_block(finalized_block);
-        info!("[Executor] Block finalized and saved to storage: number={:?}", block_number);
+        debug!("[Executor] Block finalized and saved to storage: number={:?}", block_number);
     }
 
     pub fn execute_block_for_payload(

@@ -40,7 +40,7 @@ pub struct PeerManager {
 #[async_trait::async_trait]
 impl DiscoveryApiServer for PeerManager {
     async fn hello(&self, peer_id: String, discovery_addr: String, p2p_addr: String) -> RpcResult<HelloResponse> {
-        info!("[P2P] Received hello from {} (discovery_addr: {}, p2p_addr: {})", peer_id, discovery_addr, p2p_addr);
+        debug!("[P2P] Received hello from {} (discovery_addr: {}, p2p_addr: {})", peer_id, discovery_addr, p2p_addr);
         
         let peers_lock = self.peers.read().await;
         let is_already_bonded = peers_lock.contains_key(&peer_id);
@@ -198,7 +198,7 @@ impl PeerManager {
     }
 
     async fn discover_peers(&self) {
-        info!("[P2P] Starting peer discovery cycle...");
+        debug!("[P2P] Starting peer discovery cycle...");
         let peers_lock = self.peers.read().await;
         let peer_list: Vec<(String, String)> = peers_lock.iter()
             .map(|(id, info)| (id.clone(), info.discovery_url.clone()))
@@ -206,16 +206,16 @@ impl PeerManager {
         drop(peers_lock);
         
         if peer_list.is_empty() {
-             info!("[P2P] No peers currently known, cannot discover more.");
+             debug!("[P2P] No peers currently known, cannot discover more.");
              return;
         }
 
         for (id, url) in peer_list {
             let client = RpcClient::new(url.clone());
-            info!("[P2P] Requesting peer list from {} ({})", id, url);
+            debug!("[P2P] Requesting peer list from {} ({})", id, url);
             match client.get_peers().await {
                 Ok(new_peers) => {
-                    info!("[P2P] Received {} peers from {}", new_peers.len(), id);
+                    debug!("[P2P] Received {} peers from {}", new_peers.len(), id);
                     for p in new_peers {
                         if let Ok(addr) = p.discovery_addr.parse::<SocketAddr>() {
                             if p.peer_id != self.local_identity.peer_id() {
@@ -227,13 +227,13 @@ impl PeerManager {
                         }
                     }
                 }
-                Err(e) => info!("[P2P] Failed to get peers from {}: {}", id, e),
+                Err(e) => debug!("[P2P] Failed to get peers from {}: {}", id, e),
             }
         }
     }
 
     async fn cleanup_stale_peers(&self) {
-        info!("[P2P] Starting health check / cleanup cycle...");
+        debug!("[P2P] Starting health check / cleanup cycle...");
         let peers_lock = self.peers.read().await;
         let peer_list: Vec<(String, String)> = peers_lock.iter()
             .map(|(id, info)| (id.clone(), info.discovery_url.clone()))
@@ -247,14 +247,14 @@ impl PeerManager {
             match client.ping().await {
                 Ok(res) => {
                     if res == "pong" {
-                        info!("[P2P] Peer {} is active (received pong)", id);
+                        debug!("[P2P] Peer {} is active (received pong)", id);
                     } else {
-                        info!("[P2P] Peer {} returned unexpected response: {}", id, res);
+                        debug!("[P2P] Peer {} returned unexpected response: {}", id, res);
                         to_remove.push(id);
                     }
                 }
                 Err(e) => {
-                    info!("[P2P] Peer {} is unreachable: {}. Removing from active pool.", id, e);
+                    debug!("[P2P] Peer {} is unreachable: {}. Removing from active pool.", id, e);
                     to_remove.push(id);
                 }
             }
@@ -264,11 +264,11 @@ impl PeerManager {
             let mut peers_lock = self.peers.write().await;
             for id in to_remove {
                 peers_lock.remove(&id);
-                info!("[P2P] Successfully removed stale peer {}", id);
+                debug!("[P2P] Successfully removed stale peer {}", id);
             }
-            info!("[P2P] Current active peer count: {}", peers_lock.len());
+            debug!("[P2P] Current active peer count: {}", peers_lock.len());
         } else {
-            info!("[P2P] All peers are healthy.");
+            debug!("[P2P] All peers are healthy.");
         }
     }
 
@@ -290,7 +290,7 @@ impl PeerManager {
             }
             drop(peers_lock);
 
-            info!("[P2P] Attempting to bond with peer at {}", addr);
+            debug!("[P2P] Attempting to bond with peer at {}", addr);
             let discovery_url = format!("http://{}", addr);
             
             // Determine our own public address to share
@@ -302,15 +302,15 @@ impl PeerManager {
             match client.hello(local_id, my_discovery_addr, my_p2p_addr).await {
                 Ok(resp) => {
                     let remote_id = resp.peer_id;
-                    info!("[P2P] Bonding successful with {} (PeerId: {})", addr, remote_id);
+                    debug!("[P2P] Bonding successful with {} (PeerId: {})", addr, remote_id);
                     
                     let mut peers_lock = peers_inner.write().await;
                     if peers_lock.contains_key(&remote_id) {
-                        info!("[P2P] Already bonded to peer {}", remote_id);
+                        debug!("[P2P] Already bonded to peer {}", remote_id);
                         return;
                     }
                     if peers_lock.len() >= MAX_PEERS {
-                        info!("[P2P] Max peers reached ({}), dropping bonded peer {}", MAX_PEERS, remote_id);
+                        debug!("[P2P] Max peers reached ({}), dropping bonded peer {}", MAX_PEERS, remote_id);
                         return;
                     }
                     
@@ -322,14 +322,14 @@ impl PeerManager {
                     });
                     let p2p_url = format!("http://{}", p2p_addr);
 
-                    info!("[P2P] Saving peer record: ID={}, DiscoveryAddr={}, P2pAddr={}", remote_id, discovery_addr, p2p_addr);
+                    debug!("[P2P] Saving peer record: ID={}, DiscoveryAddr={}, P2pAddr={}", remote_id, discovery_addr, p2p_addr);
                     peers_lock.insert(remote_id.clone(), PeerInfo { 
                         discovery_addr,
                         p2p_addr,
                         discovery_url: discovery_url.clone(),
                         p2p_url,
                     });
-                    info!("[P2P] Active peer pool size: {}", peers_lock.len());
+                    debug!("[P2P] Active peer pool size: {}", peers_lock.len());
                 }
                 Err(e) => error!("[P2P] Bonding failed with {}: {}", addr, e),
             }

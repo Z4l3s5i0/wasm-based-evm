@@ -55,7 +55,7 @@ impl SyncController {
         info!("[Sync] Manual sync trigger received");
         let result = self.sync_step().await;
         if result.is_ok() {
-            info!("[Sync] Manual sync step completed successfully");
+            debug!("[Sync] Manual sync step completed successfully");
         } else {
             error!("[Sync] Manual sync step failed: {:?}", result.as_ref().err());
         }
@@ -106,7 +106,7 @@ impl SyncController {
                             let local_ancestor_hash = self.storage.read().await.get_block_hash(ancestor_height).unwrap_or_default();
                             match self.downloader.get_block_hash(&best_peer_url, ancestor_height).await {
                                 Ok(Some(peer_ancestor_hash)) if peer_ancestor_hash == local_ancestor_hash => {
-                                    info!("[Sync] Common ancestor found at height {}", ancestor_height);
+                                    debug!("[Sync] Common ancestor found at height {}", ancestor_height);
                                     break;
                                 }
                                 _ => ancestor_height -= 1,
@@ -119,7 +119,7 @@ impl SyncController {
                             storage_write.revert_to_height(ancestor_height)
                         };
                         
-                        info!("[Sync] Reverted {} blocks. Re-adding {} transactions to mempool", local_height - ancestor_height, reverted_txs.len());
+                        debug!("[Sync] Reverted {} blocks. Re-adding {} transactions to mempool", local_height - ancestor_height, reverted_txs.len());
                         {
                             let mut mempool_write = self.mempool.write().await;
                             let storage_read = self.storage.read().await;
@@ -142,7 +142,7 @@ impl SyncController {
             }
 
             if best_height > local_height {
-                info!("[Sync] Found better peer with height {} (local: {})", best_height, local_height);
+                debug!("[Sync] Found better peer with height {} (local: {})", best_height, local_height);
                 self.sync_range(&best_peer_url, local_height + 1, best_height).await?;
             }
         } else {
@@ -153,7 +153,7 @@ impl SyncController {
     }
 
     async fn sync_range(&self, peer_url: &str, start: u64, end: u64) -> anyhow::Result<()> {
-        info!("[Sync] Starting sync range: {} to {}", start, end);
+        debug!("[Sync] Starting sync range: {} to {}", start, end);
         self.is_syncing.store(true, Ordering::SeqCst);
         self.highest_block.store(end, Ordering::SeqCst);
         
@@ -178,7 +178,7 @@ impl SyncController {
             };
 
             if !parent_exists && next_block_num > 0 {
-                info!("[Sync] Parent block {:?} for {} missing, fetching ancestors", parent_hash, next_block_num);
+                debug!("[Sync] Parent block {:?} for {} missing, fetching ancestors", parent_hash, next_block_num);
                 self.fetch_ancestors(peer_url, parent_hash).await?;
             }
 
