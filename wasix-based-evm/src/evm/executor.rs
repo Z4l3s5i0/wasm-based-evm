@@ -59,6 +59,7 @@ impl Executor {
         // Update backend environment for the current block
         storage.backend.environment.block_number = EvmU256::from(block.header.number);
         storage.backend.environment.block_timestamp = EvmU256::from(block.header.timestamp);
+        storage.backend.environment.block_base_fee_per_gas = alloy_u256_to_evm_u256(U256::from(block.header.base_fee_per_gas.unwrap_or(0)));
 
         let mut results = Vec::new();
         let mut receipts = Vec::new();
