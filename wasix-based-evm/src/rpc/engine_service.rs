@@ -5,7 +5,7 @@ use crate::rpc::engine_mapper::EngineMapper;
 use crate::storage::storage::InMemoryStorage;
 use crate::sync::controller::SyncController;
 use crate::{error, info};
-use alloy_consensus::{Block, Header, Transaction, TxEnvelope};
+use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, Transaction, TxEnvelope};
 use alloy_primitives::{Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_rpc_types::engine::{
@@ -81,7 +81,7 @@ impl EngineService {
     }
 
     pub async fn get_blobs_v1(&self, _indices: Vec<B256>) -> RpcResult<Vec<Option<String>>> {
-        // Blobs are not yet supported in this execution engine.
+        // TODO Blobs are not yet supported in this execution engine.
         // Returning a vector of None for the requested indices to indicate unavailability.
         Ok(vec![None; _indices.len()])
     }
@@ -143,20 +143,18 @@ impl EngineService {
 
     pub async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3> {
         let storage = self.storage.read().await;
-        let block = storage.get_payload(&payload_id)
-            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?
-            .clone();
+        let (block, _) = storage.get_payload(&payload_id)
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
-        Ok(EngineMapper::to_execution_payload_v3(&block))
+        Ok(EngineMapper::to_execution_payload_v3(&block.clone()))
     }
 
     pub async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
         let storage = self.storage.read().await;
-        let block = storage.get_payload(&payload_id)
-            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?
-            .clone();
+        let (block, _) = storage.get_payload(&payload_id)
+            .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
-        Ok(EngineMapper::to_execution_payload_v4(&block))
+        Ok(EngineMapper::to_execution_payload_v4(&block.clone()))
     }
 
     pub async fn get_payload_v5(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
@@ -261,7 +259,7 @@ impl EngineService {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),
             }
-        } else if let Some(payload_block) = storage.payloads.values().find(|b| b.header.hash_slow() == head_block_hash) {
+        } else if let Some((payload_block, _)) = storage.payloads.values().find(|(b, _)| b.header.hash_slow() == head_block_hash) {
             info!("[EngineService] Head block found in payload map: #{} hash={:?}", payload_block.header.number, head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
@@ -315,18 +313,12 @@ impl EngineService {
             .or_else(|| {
                 // Fallback to payloads map if head is not in storage yet
                 storage.payloads.values()
-                    .find(|b| b.header.hash_slow() == head_block_hash)
-                    .cloned()
+                    .find(|(b, _)| b.header.hash_slow() == head_block_hash)
+                    .map(|(b, _)| b.clone())
             })
             .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found for payload building: {:?}", head_block_hash)))?;
 
         if attr.timestamp <= parent_block.header.timestamp {
-            // This is a bit tricky: we need to return a ForkchoiceUpdated with INVALID status
-            // but our current function signature returns RpcResult<Option<PayloadId>>.
-            // Let's reconsider the split or use a special error/return type.
-            // For now, let's keep the validation in forkchoice_updated if it's too complex to split.
-            // Actually, we can return a custom error and handle it in forkchoice_updated.
-            // But let's look at what the original code did.
             return Err(RpcError::InvalidParams("Invalid timestamp".to_string()));
         }
 
@@ -338,10 +330,11 @@ impl EngineService {
         // Build block logic
         let transactions = {
             let mempool = self.mempool.read().await;
+            //TODO calculate how many actually fit in the block
             mempool.peek_transactions(50) // Take top 50 transactions
         };
 
-        let finalized_block = self.executor.execute_block_for_payload(
+        let (finalized_block, receipts) = self.executor.execute_block_for_payload(
             storage,
             transactions,
             &parent_block.header,
@@ -349,7 +342,7 @@ impl EngineService {
             base_fee_per_gas,
         ).map_err(|e| RpcError::Internal(format!("Failed to build block: {}", e)))?;
 
-        storage.add_payload(id, finalized_block);
+        storage.add_payload(id, finalized_block, receipts);
         info!("[EngineService] Created payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
         
         Ok(Some(id))
@@ -401,26 +394,22 @@ impl EngineService {
 
     pub async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
         let storage = self.storage.read().await;
-        let block = storage.get_payload(&payload_id)
+        let (block, _) = storage.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(EngineMapper::to_execution_payload_v1(block))
     }
 
-    pub fn calculate_block_value(&self, block: &Block<TxEnvelope>) -> U256 {
+    pub fn calculate_block_value(&self, block: &Block<TxEnvelope>, receipts: &[Receipt]) -> U256 {
         let mut total_value = U256::ZERO;
         let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
 
-        for tx in &block.body.transactions {
-            let gas_used = tx.gas_limit(); // Using gas_limit as an approximation if we don't have execution results here, 
-                                          // but for get_payload we should ideally have the actual gas used if it was already executed.
-                                          // However, EngineService seems to store the Block.
+        let mut prev_cumulative_gas = 0u64;
+        for (tx, receipt) in block.body.transactions.iter().zip(receipts.iter()) {
+            let cumulative_gas = receipt.receipt.cumulative_gas_used;
+            let gas_used = cumulative_gas.saturating_sub(prev_cumulative_gas);
+            prev_cumulative_gas = cumulative_gas;
             
-            // In a real implementation, we'd need the actual gas used per transaction.
-            // If this is a pending block being built, we might not have it yet.
-            // But get_payload is called AFTER building.
-            
-            // For now, let's use a simplified version:
             let effective_gas_price = tx.max_fee_per_gas(); 
             let priority_fee = effective_gas_price.saturating_sub(base_fee as u128);
             total_value += U256::from(gas_used as u128 * priority_fee);
@@ -430,11 +419,11 @@ impl EngineService {
 
     pub async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
         let storage = self.storage.read().await;
-        let block = storage.get_payload(&payload_id)
+        let (block, receipts) = storage.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         let execution_payload = EngineMapper::to_execution_payload_v2(block);
-        let block_value = self.calculate_block_value(block);
+        let block_value = self.calculate_block_value(block, receipts);
         
         Ok(EngineMapper::to_execution_payload_envelope_v2(execution_payload, block_value))
     }

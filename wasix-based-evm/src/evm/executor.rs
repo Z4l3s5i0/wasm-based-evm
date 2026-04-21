@@ -351,7 +351,7 @@ impl Executor {
         parent_header: &Header,
         attr: &alloy_rpc_types::engine::PayloadAttributes,
         base_fee_per_gas: Option<u64>,
-    ) -> Result<Block<TxEnvelope>, String> {
+    ) -> Result<(Block<TxEnvelope>, Vec<Receipt>), String> {
         let block_number = parent_header.number + 1;
         
         // Mock a block for execute_with_changeset
@@ -407,10 +407,10 @@ impl Executor {
             requests_hash: None,
         };
 
-        Ok(Block {
+        Ok((Block {
             header: finalized_header,
             body: mock_block.body,
-        })
+        }, receipts))
     }
 
     pub fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {

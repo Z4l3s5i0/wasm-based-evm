@@ -73,7 +73,7 @@ pub struct InMemoryStorage {
     pub safe_block_hash: B256,
     pub finalized_block_hash: B256,
     pub snapshots: BTreeMap<u64, InMemoryBackend>,
-    pub payloads: HashMap<PayloadId, Block<Transaction>>,
+    pub payloads: HashMap<PayloadId, (Block<Transaction>, Vec<Receipt>)>,
 }
 
 impl InMemoryStorage {
@@ -517,15 +517,15 @@ impl InMemoryStorage {
         }
     }
 
-    pub fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>) {
-        self.payloads.insert(payload_id, block);
+    pub fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>) {
+        self.payloads.insert(payload_id, (block, receipts));
     }
 
-    pub fn get_payload(&self, payload_id: &PayloadId) -> Option<&Block<Transaction>> {
+    pub fn get_payload(&self, payload_id: &PayloadId) -> Option<&(Block<Transaction>, Vec<Receipt>)> {
         self.payloads.get(payload_id)
     }
 
-    pub fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<Block<Transaction>> {
+    pub fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)> {
         self.payloads.remove(payload_id)
     }
 
