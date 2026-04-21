@@ -451,3 +451,110 @@ impl Mempool {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::{TxLegacy, SignableTransaction};
+
+    #[test]
+    fn test_mempool_new() {
+        let mempool = Mempool::new(U256::from(100));
+        assert_eq!(mempool.base_fee, U256::from(100));
+        assert!(mempool.is_empty());
+    }
+
+    #[test]
+    fn test_add_transaction_nonce_low() {
+        let mut mempool = Mempool::new(U256::from(0));
+        let tx = Transaction::Legacy(TxLegacy {
+            nonce: 5,
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+        
+        // current_nonce = 10, tx_nonce = 5 -> should be rejected (false)
+        assert!(!mempool.add_transaction(tx, 10));
+        assert!(mempool.is_empty());
+    }
+
+    #[test]
+    fn test_add_transaction_pending() {
+        let mut mempool = Mempool::new(U256::from(0));
+        let tx = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+        
+        // current_nonce = 10, tx_nonce = 10 -> should be pending
+        assert!(mempool.add_transaction(tx, 10));
+        assert_eq!(mempool.len(), 1);
+        assert_eq!(mempool.pending_transactions.len(), 1);
+    }
+
+    #[test]
+    fn test_add_transaction_queued() {
+        let mut mempool = Mempool::new(U256::from(0));
+        let tx = Transaction::Legacy(TxLegacy {
+            nonce: 15,
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+        
+        // current_nonce = 10, tx_nonce = 15 -> should be queued
+        assert!(mempool.add_transaction(tx, 10));
+        assert_eq!(mempool.len(), 1);
+        assert_eq!(mempool.queued_transactions.len(), 1);
+    }
+
+    #[test]
+    fn test_promote_queued() {
+        let mut mempool = Mempool::new(U256::from(0));
+        let tx = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+        let addr = tx.recover_signer().unwrap();
+        
+        mempool.queued_transactions.entry(addr).or_default().push_back(tx);
+        assert_eq!(mempool.queued_transactions.len(), 1);
+        
+        mempool.promote_queued(addr, 10);
+        assert_eq!(mempool.queued_transactions.len(), 0);
+        assert_eq!(mempool.pending_transactions.len(), 1);
+    }
+
+    #[test]
+    fn test_remove_transactions() {
+        let mut mempool = Mempool::new(U256::from(0));
+        let tx = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+        let hash = *tx.hash();
+        
+        mempool.add_transaction(tx, 10);
+        assert_eq!(mempool.len(), 1);
+        
+        mempool.remove_transactions(&[hash]);
+        assert_eq!(mempool.len(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_revalidate() {
+        use crate::storage::storage::InMemoryStorage;
+        use crate::evm::ev::EvmU256;
+        let mut mempool = Mempool::new(U256::from(100));
+        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        
+        let tx = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            gas_price: 50, // Below base fee (100)
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+        
+        mempool.add_transaction(tx, 10);
+        assert_eq!(mempool.len(), 1);
+        
+        mempool.revalidate(&storage).await;
+        assert_eq!(mempool.len(), 0); // Should be evicted due to low fee
+    }
+}

@@ -41,3 +41,27 @@ impl BlockProcessor {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::evm::ev::EvmU256;
+
+    #[tokio::test]
+    async fn test_process_block_empty() {
+        let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
+        let executor = Arc::new(Executor::new());
+        let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
+        let processor = BlockProcessor::new(storage.clone(), executor, mempool);
+        
+        let mut block: Block<Transaction> = Block::default();
+        block.header.number = 1;
+        // Need to set parent hash to genesis hash or it might fail if there's parent validation
+        let genesis_hash = storage.read().await.head_block_hash;
+        block.header.parent_hash = genesis_hash;
+        
+        let result = processor.process_block(block).await;
+        assert!(result.is_ok());
+        assert_eq!(storage.read().await.get_latest_block_number(), 1);
+    }
+}

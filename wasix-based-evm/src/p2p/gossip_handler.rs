@@ -99,3 +99,46 @@ impl GossipHandler {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tokio::sync::mpsc;
+    use crate::storage::storage::InMemoryStorage;
+    use crate::evm::ev::EvmU256;
+    use crate::evm::executor::Executor;
+    use crate::identity::identity::Identity;
+    use alloy_primitives::{U256, Address};
+    use alloy_consensus::TxLegacy;
+    use alloy_consensus::SignableTransaction;
+
+    async fn setup_gossip_handler() -> (GossipHandler, mpsc::Sender<Vec<u8>>) {
+        let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
+        let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
+        let identity = Identity::new(None, None).unwrap();
+        let (peer_manager, _) = PeerManager::new(identity, storage.clone(), 0, 0, None, vec![]).unwrap();
+        let peer_manager = Arc::new(peer_manager);
+        let executor = Arc::new(Executor::new());
+        let sync_engine = Arc::new(SyncController::new(storage.clone(), mempool.clone(), peer_manager.clone(), executor));
+        let (tx, rx) = mpsc::channel(10);
+        
+        (GossipHandler::new(mempool, peer_manager, sync_engine, rx), tx)
+    }
+
+    #[tokio::test]
+    async fn test_handle_transaction_gossip() {
+        let (handler, _tx_chan) = setup_gossip_handler().await;
+        
+        let tx = Transaction::Legacy(TxLegacy {
+            nonce: 0,
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+        
+        let mut data = Vec::new();
+        alloy_rlp::Encodable::encode(&tx, &mut data);
+        
+        let result = handler.handle_message(data).await;
+        assert!(result.is_ok());
+        assert_eq!(handler.mempool.read().await.len(), 1);
+    }
+}

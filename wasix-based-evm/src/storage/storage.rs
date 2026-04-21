@@ -781,3 +781,106 @@ impl StateProvider for InMemoryStorage {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_primitives::address;
+    use alloy_consensus::SignableTransaction;
+
+    #[tokio::test]
+    async fn test_new_storage() {
+        let chain_id = EvmU256::from(1);
+        let storage = InMemoryStorage::new(chain_id);
+        assert_eq!(storage.backend.environment.chain_id, chain_id);
+        assert_eq!(storage.get_latest_block_number(), 0);
+    }
+
+    #[tokio::test]
+    async fn test_balance_management() {
+        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let addr = address!("0000000000000000000000000000000000000001");
+        let balance = U256::from(1000);
+        
+        storage.set_balance(addr, balance);
+        assert_eq!(storage.get_balance(addr), balance);
+        
+        let provider_balance = storage.balance(addr, BlockId::latest()).await.unwrap();
+        assert_eq!(provider_balance, balance);
+    }
+    
+    #[tokio::test]
+    async fn test_genesis_init() {
+        let chain_id = EvmU256::from(1);
+        let mut alloc = BTreeMap::new();
+        let addr = address!("0000000000000000000000000000000000000001");
+        alloc.insert(addr, GenesisAccount {
+            balance: U256::from(1000),
+            nonce: Some(1),
+            ..Default::default()
+        });
+        
+        let genesis_init = GenesisInit {
+            alloc,
+            config: ChainConfig::default(),
+            coinbase: None,
+            difficulty: None,
+            extra_data: None,
+            gas_limit: None,
+            nonce: None,
+            mixhash: None,
+            parent_hash: None,
+            timestamp: None,
+            number: None,
+        };
+        
+        let (storage, _block) = InMemoryStorage::create_from_genesis_init(chain_id, genesis_init);
+        assert_eq!(storage.get_balance(addr), U256::from(1000));
+        let acc = storage.account(addr, BlockId::latest()).await.unwrap().unwrap();
+        assert_eq!(acc.nonce, Some(1));
+    }
+
+    #[tokio::test]
+    async fn test_block_management() {
+        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut block: Block<Transaction> = Block::default();
+        block.header.number = 1;
+        let block_hash = block.header.hash_slow();
+        
+        storage.add_block(block.clone());
+        assert_eq!(storage.get_latest_block_number(), 1);
+        assert_eq!(storage.get_block_by_number(1).unwrap().header.number, 1);
+        assert_eq!(storage.get_block_by_hash(block_hash).unwrap().header.number, 1);
+        
+        storage.revert_to_height(0);
+        assert_eq!(storage.get_latest_block_number(), 0);
+        assert!(storage.get_block_by_number(1).is_none());
+    }
+
+    #[tokio::test]
+    async fn test_transaction_and_receipt() {
+        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let tx = Transaction::Legacy(alloy_consensus::TxLegacy::default().into_signed(alloy_primitives::Signature::test_signature()));
+        let tx_hash = *tx.hash();
+        
+        storage.add_transaction(tx.clone());
+        assert_eq!(storage.get_transaction_by_hash(tx_hash).unwrap().hash(), &tx_hash);
+        
+        let receipt = Receipt::default();
+        storage.add_receipt(tx_hash, receipt.clone());
+        assert!(storage.get_receipt_by_tx_hash(tx_hash).is_some());
+    }
+
+    #[tokio::test]
+    async fn test_forkchoice_update() {
+        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let h1 = B256::repeat_byte(1);
+        let h2 = B256::repeat_byte(2);
+        let h3 = B256::repeat_byte(3);
+        
+        storage.update_forkchoice(h1, Some(h2), Some(h3));
+        assert_eq!(storage.head_block_hash, h1);
+        assert_eq!(storage.safe_block_hash, h2);
+        assert_eq!(storage.finalized_block_hash, h3);
+    }
+}
+

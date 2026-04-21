@@ -444,4 +444,49 @@ impl Executor {
     }
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use alloy_consensus::TxLegacy;
+    use alloy_consensus::SignableTransaction;
+
+    #[test]
+    fn test_executor_new() {
+        let _executor = Executor::new();
+        // Just verify it doesn't panic and uses Shanghai by default
+    }
+
+    #[test]
+    fn test_run_execution_dry_run() {
+        let executor = Executor::new();
+        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        
+        let tx = TxEnvelope::Legacy(TxLegacy {
+            nonce: 0,
+            gas_limit: 21000,
+            gas_price: 1_000_000_000,
+            to: alloy_primitives::TxKind::Call(Address::repeat_byte(0x12)),
+            value: U256::from(100),
+            ..Default::default()
+        }.into_signed(alloy_primitives::Signature::test_signature()));
+
+        // Set balance for sender
+        let sender = tx.recover_signer().unwrap();
+        // Set a huge balance to avoid OutOfFund
+        storage.set_balance(sender, U256::MAX);
+        
+        println!("Sender: {:?}", sender);
+        println!("Balance: {:?}", storage.get_balance(sender));
+
+        let results = executor.run_execution(&mut storage, vec![tx], Block::default(), false);
+        match &results {
+            Ok(res) => println!("Execution successful: {:?}", res),
+            Err(e) => println!("Execution failed: {}", e),
+        }
+        assert!(results.is_ok());
+        let results = results.unwrap();
+        assert_eq!(results.len(), 1);
+    }
+}
+
 

@@ -382,3 +382,74 @@ impl EthService {
         Ok(storage.unwrap_or_default())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::identity::identity::Identity;
+    use crate::evm::ev::EvmU256;
+
+    async fn setup_eth_service() -> EthService {
+        use crate::storage::storage::StorageProvider;
+        let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
+        
+        let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
+        let identity = Identity::new(None, None).unwrap();
+        let (peer_manager, _) = PeerManager::new(identity, storage.clone(), 0, 0, None, vec![]).unwrap();
+        let peer_manager = Arc::new(peer_manager);
+        let executor = Arc::new(Executor::new());
+        let account_manager = Arc::new(AccountManager::new());
+        
+        let storage_provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
+        
+        let sync_engine = Arc::new(SyncController::new(storage.clone(), mempool.clone(), peer_manager.clone(), executor.clone()));
+
+        EthService {
+            state_storage: storage_provider,
+            mempool,
+            peer_manager,
+            executor: (*executor).clone(),
+            storage,
+            account_manager,
+            sync_engine,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_eth_gas_price() {
+        let service = setup_eth_service().await;
+        let gas_price = service.gas_price().await.unwrap();
+        assert_eq!(gas_price, U256::from(1_000_000_000u64));
+    }
+
+    #[tokio::test]
+    async fn test_eth_accounts() {
+        let service = setup_eth_service().await;
+        let accounts = service.accounts().await.unwrap();
+        assert!(accounts.is_empty());
+    }
+
+    #[tokio::test]
+    async fn test_eth_chain_id() {
+        let service = setup_eth_service().await;
+        let chain_id = service.chain_id().await.unwrap();
+        assert_eq!(chain_id, 1);
+    }
+
+    #[tokio::test]
+    async fn test_eth_get_balance() {
+        let service = setup_eth_service().await;
+        let addr = Address::repeat_byte(0x1);
+        service.storage.write().await.set_balance(addr, U256::from(1000));
+        
+        let balance = service.get_balance(addr, BlockId::latest()).await.unwrap();
+        assert_eq!(balance, U256::from(1000));
+    }
+
+    #[tokio::test]
+    async fn test_eth_get_block_number() {
+        let service = setup_eth_service().await;
+        let number = service.latest_block_number().await.unwrap();
+        assert_eq!(number, 0);
+    }
+}
