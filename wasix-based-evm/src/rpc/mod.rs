@@ -5,7 +5,6 @@ pub mod eth_service;
 pub mod engine_service;
 pub mod account_manager;
 
-mod account_mapper;
 mod block_mapper;
 mod engine_mapper;
 mod transaction_mapper;
