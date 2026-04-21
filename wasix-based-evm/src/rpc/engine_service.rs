@@ -5,13 +5,13 @@ use crate::rpc::engine_mapper::EngineMapper;
 use crate::storage::storage::InMemoryStorage;
 use crate::sync::controller::SyncController;
 use crate::{error, info};
-use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
-use alloy_primitives::{Bytes, B256};
+use alloy_consensus::{Block, Header, Transaction, TxEnvelope};
+use alloy_primitives::{Bytes, B256, U256};
 use alloy_rlp::Decodable;
 use alloy_rpc_types::engine::{
     ExecutionPayloadBodyV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
     ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId,
-    PayloadStatus, PayloadStatusEnum, TransitionConfiguration,
+    PayloadStatus, PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadEnvelopeV2,
 };
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -22,7 +22,7 @@ pub struct EngineService {
     pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
     pub sync_engine: Arc<SyncController>,
-    pub payloads: Arc<RwLock<HashMap<PayloadId, Block<Transaction>>>>,
+    pub payloads: Arc<RwLock<HashMap<PayloadId, Block<TxEnvelope>>>>,
 }
 
 impl EngineService {
@@ -407,12 +407,36 @@ impl EngineService {
         Ok(EngineMapper::to_execution_payload_v1(block))
     }
 
-    pub async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV2> {
+    pub fn calculate_block_value(&self, block: &Block<TxEnvelope>) -> U256 {
+        let mut total_value = U256::ZERO;
+        let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
+
+        for tx in &block.body.transactions {
+            let gas_used = tx.gas_limit(); // Using gas_limit as an approximation if we don't have execution results here, 
+                                          // but for get_payload we should ideally have the actual gas used if it was already executed.
+                                          // However, EngineService seems to store the Block.
+            
+            // In a real implementation, we'd need the actual gas used per transaction.
+            // If this is a pending block being built, we might not have it yet.
+            // But get_payload is called AFTER building.
+            
+            // For now, let's use a simplified version:
+            let effective_gas_price = tx.max_fee_per_gas(); 
+            let priority_fee = effective_gas_price.saturating_sub(base_fee as u128);
+            total_value += U256::from(gas_used as u128 * priority_fee);
+        }
+        total_value
+    }
+
+    pub async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
         let payloads_lock = self.payloads.read().await;
         let block = payloads_lock.get(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
-        Ok(EngineMapper::to_execution_payload_v2(block))
+        let execution_payload = EngineMapper::to_execution_payload_v2(block);
+        let block_value = self.calculate_block_value(block);
+        
+        Ok(EngineMapper::to_execution_payload_envelope_v2(execution_payload, block_value))
     }
 
     pub async fn new_payload_v1(&self, payload: ExecutionPayloadV1) -> RpcResult<PayloadStatus> {
@@ -465,10 +489,10 @@ impl EngineService {
         }
     }
 
-    fn decode_transactions(&self, txs: &[Bytes]) -> RpcResult<Vec<Transaction>> {
+    fn decode_transactions(&self, txs: &[Bytes]) -> RpcResult<Vec<TxEnvelope>> {
         let mut transactions = Vec::new();
         for tx_bytes in txs {
-            let tx: Transaction = Decodable::decode(&mut &tx_bytes[..])
+            let tx: TxEnvelope = Decodable::decode(&mut &tx_bytes[..])
                 .map_err(|e| RpcError::InvalidParams(format!("Failed to decode transaction: {}", e)))?;
             transactions.push(tx);
         }

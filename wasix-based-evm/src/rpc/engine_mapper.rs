@@ -1,9 +1,6 @@
 use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
 use alloy_primitives::U256;
-use alloy_rpc_types::engine::{
-    ExecutionPayloadBodyV1, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3,
-    ExecutionPayloadV4,
-};
+use alloy_rpc_types::engine::{ExecutionPayloadBodyV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadFieldV2, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4};
 
 pub struct EngineMapper;
 
@@ -17,8 +14,8 @@ impl EngineMapper {
             logs_bloom: block.header.logs_bloom,
             prev_randao: block.header.mix_hash,
             block_number: block.header.number,
-            gas_limit: block.header.gas_limit as u64,
-            gas_used: block.header.gas_used as u64,
+            gas_limit: block.header.gas_limit,
+            gas_used: block.header.gas_used,
             timestamp: block.header.timestamp,
             extra_data: block.header.extra_data.clone(),
             base_fee_per_gas: U256::from(block.header.base_fee_per_gas.unwrap_or_default()),
@@ -26,17 +23,25 @@ impl EngineMapper {
             transactions: block.body.transactions.iter().map(|tx| alloy_rlp::encode(tx).into()).collect(),
         }
     }
-
     pub fn to_execution_payload_v2(block: &Block<Transaction>) -> ExecutionPayloadV2 {
         ExecutionPayloadV2 {
             payload_inner: Self::to_execution_payload_v1(block),
             withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()).unwrap_or_default(),
         }
     }
+    pub fn to_execution_payload_envelope_v2(execution_payload_v2: ExecutionPayloadV2, block_value: U256) -> ExecutionPayloadEnvelopeV2 {
+        ExecutionPayloadEnvelopeV2 {
+            execution_payload: ExecutionPayloadFieldV2::V2(execution_payload_v2),
+            block_value,
+        }
+    }
 
     pub fn to_execution_payload_v3(block: &Block<Transaction>) -> ExecutionPayloadV3 {
         ExecutionPayloadV3 {
-            payload_inner: Self::to_execution_payload_v2(block),
+            payload_inner: ExecutionPayloadV2 {
+                payload_inner: Self::to_execution_payload_v1(block),
+                withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()).unwrap_or_default(),
+            },
             blob_gas_used: 0,
             excess_blob_gas: 0,
         }

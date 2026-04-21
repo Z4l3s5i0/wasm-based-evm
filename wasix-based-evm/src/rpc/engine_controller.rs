@@ -2,12 +2,14 @@ use crate::info;
 use alloy_rpc_types::engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, 
     ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
-    TransitionConfiguration, ExecutionPayloadBodyV1,
+    TransitionConfiguration, ExecutionPayloadBodyV1, ExecutionPayloadEnvelopeV2,
+    ExecutionPayloadFieldV2,
 };
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use crate::misc::error::RpcResult;
+use crate::rpc::engine_mapper::EngineMapper;
 use crate::rpc::engine_service::EngineService;
 
 #[rpc(server)]
@@ -88,7 +90,7 @@ pub trait EngineRpc {
     async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1>;
 
     #[method(name = "engine_getPayloadV2")]
-    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV2>;
+    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2>;
 
     #[method(name = "engine_getPayloadV3")]
     async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3>;
@@ -255,10 +257,14 @@ impl EngineRpcServer for EngineController {
         Ok(result)
     }
 
-    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV2> {
+    async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
         info!("[RPC] engine_getPayloadV2: payload_id={:?}", payload_id);
         let result = self.service.get_payload_v2(payload_id).await?;
-        info!("[RPC] engine_getPayloadV2 result: hash={:?}", result.payload_inner.block_hash);
+        match &result.execution_payload {
+            ExecutionPayloadFieldV2::V2(payload) => {
+                info!("[RPC] engine_getPayloadV2 result: hash={:?}", payload.block_hash);
+            }
+        }
         Ok(result)
     }
 
