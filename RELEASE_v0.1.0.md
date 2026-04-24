@@ -55,14 +55,13 @@ cargo wasix build --release
 ### Run
 The easiest way to run the client is using the provided `wasmer.toml` configuration:
 ```bash
-wasmer run . --enable-threads --net --volume <host-data-dir>:<guest-data-dir> -- [FLAGS]
+wasmer run . --enable-threads --net --volume <host-startup>:<guest-startup> -- [FLAGS]
 ```
 
-Alternatively, you can run the compiled `.wasm` file directly:
+Alternatively, you can run the compiled `.wasm` file directly from the root of the project:
 ```bash
-wasmer run target/wasm32-wasmer-wasi/release/wasix-based-evm.wasi.wasm --enable-threads --net --volume <host-data-dir>:<guest-data-dir> -- [FLAGS]
+wasmer run target/wasm32-wasmer-wasi/release/wasix-based-evm.wasi.wasm --enable-threads --net --volume <host-startup>:<guest-startup> -- [FLAGS]
 ```
-
 By default the volume is set as ./data-dir:./data-dir
 
 ---
