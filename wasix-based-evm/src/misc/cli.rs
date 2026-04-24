@@ -64,6 +64,14 @@ pub struct Args {
     #[arg(long)]
     pub peer_name: Option<String>,
 
+    /// Executor type (native or wasm)
+    #[arg(long, default_value = "native")]
+    pub executor: String,
+
+    /// Enable research mode (high-frequency metrics)
+    #[arg(long, default_value_t = false)]
+    pub research_mode: bool,
+
     /// TCP port for Prometheus metrics
     #[arg(long, default_value_t = 9090)]
     pub metrics_port: u16,

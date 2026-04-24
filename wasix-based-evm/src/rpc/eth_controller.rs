@@ -3,7 +3,7 @@ use alloy_primitives::{U256, Address, B256, Bytes};
 use alloy_eips::BlockId;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
-use crate::{info, debug};
+use crate::debug;
 use crate::rpc::parse_address;
 use crate::rpc::eth_service::EthService;
 use crate::misc::error::RpcResult;
@@ -65,43 +65,90 @@ pub struct EthController {
 #[async_trait]
 impl EthRpcServer for EthController {
     async fn gas_price(&self) -> RpcResult<U256> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_gasPrice"]).start_timer();
         debug!("[RPC] eth_gasPrice");
-        let price = self.service.gas_price().await?;
-        debug!("[RPC] eth_gasPrice result: {}", price);
-        Ok(price)
+        match self.service.gas_price().await {
+            Ok(price) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_gasPrice", "success"]).inc();
+                debug!("[RPC] eth_gasPrice result: {}", price);
+                Ok(price)
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_gasPrice", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn accounts(&self) -> RpcResult<Vec<Address>> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_accounts"]).start_timer();
         debug!("[RPC] eth_accounts");
-        let accounts = self.service.accounts().await?;
-        debug!("[RPC] eth_accounts result count: {}", accounts.len());
-        Ok(accounts)
+        match self.service.accounts().await {
+            Ok(accounts) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_accounts", "success"]).inc();
+                debug!("[RPC] eth_accounts result count: {}", accounts.len());
+                Ok(accounts)
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_accounts", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn syncing(&self) -> RpcResult<SyncStatus> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_syncing"]).start_timer();
         debug!("[RPC] eth_syncing");
-        let status = self.service.syncing().await?;
-        debug!("[RPC] eth_syncing result: {:?}", status);
-        Ok(status)
+        match self.service.syncing().await {
+            Ok(status) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_syncing", "success"]).inc();
+                debug!("[RPC] eth_syncing result: {:?}", status);
+                Ok(status)
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_syncing", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn mining(&self) -> RpcResult<bool> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_mining"]).start_timer();
         debug!("[RPC] eth_mining");
+        crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_mining", "success"]).inc();
         Ok(false)
     }
 
     async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<B256> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_sendTransaction"]).start_timer();
         debug!("[RPC] eth_sendTransaction: request={:?}", request);
-        let hash = self.service.send_transaction(request).await?;
-        debug!("[RPC] eth_sendTransaction result: {}", hash);
-        Ok(hash)
+        match self.service.send_transaction(request).await {
+            Ok(hash) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_sendTransaction", "success"]).inc();
+                debug!("[RPC] eth_sendTransaction result: {}", hash);
+                Ok(hash)
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_sendTransaction", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn send_raw_transaction(&self, data: String) -> RpcResult<B256> {
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_sendRawTransaction"]).start_timer();
         debug!("[RPC] eth_sendRawTransaction: data_len={}", data.len());
-        let hash = self.service.send_raw_transaction(data).await?;
-        debug!("[RPC] eth_sendRawTransaction result: {}", hash);
-        Ok(hash)
+        match self.service.send_raw_transaction(data).await {
+            Ok(hash) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_sendRawTransaction", "success"]).inc();
+                debug!("[RPC] eth_sendRawTransaction result: {}", hash);
+                Ok(hash)
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_sendRawTransaction", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<Bytes> {
@@ -121,11 +168,19 @@ impl EthRpcServer for EthController {
     }
 
     async fn call(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<Bytes> {
-        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.start_timer();
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_call"]).start_timer();
         debug!("[RPC] eth_call: request={:?}, block_id={:?}", request, block_id);
-        let result_bytes = self.service.call(request, block_id).await?;
-        debug!("[RPC] eth_call result size: {}", result_bytes.len());
-        Ok(result_bytes)
+        match self.service.call(request, block_id).await {
+            Ok(result_bytes) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_call", "success"]).inc();
+                debug!("[RPC] eth_call result size: {}", result_bytes.len());
+                Ok(result_bytes)
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_call", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<BlockId>) -> RpcResult<U256> {
@@ -151,11 +206,19 @@ impl EthRpcServer for EthController {
     }
 
     async fn block_number(&self) -> RpcResult<U256> {
-        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.start_timer();
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_blockNumber"]).start_timer();
         debug!("[RPC] eth_blockNumber");
-        let num = self.service.latest_block_number().await?;
-        debug!("[RPC] eth_blockNumber result: {}", num);
-        Ok(U256::from(num))
+        match self.service.latest_block_number().await {
+            Ok(num) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_blockNumber", "success"]).inc();
+                debug!("[RPC] eth_blockNumber result: {}", num);
+                Ok(U256::from(num))
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_blockNumber", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn chain_id(&self) -> RpcResult<U256> {
@@ -200,12 +263,20 @@ impl EthRpcServer for EthController {
     }
 
     async fn get_balance(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<U256> {
-        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.start_timer();
+        let _timer = crate::misc::metrics::RPC_REQUEST_DURATION_SECONDS.with_label_values(&["eth_getBalance"]).start_timer();
         debug!("[RPC] eth_getBalance: address={}, block_id={:?}", address, block_id);
         let block_id = block_id.unwrap_or(BlockId::latest());
-        let balance = self.service.get_balance(address, block_id).await?;
-        debug!("[RPC] eth_getBalance result: {}", balance);
-        Ok(balance)
+        match self.service.get_balance(address, block_id).await {
+            Ok(balance) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_getBalance", "success"]).inc();
+                debug!("[RPC] eth_getBalance result: {}", balance);
+                Ok(balance)
+            }
+            Err(e) => {
+                crate::misc::metrics::RPC_REQUESTS_TOTAL.with_label_values(&["eth_getBalance", "error"]).inc();
+                Err(e)
+            }
+        }
     }
 
     async fn get_transaction_count(&self, address: Address, block_id: Option<BlockId>) -> RpcResult<U256> {

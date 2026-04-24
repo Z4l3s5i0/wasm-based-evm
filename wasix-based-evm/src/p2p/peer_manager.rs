@@ -117,6 +117,8 @@ impl P2pApiServer for PeerManager {
 
     async fn gossip(&self, _topic: String, data: Vec<u8>) -> RpcResult<()> {
         debug!("[P2P] Received gossip message ({} bytes)", data.len());
+        crate::misc::metrics::GOSSIP_MESSAGES_TOTAL.with_label_values(&["inbound"]).inc();
+        crate::misc::metrics::NETWORK_IO_BYTES.with_label_values(&["inbound"]).inc_by(data.len() as f64);
         let _ = self.gossip_tx.send(data).await;
         Ok(())
     }
@@ -265,8 +267,10 @@ impl PeerManager {
             for id in to_remove {
                 peers_lock.remove(&id);
                 debug!("[P2P] Successfully removed stale peer {}", id);
+                crate::misc::metrics::PEER_CHURN.inc();
             }
             crate::misc::metrics::CONNECTED_PEERS.set(peers_lock.len() as f64);
+            crate::misc::metrics::PEERS_COUNT.set(peers_lock.len() as f64);
             debug!("[P2P] Current active peer count: {}", peers_lock.len());
         } else {
             debug!("[P2P] All peers are healthy.");
@@ -331,6 +335,8 @@ impl PeerManager {
                         p2p_url,
                     });
                     crate::misc::metrics::CONNECTED_PEERS.set(peers_lock.len() as f64);
+                    crate::misc::metrics::PEERS_COUNT.set(peers_lock.len() as f64);
+                    crate::misc::metrics::PEER_CHURN.inc();
                     debug!("[P2P] Active peer pool size: {}", peers_lock.len());
                 }
                 Err(e) => error!("[P2P] Bonding failed with {}: {}", addr, e),
@@ -339,6 +345,8 @@ impl PeerManager {
     }
 
     pub async fn broadcast_gossip(&self, data: Vec<u8>) {
+        crate::misc::metrics::GOSSIP_MESSAGES_TOTAL.with_label_values(&["outbound"]).inc();
+        crate::misc::metrics::NETWORK_IO_BYTES.with_label_values(&["outbound"]).inc_by(data.len() as f64);
         let peers = self.peers.read().await;
         let mut target_urls = Vec::new();
         for (id, info) in peers.iter() {

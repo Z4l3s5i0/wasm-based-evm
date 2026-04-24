@@ -434,6 +434,7 @@ impl InMemoryStorage {
     }
 
     pub fn get_accounts(&self) -> Vec<Address> {
+        crate::misc::metrics::CACHE_HITS.inc();
         self.backend.state.keys().map(|h| Address::from(h.0)).collect()
     }
 

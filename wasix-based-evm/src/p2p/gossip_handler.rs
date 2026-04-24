@@ -118,7 +118,7 @@ mod tests {
         let identity = Identity::new(None, None).unwrap();
         let (peer_manager, _) = PeerManager::new(identity, storage.clone(), 0, 0, None, vec![]).unwrap();
         let peer_manager = Arc::new(peer_manager);
-        let executor = Arc::new(Executor::new());
+        let executor = Arc::new(Executor::new("native".to_string(), false));
         let sync_engine = Arc::new(SyncController::new(storage.clone(), mempool.clone(), peer_manager.clone(), executor));
         let (tx, rx) = mpsc::channel(10);
         

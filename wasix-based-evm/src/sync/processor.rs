@@ -50,7 +50,7 @@ mod tests {
     #[tokio::test]
     async fn test_process_block_empty() {
         let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
-        let executor = Arc::new(Executor::new());
+        let executor = Arc::new(Executor::new("native".to_string(), false));
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
         let processor = BlockProcessor::new(storage.clone(), executor, mempool);
         

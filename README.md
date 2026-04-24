@@ -30,7 +30,7 @@ cargo clean
 cargo wasix clean
 cargo update
 cargo build --release
-.\target\release\wasix-based-evm.exe --p2p-port <port> --discovery-port <other-port> --rpc-port <other-other-port> --bootnodes <bootnode-address, other-bootnode-address,...> --max_peers <max-connections> --ext_ip <optional-external-ip> --data_dir <path-to-data-dir> --verbose <_:none, 1:info, 2:debug>
+.\target\release\wasix-based-evm.exe --p2p-port <port> --discovery-port <other-port> --rpc-port <other-other-port> --bootnodes <bootnode-address, other-bootnode-address,...> --max_peers <max-connections> --ext_ip <optional-external-ip> --data_dir <path-to-startup> --verbose <_:none, 1:info, 2:debug>
 ```
 #### build target wasix
 1. Go to [Cargo.toml](./wasix-based-evm/Cargo.toml).
@@ -44,8 +44,8 @@ cargo wasix clean
 cargo update
 cargo wasix build --release
 
-wasmer run . --enable-threads --net --http-client --enable-exceptions --volume ./data-dir:./data-dir --enable-bulk-memory --enable-simd --enable-reference-types --enable-multi-value --llvm --enable-async-threads -v \
--- --verbose 2 --data-dir data-dir\
+wasmer run . --enable-threads --net --http-client --enable-exceptions --volume ./startup:./startup --enable-bulk-memory --enable-simd --enable-reference-types --enable-multi-value --llvm --enable-async-threads -v \
+-- --verbose 2 --startup startup\
 --p2p-port <port> --discovery-port <other-port> --rpc-port <other-other-port> --bootnodes <bootnode-address, other-bootnode-address,...> --max_peers <max-connections> --ext_ip <optional-external-ip>
 ```
 

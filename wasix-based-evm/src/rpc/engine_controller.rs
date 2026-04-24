@@ -1,15 +1,13 @@
-use crate::{info, debug};
+use crate::debug;
 use alloy_rpc_types::engine::{
     ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, 
     ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, 
     TransitionConfiguration, ExecutionPayloadBodyV1, ExecutionPayloadEnvelopeV2,
-    ExecutionPayloadFieldV2,
 };
 use alloy_primitives::B256;
 use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use crate::misc::error::RpcResult;
-use crate::rpc::engine_mapper::EngineMapper;
 use crate::rpc::engine_service::EngineService;
 
 #[rpc(server)]

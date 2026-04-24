@@ -1,11 +1,32 @@
 global:
-  scrape_interval: 5s
+  scrape_interval: 1s # Higher resolution for benchmarking
+  evaluation_interval: 1s
 
 scrape_configs:
   - job_name: 'wasix-evm'
     static_configs:
       - targets: ['localhost:9055']
+        labels:
+          node: 'node-1'
+          executor_type: 'rust-native'
+          research_group: 'control'
+      - targets: ['localhost:9056']
+        labels:
+          node: 'node-2'
+          executor_type: 'wasm-wasix'
+          research_group: 'experimental'
+      - targets: ['localhost:9057']
+        labels:
+          node: 'node-3'
 
   - job_name: 'node-exporter'
     static_configs:
       - targets: ['localhost:9100']
+        labels:
+          node: 'node-1'
+      - targets: ['localhost:9101']
+        labels:
+          node: 'node-2'
+      - targets: ['localhost:9102']
+        labels:
+          node: 'node-3'

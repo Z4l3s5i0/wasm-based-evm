@@ -13,7 +13,6 @@ use alloy_rpc_types::engine::{
     ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId,
     PayloadStatus, PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadEnvelopeV2,
 };
-use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 

@@ -1,94 +1,100 @@
-### Refactored Monitoring Plan: Prometheus & Grafana Integration
+### Prometheus & Grafana Monitoring Plan
 
-This refactored plan transitions from a custom React-based dashboard to a standard industry-leading stack: **Prometheus** for metrics collection/storage and **Grafana** for visualization. This approach provides professional-grade alerting, historical data analysis, and highly performant dashboards.
+This document defines the metrics and dashboard structure for monitoring the Wasix EVM node.
 
 ---
 
 ### Phase 1: Infrastructure Setup
 
-Instead of building a frontend dashboard from scratch, we will deploy a standard monitoring sidecar.
-
-1.  **Prometheus Server:** Configured to scrape the EVM node at regular intervals (e.g., every 5s).
-2.  **Node Exporter:** Deployed on the host machine to capture OS-level metrics (CPU, Disk, Network).
-3.  **Grafana:** Connected to Prometheus as a data source to render the dashboards defined in the requirements.
-4.  **Prometheus Alertmanager:** Configured to route alerts (Discord, Slack, Email) based on threshold breaches defined in Phase 3.
+The monitoring stack consists of:
+1.  **Prometheus Server:** Configured to scrape the EVM node (default `:9055/metrics`) every 1s for high-resolution benchmarking.
+2.  **Node Exporter:** Captures host-level metrics (CPU, Memory, Disk, Network) on `:9100`.
+3.  **Grafana:** Connected to Prometheus to render the dashboards.
 
 ---
 
-### Phase 2: Backend Instrumentation (Rust)
+### Phase 2: Metrics Reference
 
-The `wasix-based-evm` backend must be updated to export metrics in Prometheus format.
-
-#### 1. Integrate `prometheus` Crate
-Add `prometheus` and `lazy_static` to `Cargo.toml`. Create a centralized `src/misc/metrics.rs` to register global metrics:
-
-*   **Counters:** `processed_blocks_total`, `transactions_total`, `rpc_errors_total`, `reorgs_total`.
-*   **Gauges:** `connected_peers`, `mempool_size`, `current_head_block`, `sync_gap`, `db_size_bytes`.
-*   **Histograms:** `block_processing_seconds`, `rpc_request_duration_seconds`, `tx_execution_seconds`.
-
-#### 2. Instrumentation Points
-*   **Sync:** In `SyncController::sync_step`, record `current_head_block` and `block_processing_seconds`.
-*   **P2P:** In `PeerManager`, update `connected_peers` gauge during `hello` and cleanup.
-*   **Mempool:** In `Mempool::add_transaction`, increment `transactions_total` and update `mempool_size`.
-*   **RPC:** Add a tower middleware to `RpcServerFacade` to automatically record `rpc_request_duration_seconds` and `rpc_errors_total`.
-
-#### 3. Metrics Endpoint
-Add a new HTTP endpoint (e.g., `:9090/metrics`) using `axum` that serves the Prometheus registry output.
+| Category | Metric Name | Type | Labels | Description |
+| :--- | :--- | :--- | :--- | :--- |
+| **Top Level** | `sync_status` | Gauge | - | 1: Synced, 0: Syncing, -1: Stalled |
+| | `current_head_block` | Gauge | - | Local head block height |
+| | `network_head_block` | Gauge | - | Highest known network block |
+| | `connected_peers` | Gauge | - | Number of active peers |
+| | `block_import_rate` | Gauge | - | Blocks/sec |
+| | `node_uptime_seconds_total` | Counter | - | Total node uptime |
+| **Chain** | `sync_gap` | Gauge | - | Δ blocks between network and local |
+| | `processed_blocks_total` | Counter | - | Total blocks processed |
+| | `block_processing_seconds` | Histogram | - | Time to process a block |
+| | `reorgs_total` | Counter | - | Total chain reorgs |
+| **P2P** | `peers_count_total` | Gauge | - | Total peer count |
+| | `peer_churn_total` | Counter | - | Peer connection changes |
+| | `gossip_messages_total` | Counter | `topic` | Gossip messages by topic |
+| | `network_io_bytes_total` | Counter | `direction` | Inbound/Outbound bytes |
+| **Execution**| `transactions_total` | Counter | - | Total transactions processed |
+| | `mempool_size` | Gauge | - | Current mempool depth |
+| | `gas_used_per_block` | Gauge | - | Gas used in last block |
+| | `tx_execution_seconds` | Histogram | `executor` | Execution time (EVM vs WASM) |
+| **RPC** | `rpc_requests_total` | Counter | `method`, `status` | Total requests and status |
+| | `rpc_request_duration_seconds`| Histogram | `method` | Latency per method |
+| **Storage** | `db_size_bytes` | Gauge | - | Database size on disk |
+| | `cache_hits_total` | Counter | - | Storage cache hits |
+| | `cache_misses_total` | Counter | - | Storage cache misses |
+| **Benchmark**| `execution_time_vs_workload` | Histogram | `executor`, `workload_type` | Latency vs complexity |
+| | `cpu_cycles_total` | Counter | `executor` | CPU cycles consumed |
+| | `instruction_count_total` | Counter | `executor` | Instructions executed |
+| | `execution_latency_cdf` | Histogram | `executor` | Cumulative Latency Distribution |
+| | `wasm_compilation_seconds_total`| Counter | `executor` | Initialization overhead |
 
 ---
 
 ### Phase 3: Grafana Dashboard Layout
 
-The dashboard will be organized into rows as per the requirements, using specific Prometheus queries (PromQL).
+The monitoring setup includes two dashboards:
 
-#### 🧭 Row 1: Top Level (The "Am I OK?" Row)
-*   **Sync Status:** `abs(head_block - network_head) < 2 ? "Synced" : "Syncing"` (Stat Panel).
-*   **Sync Gap:** `network_head - current_head_block` (Sparkline).
-*   **Peers:** `connected_peers` (Stat Panel).
-*   **Import Rate:** `rate(processed_blocks_total[1m])` (Stat Panel).
-*   **Uptime:** `process_uptime_seconds` (Stat Panel).
+#### 1. Wasix EVM Multi-Node Overview (`grafana-overview-dashboard.json`)
+Aggregates data from all nodes to provide a network-wide health check.
+*   **Nodes Health Status:** Table showing sync status for all nodes.
+*   **Block Height Comparison:** Line chart comparing head block heights.
+*   **Peer Count Comparison:** Line chart comparing connected peers across nodes.
+*   **Total Network Throughput:** Aggregated TPS across the entire network.
 
-#### ⛓️ Row 2: Chain Sync & Block Processing
-*   **Block Processing Latency:** `histogram_quantile(0.99, sum by (le) (rate(block_processing_seconds_bucket[5m])))` (Line Chart).
-*   **Reorgs:** `increase(reorgs_total[1h])` (Bar Chart).
+#### 2. Wasix EVM Performance & Health (`grafana-dashboard.json`)
+Detailed metrics for a single node, selectable via a `node` dropdown.
 
-#### 🌐 Row 3: P2P Networking
-*   **Peer Distribution:** `connected_peers{type="inbound"}` vs `outbound` (Stacked Area).
-*   **Network Bandwidth:** `rate(node_network_receive_bytes_total[1m])` (Line Chart).
+#### 3. Wasix EVM Scientific Research: Native vs WASM (`grafana-research-dashboard.json`)
+Specialized dashboard for comparative performance analysis.
+*   **Execution Profiling:** Average execution time and instruction density (instructions per gas).
+*   **Latency & Determinism:** Cumulative Distribution Function (CDF) of latency and WASM initialization overhead.
+*   **Resource Footprint:** Resident memory usage and CPU cycle efficiency comparison.
 
-#### ⚙️ Row 4: System Resources (via Node Exporter)
-*   **CPU/RAM:** `node_cpu_seconds_total` and `node_memory_MemTotal_bytes`.
-*   **Disk I/O:** `rate(node_disk_read_time_seconds_total[1m])` (Critical for identifying sync bottlenecks).
+Organized into the following rows:
 
-#### 🔁 Row 5: Execution & Mempool
-*   **Mempool Depth:** `mempool_size` (Gauge + Trend).
-*   **Gas Usage:** `gas_used_per_block` (Heatmap to show block density).
+#### 🧭 1. Top Level (The "Am I OK?" Row)
+*   **Sync Status:** Stat panel showing Synced/Syncing/Stalled based on `sync_status`.
+*   **Sync Gap:** `network_head_block - current_head_block`.
+*   **Peers:** `connected_peers`.
+*   **Import Rate:** `irate(processed_blocks_total[1m])`.
 
-#### 📡 Row 6: RPC Performance
-*   **Method Latency:** `sum by (method) (rate(rpc_request_duration_seconds_sum[5m]) / rate(rpc_request_duration_seconds_count[5m]))` (Table or Bar Chart).
+#### ⛓️ 2. Chain Sync & Block Processing
+*   **Head Comparison:** Time series of local vs network head.
+*   **Processing Time:** p95/p99 of `block_processing_seconds`.
 
-#### 💾 Row 7: State & DB Health
-*   **Cache Hit Rate:** `cache_hits / (cache_hits + cache_misses)` (Gauge).
-*   **Storage Growth:** `derivative(db_size_bytes[1d])` (Projected disk exhaustion).
+#### 🌐 3. P2P Networking
+*   **Peer Churn:** `rate(peer_churn_total[5m])`.
+*   **Traffic:** `rate(network_io_bytes_total[5m])` by direction.
 
----
+#### ⚙️ 4. System Resources (via Node Exporter)
+*   **CPU Usage:** `node_cpu_seconds_total`.
+*   **Disk Latency:** `node_disk_read_time_seconds_total`.
 
-### Phase 4: Alerting Logic
+#### 🔁 5. Execution & Mempool
+*   **Throughput:** `rate(transactions_total[1m])`.
+*   **EVM vs WASM:** Comparison of `tx_execution_seconds`.
 
-Prometheus Alerting Rules will be implemented for:
-*   **Sync Stalled:** `rate(current_head_block[10m]) == 0`.
-*   **High RPC Errors:** `rate(rpc_errors_total[5m]) / rate(rpc_requests_total[5m]) > 0.05`.
-*   **Peer Drop:** `connected_peers < 3`.
-*   **Disk Critical:** `node_filesystem_avail_bytes < 10^10` (less than 10GB remaining).
+#### 📡 6. RPC Performance
+*   **Error Rate:** `%` of `rpc_requests_total{status="error"}`.
+*   **Slow Methods:** Top methods by `rpc_request_duration_seconds`.
 
-### Implementation Mapping
-
-| Category | Source | Prometheus Metric Name (Example) |
-| :--- | :--- | :--- |
-| **System** | Node Exporter | `node_cpu_seconds_total`, `node_disk_io_now` |
-| **Networking** | `PeerManager` | `evm_p2p_peers_count`, `evm_p2p_message_rate` |
-| **Chain** | `SyncController`| `evm_chain_head_height`, `evm_chain_reorg_count` |
-| **EVM** | `Executor` | `evm_execution_gas_used`, `evm_execution_tx_throughput` |
-| **Mempool** | `Mempool` | `evm_mempool_pending_txs`, `evm_mempool_queued_txs` |
-| **RPC** | `RpcServer` | `evm_rpc_latency_seconds`, `evm_rpc_error_count` |
-| **Storage** | `InMemoryStorage`| `evm_storage_db_size_bytes`, `evm_storage_cache_hit_ratio` |
+#### 💾 7. State & DB Health
+*   **Cache Hit Ratio:** `rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m]))`.

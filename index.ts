@@ -94,7 +94,7 @@ async function runClient(module: WebAssembly.Module) {
         program: "wasix-based-evm",
         args: [
             "--verbose", "2",
-            "--data-dir", "/data-dir",
+            "--startup", "/data-dir",
             "--p2p-port", "9002",
             "--discovery-port", "9001",
             "--eth-rpc-port", "8545",

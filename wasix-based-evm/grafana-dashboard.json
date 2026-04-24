@@ -44,7 +44,7 @@
             {
               "options": {
                 "0": {
-                  "color": "red",
+                  "color": "yellow",
                   "index": 1,
                   "text": "Syncing"
                 },
@@ -52,6 +52,11 @@
                   "color": "green",
                   "index": 0,
                   "text": "Synced"
+                },
+                "-1": {
+                  "color": "red",
+                  "index": 2,
+                  "text": "Stalled"
                 }
               },
               "type": "value"
@@ -63,6 +68,10 @@
               {
                 "color": "red",
                 "value": null
+              },
+              {
+                "color": "yellow",
+                "value": 0
               },
               {
                 "color": "green",
@@ -100,7 +109,7 @@
             "uid": "${DS_PROMETHEUS}"
           },
           "editorMode": "code",
-          "expr": "abs(network_head_block - current_head_block) < 2",
+          "expr": "sync_status{node=~\"$node\"}",
           "format": "time_series",
           "range": true,
           "refId": "A"
@@ -188,7 +197,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sync_gap",
+          "expr": "sync_gap{node=~\"$node\"}",
           "refId": "A"
         }
       ],
@@ -245,7 +254,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "connected_peers",
+          "expr": "connected_peers{node=~\"$node\"}",
           "refId": "A"
         }
       ],
@@ -283,7 +292,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(processed_blocks_total[1m])",
+          "expr": "rate(processed_blocks_total{node=~\"$node\"}[1m])",
           "refId": "A"
         }
       ],
@@ -314,7 +323,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "time() - process_start_time_seconds",
+          "expr": "time() - process_start_time_seconds{node=~\"$node\"}",
           "refId": "A"
         }
       ],
@@ -355,7 +364,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "histogram_quantile(0.99, sum by (le) (rate(block_processing_seconds_bucket[5m])))",
+          "expr": "histogram_quantile(0.99, sum by (le) (rate(block_processing_seconds_bucket{node=~\"$node\"}[5m])))",
           "legendFormat": "p99 Latency",
           "refId": "A"
         }
@@ -381,7 +390,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "increase(reorgs_total[1h])",
+          "expr": "increase(reorgs_total{node=~\"$node\"}[1h])",
           "refId": "A"
         }
       ],
@@ -417,7 +426,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "connected_peers",
+          "expr": "connected_peers{node=~\"$node\"}",
           "refId": "A"
         }
       ],
@@ -453,7 +462,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "mempool_size",
+          "expr": "mempool_size{node=~\"$node\"}",
           "refId": "A"
         }
       ],
@@ -478,7 +487,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "gas_used_per_block",
+          "expr": "gas_used_per_block{node=~\"$node\"}",
           "refId": "A"
         }
       ],
@@ -514,7 +523,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "sum(rate(rpc_request_duration_seconds_sum[5m])) / sum(rate(rpc_request_duration_seconds_count[5m]))",
+          "expr": "sum(rate(rpc_request_duration_seconds_sum{node=~\"$node\"}[5m])) / sum(rate(rpc_request_duration_seconds_count{node=~\"$node\"}[5m]))",
           "refId": "A"
         }
       ],
@@ -555,7 +564,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "rate(cache_hits_total[5m]) / (rate(cache_hits_total[5m]) + rate(cache_misses_total[5m]))",
+          "expr": "rate(cache_hits_total{node=~\"$node\"}[5m]) / (rate(cache_hits_total{node=~\"$node\"}[5m]) + rate(cache_misses_total{node=~\"$node\"}[5m]))",
           "refId": "A"
         }
       ],
@@ -585,7 +594,7 @@
             "type": "prometheus",
             "uid": "${DS_PROMETHEUS}"
           },
-          "expr": "db_size_bytes",
+          "expr": "db_size_bytes{node=~\"$node\"}",
           "refId": "A"
         }
       ],
@@ -617,6 +626,29 @@
         "regex": "",
         "skipUrl": false,
         "type": "datasource"
+      },
+      {
+        "allValue": ".*",
+        "current": {},
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${DS_PROMETHEUS}"
+        },
+        "definition": "label_values(sync_status, node)",
+        "hide": 0,
+        "includeAll": true,
+        "multi": false,
+        "name": "node",
+        "options": [],
+        "query": {
+          "query": "label_values(sync_status, node)",
+          "refId": "StandardVariableQuery"
+        },
+        "refresh": 1,
+        "regex": "",
+        "skipUrl": false,
+        "sort": 0,
+        "type": "query"
       }
     ]
   },
@@ -626,7 +658,7 @@
   },
   "timepicker": {},
   "timezone": "",
-  "title": "Wasix EVM Node Dashboard",
-  "uid": "wasix-evm-node",
-  "version": 1
+  "title": "Wasix EVM Performance & Health",
+  "uid": "wasix-evm-monitoring",
+  "version": 2
 }

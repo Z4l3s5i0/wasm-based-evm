@@ -23,7 +23,7 @@ mod tests {
         });
 
         let storage = InMemoryStorage::new_with_genesis(alloy_u256_to_evm_u256(U256::from(chain_id)), genesis);
-        let executor = Executor::new();
+        let executor = Executor::new("native".to_string(), false);
         (executor, storage, signer, addr)
     }
 

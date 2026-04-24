@@ -2,8 +2,6 @@ use std::net::SocketAddr;
 use crate::cli::Args;
 use crate::storage::storage::{InMemoryStorage, StorageProvider, GenesisInit};
 use alloy_primitives::U256;
-use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
-use alloy_genesis::{Genesis as AlloyGenesis, Genesis};
 use std::sync::Arc;
 use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
@@ -295,11 +293,11 @@ impl AppBuilder {
         Ok(mempool)
     }
 
-    fn setup_executor(&self) -> Result<Arc<Executor>, Box<dyn std::error::Error>> {
+    fn setup_executor(&self, args: &Args) -> Result<Arc<Executor>, Box<dyn std::error::Error>> {
         let executor = if self.executor_configured {
             self.executor.clone().ok_or("Executor marked as configured but not provided")?
         } else {
-            Executor::new()
+            Executor::new(args.executor.clone(), args.research_mode)
         };
         Ok(Arc::new(executor))
     }
@@ -431,7 +429,7 @@ impl AppBuilder {
 
         let (storage, state_filename) = self.setup_storage(&args, &data_dir, &peer_id).await?;
         let mempool = self.setup_mempool()?;
-        let executor = self.setup_executor()?;
+        let executor = self.setup_executor(&args)?;
 
         let (peer_manager, sync_engine) = self.setup_p2p(&args, p2p_identity, storage.clone(), mempool.clone(), executor.clone())?;
 

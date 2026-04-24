@@ -40,12 +40,16 @@ impl OverlayedChangeSetExt for OverlayedChangeSet {
 #[derive(Clone)]
 pub struct Executor {
     pub config: Config,
+    pub executor_type: String,
+    pub research_mode: bool,
 }
 
 impl Executor {
-    pub fn new() -> Self {
+    pub fn new(executor_type: String, research_mode: bool) -> Self {
         Self {
             config: Config::shanghai(),
+            executor_type,
+            research_mode,
         }
     }
 
@@ -90,20 +94,30 @@ impl Executor {
             current_backend.apply_overlayed(&total_changeset);
             let mut overlayed = OverlayedBackend::new(&current_backend, &self.config.runtime);
 
-            let tx_timer = crate::misc::metrics::TX_EXECUTION_SECONDS.start_timer();
+            let start = std::time::Instant::now();
+            
             let result = transact(
                 args,
                 None,
                 &mut overlayed,
                 &invoker,
             );
-            tx_timer.observe_duration();
+            
+            let duration_f64 = start.elapsed().as_secs_f64();
+            crate::misc::metrics::TX_EXECUTION_SECONDS.with_label_values(&[self.executor_type.as_str()]).observe(duration_f64);
+            crate::misc::metrics::EXECUTION_LATENCY_CDF.with_label_values(&[self.executor_type.as_str()]).observe(duration_f64);
 
             match result {
                 Ok(value) => {
                     info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}, status={:?}", tx.hash(), value.used_gas, value.call_create);
                     cumulative_gas_used += value.used_gas.as_u64();
                     crate::misc::metrics::GAS_USED_PER_BLOCK.set(cumulative_gas_used as f64);
+                    
+                    if self.research_mode {
+                        crate::misc::metrics::EXECUTION_TIME_VS_WORKLOAD
+                            .with_label_values(&[self.executor_type.as_str(), "tx"])
+                            .observe(duration_f64);
+                    }
                     
                     let (_, changeset) = overlayed.deconstruct();
                     info!("[Executor] Changeset for tx {:?}: balances={:?}, storages={:?}", tx.hash(), changeset.balances.len(), changeset.storages.len());
@@ -455,13 +469,13 @@ mod tests {
 
     #[test]
     fn test_executor_new() {
-        let _executor = Executor::new();
+        let _executor = Executor::new("native".to_string(), false);
         // Just verify it doesn't panic and uses Shanghai by default
     }
 
     #[test]
     fn test_run_execution_dry_run() {
-        let executor = Executor::new();
+        let executor = Executor::new("native".to_string(), false);
         let mut storage = InMemoryStorage::new(EvmU256::from(1));
         
         let tx = TxEnvelope::Legacy(TxLegacy {

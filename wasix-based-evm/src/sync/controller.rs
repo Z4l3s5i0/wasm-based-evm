@@ -69,6 +69,7 @@ impl SyncController {
 
     pub async fn status(&self) -> SyncStatus {
         if self.is_syncing.load(Ordering::SeqCst) {
+            crate::misc::metrics::SYNC_STATUS.set(0.0); // Syncing
             let starting_block = {
                 let storage_read = self.storage.read().await;
                 storage_read.get_latest_block_number()
@@ -82,6 +83,7 @@ impl SyncController {
                 stages: None,
             }))
         } else {
+            crate::misc::metrics::SYNC_STATUS.set(1.0); // Synced
             SyncStatus::None
         }
     }
@@ -165,6 +167,7 @@ impl SyncController {
         self.highest_block.store(end, Ordering::SeqCst);
         
         for next_block_num in start..=end {
+            let import_timer = crate::misc::metrics::BLOCK_PROCESSING_SECONDS.start_timer();
             self.current_block.store(next_block_num, Ordering::SeqCst);
             debug!("[Sync] Fetching block {}", next_block_num);
             
@@ -173,6 +176,7 @@ impl SyncController {
                 Err(e) => {
                     error!("[Sync] Failed to download block {}: {}", next_block_num, e);
                     self.is_syncing.store(false, Ordering::SeqCst);
+                    crate::misc::metrics::SYNC_STATUS.set(-1.0); // Stalled
                     return Err(e);
                 }
             };
@@ -192,8 +196,12 @@ impl SyncController {
             if let Err(e) = self.processor.process_block(block).await {
                 error!("[Sync] Failed to process block {}: {}", next_block_num, e);
                 self.is_syncing.store(false, Ordering::SeqCst);
+                crate::misc::metrics::SYNC_STATUS.set(-1.0); // Stalled
                 return Err(anyhow::anyhow!("Block processing failed"));
             }
+            import_timer.observe_duration();
+            crate::misc::metrics::CURRENT_HEAD_BLOCK.set(next_block_num as f64);
+            crate::misc::metrics::SYNC_GAP.set((end as i64 - next_block_num as i64) as f64);
         }
         
         self.is_syncing.store(false, Ordering::SeqCst);

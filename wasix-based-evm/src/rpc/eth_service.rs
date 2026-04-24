@@ -11,7 +11,7 @@ use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRe
 use alloy_rlp::{Encodable, Decodable};
 use crate::storage::storage::InMemoryStorage;
 use evm::standard::TransactValueCallCreate;
-use crate::{info, error, debug};
+use crate::{error, debug};
 use crate::evm::executor::Executor;
 use crate::misc::error;
 use crate::misc::error::RpcError::Internal;
@@ -397,7 +397,7 @@ mod tests {
         let identity = Identity::new(None, None).unwrap();
         let (peer_manager, _) = PeerManager::new(identity, storage.clone(), 0, 0, None, vec![]).unwrap();
         let peer_manager = Arc::new(peer_manager);
-        let executor = Arc::new(Executor::new());
+        let executor = Arc::new(Executor::new("native".to_string(), false));
         let account_manager = Arc::new(AccountManager::new());
         
         let storage_provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));

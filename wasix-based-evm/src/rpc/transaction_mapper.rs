@@ -1,5 +1,5 @@
 use alloy_consensus::{TxEnvelope, ReceiptWithBloom as ConsensusReceipt, transaction::SignerRecoverable as _, transaction::Recovered};
-use alloy_primitives::{B256, Address, U256};
+use alloy_primitives::{B256, Address};
 use alloy_rpc_types::eth::{Transaction, TransactionReceipt};
 
 pub struct TransactionMapper;
