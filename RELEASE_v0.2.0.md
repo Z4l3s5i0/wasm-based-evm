@@ -39,7 +39,7 @@ This is the second release (v0.2.0) of the **WASIX-Based Ethereum Execution Clie
 
 ### 1. Run Execution Client (WASIX)
 ```bash
-wasmer run wasix-based-evm.wasi.wasm --enable-threads --net --volume ./startup:./startup -- --startup ./startup --ext-ip 192.168.1.152 --verbose 1 --genesis-path ./startup/genesis.json --peer-name node1
+wasmer run wasix-based-evm.wasi.wasm --enable-threads --net --volume ./startup:./startup -- --data-dir ./startup --ext-ip 192.168.1.152 --verbose 1 --genesis-path ./startup/genesis.json --auth-rpc-jwt-path ./startup/jwt_node1.hex --peer-name node1
 ```
 
 ### 2. Run Beacon Node (Lighthouse)

@@ -1,6 +1,6 @@
 [package]
 name = "wasix-based-evm"
-version = "0.1.0"
+version = "0.2.0"
 description = "Description for package wasix-based-evm"
 wasmer-extra-flags = "--enable-threads --net --http-client --enable-exceptions --volume ./data-dir:./data-dir --enable-bulk-memory --enable-simd --enable-reference-types --enable-multi-value --llvm --enable-async-threads -v"
 # See more keys and definitions at https://docs.wasmer.io/registry/manifest
@@ -13,8 +13,8 @@ abi = "wasi"
 [module.interfaces]
 wasix = "0.1.0"
 
-[fs]
-"./data-dir" = "./data-dir"
+#[fs]
+#"./data-dir" = "./data-dir"
 
 [[command]]
 name = "wasix-based-evm"
