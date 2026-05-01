@@ -111,6 +111,24 @@ impl App {
             axum::serve(listener, metrics_app).await.unwrap();
         });
 
+        // Node Uptime & Block Import Rate Background Task
+        tokio::spawn(async move {
+            let mut last_height = 0.0;
+            loop {
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                crate::misc::metrics::NODE_UPTIME.inc();
+                
+                let current_height = crate::misc::metrics::CURRENT_HEAD_BLOCK.get();
+                if current_height > 0.0 {
+                    if last_height > 0.0 {
+                        let rate = current_height - last_height;
+                        crate::misc::metrics::BLOCK_IMPORT_RATE.set(rate);
+                    }
+                    last_height = current_height;
+                }
+            }
+        });
+
         if let Some(interval) = self.dev_interval {
             let dev_mode = crate::dev::DevMode::new(
                 self.mempool.clone(),

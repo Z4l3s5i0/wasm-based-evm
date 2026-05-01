@@ -7,6 +7,7 @@ use alloy_consensus::{Block, Header, transaction::SignerRecoverable};
 use alloy_primitives::{Bytes, B256, U256};
 use crate::{info, debug, error};
 use crate::evm::executor::Executor;
+use crate::misc::metrics::{BLOCK_PRODUCTION_SUCCESS, BLOCK_PRODUCTION_FAILED};
 
 pub struct DevMode {
     mempool: Arc<RwLock<Mempool>>,
@@ -99,6 +100,7 @@ impl DevMode {
 
         match self.executor.execute_block(&mut storage, transactions.clone(), block.clone()) {
             Ok(_) => {
+                BLOCK_PRODUCTION_SUCCESS.inc();
                 let block_hash = block.header.hash_slow();
                 let new_base_fee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
                 storage.add_block(block);
@@ -112,6 +114,7 @@ impl DevMode {
                 Ok(())
             }
             Err(e) => {
+                BLOCK_PRODUCTION_FAILED.inc();
                 // If block execution fails, we should put transactions back into mempool
                 info!("[DevMode] Block execution failed: {}. Putting {} transactions back into mempool.", e, transactions.len());
                 for tx in transactions {

@@ -10,6 +10,7 @@ use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{U256};
 use alloy_rpc_types::{SyncStatus, SyncInfo};
 use crate::evm::executor::Executor;
+use crate::misc::metrics::SYNC_STATUS;
 use crate::sync::downloader::Downloader;
 use crate::sync::processor::BlockProcessor;
 
@@ -95,6 +96,16 @@ impl SyncController {
         };
 
         if let Some((best_peer_url, best_height)) = self.downloader.get_best_peer(local_height).await {
+            self.highest_block.store(best_height, Ordering::SeqCst);
+            
+            if best_height > local_height {
+                self.is_syncing.store(true, Ordering::SeqCst);
+                SYNC_STATUS.set(0.0); // 0: syncing
+            } else {
+                self.is_syncing.store(false, Ordering::SeqCst);
+                SYNC_STATUS.set(1.0); // 1: synced
+            }
+
             // Check for divergence
             if local_height > 0 {
                 match self.downloader.get_block_hash(&best_peer_url, local_height).await {

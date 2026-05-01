@@ -1,11 +1,13 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use std::time::Instant;
 use crate::storage::storage::InMemoryStorage;
 use crate::mempool::Mempool;
 use alloy_consensus::{Block, TxEnvelope as Transaction};
 use alloy_primitives::U256;
 use crate::evm::executor::Executor;
 use crate::info;
+use crate::misc::metrics::{BLOCK_EXECUTION_TIME, CURRENT_HEAD_BLOCK, GAS_PROCESSED_TOTAL};
 
 pub struct BlockProcessor {
     storage: Arc<RwLock<InMemoryStorage>>,
@@ -24,6 +26,8 @@ impl BlockProcessor {
         
         match self.executor.execute_block(&mut storage_write, block.body.transactions.clone(), block.clone()) {
             Ok(_) => {
+                CURRENT_HEAD_BLOCK.set(block_num as f64);
+                
                 info!("[Processor] Successfully executed and stored block {}", block_num);
                 let block_hash = block.header.hash_slow();
                 storage_write.update_forkchoice(block_hash, Some(block_hash), Some(block_hash));

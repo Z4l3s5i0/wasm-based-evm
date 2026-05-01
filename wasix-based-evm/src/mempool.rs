@@ -3,6 +3,7 @@ use alloy_primitives::{Address, B256, U256};
 use alloy_consensus::{TxEnvelope as Transaction, Transaction as _, transaction::SignerRecoverable as _};
 use crate::storage::traits::StateProvider;
 use crate::{info, debug};
+use crate::misc::metrics::{MEMPOOL_SIZE, MEMPOOL_REJECTED_TRANSACTIONS};
 
 #[derive(Debug, Default, Clone)]
 pub struct Mempool {
@@ -40,19 +41,28 @@ impl Mempool {
 
         if tx_nonce < current_nonce {
             debug!("[Mempool] Rejecting transaction {:?} (nonce: {}) because it is below current nonce ({})", hash, tx_nonce, current_nonce);
+            MEMPOOL_REJECTED_TRANSACTIONS.inc();
             return false;
         }
 
         // Potential addition: check balance against current state
         // This would require passing storage or balance to this method.
 
-        if tx_nonce == current_nonce {
+        let added = if tx_nonce == current_nonce {
             // Can be pending
             self.insert_into_queue(from, tx, true)
         } else {
             // Potential gap, goes to queued
             self.insert_into_queue(from, tx, false)
+        };
+
+        if added {
+            MEMPOOL_SIZE.set(self.len() as f64);
+        } else {
+            MEMPOOL_REJECTED_TRANSACTIONS.inc();
         }
+
+        added
     }
 
     /// Set the current base fee and re-evaluate pending pool.
@@ -161,6 +171,7 @@ impl Mempool {
     pub fn clear(&mut self) {
         self.pending_transactions.clear();
         self.queued_transactions.clear();
+        MEMPOOL_SIZE.set(0.0);
     }
 
     /// Remove transactions that have been included in a block.
@@ -177,6 +188,8 @@ impl Mempool {
         // Clean up empty queues
         self.pending_transactions.retain(|_, queue| !queue.is_empty());
         self.queued_transactions.retain(|_, queue| !queue.is_empty());
+        
+        MEMPOOL_SIZE.set(self.len() as f64);
     }
 
     /// Peek at N transactions from the mempool for block building without removing them.
@@ -248,6 +261,10 @@ impl Mempool {
             }
         }
         
+        if !result.is_empty() {
+            MEMPOOL_SIZE.set(self.len() as f64);
+        }
+
         result
     }
 

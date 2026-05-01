@@ -9,6 +9,7 @@ use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
 use crate::{info, error, debug};
 use crate::sync::controller::SyncController;
+use crate::misc::metrics::GOSSIP_MESSAGES_RECEIVED;
 
 pub struct GossipHandler {
     mempool: Arc<RwLock<Mempool>>,
@@ -35,6 +36,7 @@ impl GossipHandler {
     pub async fn start(mut self) {
         info!("[Gossip] Starting GossipHandler");
         while let Some(data) = self.gossip_rx.recv().await {
+            GOSSIP_MESSAGES_RECEIVED.inc();
             match self.handle_message(data).await {
                 Ok(_) => {},
                 Err(e) => error!("[Gossip] Error handling gossip message: {}", e),

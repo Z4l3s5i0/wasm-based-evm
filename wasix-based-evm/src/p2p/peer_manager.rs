@@ -14,6 +14,7 @@ use tokio::sync::mpsc;
 use crate::storage::storage::InMemoryStorage;
 use alloy_rlp::Encodable;
 use crate::identity::identity::Identity;
+use crate::misc::metrics::{CONNECTED_PEERS, P2P_MESSAGES_SENT_BYTES, NETWORK_HEAD};
 
 const MAX_PEERS: usize = 50;
 
@@ -241,6 +242,8 @@ impl PeerManager {
         drop(peers_lock);
 
         let mut to_remove = Vec::new();
+        let mut max_peer_height = 0u64;
+
         for (id, url) in peer_list {
             let client = RpcClient::new(url.clone());
             debug!("[P2P] Pinging peer {} ({}) to check health", id, url);
@@ -248,6 +251,16 @@ impl PeerManager {
                 Ok(res) => {
                     if res == "pong" {
                         debug!("[P2P] Peer {} is active (received pong)", id);
+
+                        // Also fetch their block number to update NETWORK_HEAD
+                        let p2p_client = RpcClient::new(url.replace(&format!(":{}", self.discovery_port), &format!(":{}", self.p2p_port)));
+                        if let Ok(height_hex) = p2p_client.block_number().await {
+                            if let Ok(height) = u64::from_str_radix(height_hex.trim_start_matches("0x"), 16) {
+                                if height > max_peer_height {
+                                    max_peer_height = height;
+                                }
+                            }
+                        }
                     } else {
                         debug!("[P2P] Peer {} returned unexpected response: {}", id, res);
                         to_remove.push(id);
@@ -260,12 +273,17 @@ impl PeerManager {
             }
         }
 
+        if max_peer_height > 0 {
+            NETWORK_HEAD.set(max_peer_height as f64);
+        }
+
         if !to_remove.is_empty() {
             let mut peers_lock = self.peers.write().await;
             for id in to_remove {
                 peers_lock.remove(&id);
                 debug!("[P2P] Successfully removed stale peer {}", id);
             }
+            CONNECTED_PEERS.set(peers_lock.len() as f64);
             debug!("[P2P] Current active peer count: {}", peers_lock.len());
         } else {
             debug!("[P2P] All peers are healthy.");
@@ -329,6 +347,7 @@ impl PeerManager {
                         discovery_url: discovery_url.clone(),
                         p2p_url,
                     });
+                    CONNECTED_PEERS.set(peers_lock.len() as f64);
                     debug!("[P2P] Active peer pool size: {}", peers_lock.len());
                 }
                 Err(e) => error!("[P2P] Bonding failed with {}: {}", addr, e),
@@ -344,8 +363,10 @@ impl PeerManager {
         }
         drop(peers);
 
+        let data_len = data.len();
         for (id, url) in target_urls {
             let data_clone = data.clone();
+            P2P_MESSAGES_SENT_BYTES.inc_by(data_len as f64);
             tokio::spawn(async move {
                 let client = RpcClient::new(url);
                 if let Err(e) = client.gossip("gossip".to_string(), data_clone).await {

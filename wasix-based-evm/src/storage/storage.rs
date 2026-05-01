@@ -1,4 +1,6 @@
 use crate::evm::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256, evm_u256_to_alloy_u256};
+use std::time::Instant;
+use crate::misc::metrics::{STORAGE_READ_LATENCY, STORAGE_WRITE_LATENCY, FORK_CHOICE_UPDATED_TOTAL, REORG_COUNT_TOTAL};
 use crate::{info, debug, error};
 use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
 use alloy_primitives::{Address, B256, U256, Bytes, B64};
@@ -304,6 +306,7 @@ impl InMemoryStorage {
     }
 
     pub fn add_block(&mut self, block: Block<Transaction>) {
+        let start = Instant::now();
         let block_number = block.header.number;
         let block_hash = block.header.hash_slow();
         
@@ -334,6 +337,7 @@ impl InMemoryStorage {
                 self.snapshots.remove(&first);
             }
         }
+        STORAGE_WRITE_LATENCY.observe(start.elapsed().as_secs_f64());
     }
 
     pub fn revert_to_height(&mut self, height: u64) -> Vec<Transaction> {
@@ -531,6 +535,18 @@ impl InMemoryStorage {
 
     pub fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>) {
         debug!("[Storage] Updating forkchoice: head={:?}, safe={:?}, finalized={:?}", head, safe, finalized);
+        FORK_CHOICE_UPDATED_TOTAL.inc();
+        
+        // Simple reorg detection: if the new head is different and its parent is not our current head
+        if self.head_block_hash != head && self.head_block_hash != B256::ZERO {
+            if let Some(new_block) = self.get_block_by_hash(head) {
+                if new_block.header.parent_hash != self.head_block_hash {
+                    REORG_COUNT_TOTAL.inc();
+                    info!("[Storage] Reorg detected! Old head: {:?}, New head: {:?}, New parent: {:?}", self.head_block_hash, head, new_block.header.parent_hash);
+                }
+            }
+        }
+
         self.head_block_hash = head;
         if let Some(s) = safe {
             self.safe_block_hash = s;
@@ -700,8 +716,9 @@ impl StateProvider for StorageProvider {
 #[async_trait]
 impl StateProvider for InMemoryStorage {
     async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<GenesisAccount>> {
+        let start = Instant::now();
         let h160 = H160::from_slice(address.as_slice());
-        Ok(self.backend.state.get(&h160).map(|acc| GenesisAccount {
+        let res = Ok(self.backend.state.get(&h160).map(|acc| GenesisAccount {
             balance: {
                 let mut b = [0u8; 32];
                 acc.balance.to_big_endian(&mut b);
@@ -713,15 +730,20 @@ impl StateProvider for InMemoryStorage {
                 Some(acc.storage.iter().map(|(k, v)| (B256::from(k.0), B256::from(v.0))).collect())
             },
             private_key: None,
-        }))
+        }));
+        STORAGE_READ_LATENCY.observe(start.elapsed().as_secs_f64());
+        res
     }
 
     async fn storage(&self, address: Address, slot: B256, _block_id: BlockId) -> Result<Option<U256>> {
+        let start = Instant::now();
         let h160 = H160::from_slice(address.as_slice());
         let h256 = H256(slot.0);
-        Ok(self.backend.state.get(&h160)
+        let res = Ok(self.backend.state.get(&h160)
             .and_then(|acc| acc.storage.get(&h256))
-            .map(|v| U256::from_be_bytes(v.0)))
+            .map(|v| U256::from_be_bytes(v.0)));
+        STORAGE_READ_LATENCY.observe(start.elapsed().as_secs_f64());
+        res
     }
 
     async fn code(&self, address: Address, _block_id: BlockId) -> Result<Option<Bytes>> {

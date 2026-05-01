@@ -11,6 +11,10 @@ use evm::{
 };
 use evm_precompile::StandardPrecompileSet;
 use crate::storage::storage::InMemoryStorage;
+use crate::misc::metrics::{
+    TRANSACTION_EXECUTION_TIME, CPU_CYCLES_TOTAL, INSTRUCTION_COUNT_TOTAL, BLOCK_EXECUTION_TIME,
+    GAS_PROCESSED_TOTAL,
+};
 
 struct BlockRoots {
     state_root: B256,
@@ -90,17 +94,24 @@ impl Executor {
             current_backend.apply_overlayed(&total_changeset);
             let mut overlayed = OverlayedBackend::new(&current_backend, &self.config.runtime);
 
+            let clock = quanta::Clock::new();
+            let start_cycles = clock.now();
+            let start_tx = std::time::Instant::now();
             let result = transact(
                 args,
                 None,
                 &mut overlayed,
                 &invoker,
             );
+            TRANSACTION_EXECUTION_TIME.observe(start_tx.elapsed().as_secs_f64());
+            CPU_CYCLES_TOTAL.inc_by(clock.now().duration_since(start_cycles).as_nanos() as f64);
 
             match result {
                 Ok(value) => {
+                    INSTRUCTION_COUNT_TOTAL.inc_by(value.instruction_count as f64);
                     info!("[Executor] Transaction executed successfully: hash={:?}, used_gas={:?}, status={:?}", tx.hash(), value.used_gas, value.call_create);
                     cumulative_gas_used += value.used_gas.as_u64();
+                    GAS_PROCESSED_TOTAL.inc_by(value.used_gas.as_u64() as f64);
                     
                     let (_, changeset) = overlayed.deconstruct();
                     info!("[Executor] Changeset for tx {:?}: balances={:?}, storages={:?}", tx.hash(), changeset.balances.len(), changeset.storages.len());
@@ -178,7 +189,9 @@ impl Executor {
     }
 
     pub fn execute_block(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
+        let start = std::time::Instant::now();
         let (results, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
+        BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
         
         let cumulative_gas_used = receipts.last().map(|r| r.receipt.cumulative_gas_used).unwrap_or(0);
         let bloom = logs_bloom(receipts.iter().flat_map(|r| r.receipt.logs.iter()));
@@ -357,6 +370,7 @@ impl Executor {
         attr: &alloy_rpc_types::engine::PayloadAttributes,
         base_fee_per_gas: Option<u64>,
     ) -> Result<(Block<TxEnvelope>, Vec<Receipt>), String> {
+        let start = std::time::Instant::now();
         let block_number = parent_header.number + 1;
         
         // Mock a block for execute_with_changeset
@@ -381,6 +395,7 @@ impl Executor {
         };
 
         let (_, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), mock_block.clone())?;
+        BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
         
         let cumulative_gas_used = receipts.last().map(|r| r.receipt.cumulative_gas_used).unwrap_or(0);
         let bloom = logs_bloom(receipts.iter().flat_map(|r| r.receipt.logs.iter()));
@@ -419,7 +434,8 @@ impl Executor {
     }
 
     pub fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
-        if apply_changes {
+        let start = std::time::Instant::now();
+        let result = if apply_changes {
             self.execute_block(storage, transactions, block)
         } else {
             // Just for call/dry-run, we don't need the complex block logic
@@ -433,14 +449,31 @@ impl Executor {
                 let sender = tx.recover_signer().map_err(|e| format!("Failed to recover signer: {:?}", e))?;
                 let args = self.tx_to_transact_args(tx, sender)?;
                 let mut overlayed = OverlayedBackend::new(&storage.backend, &self.config.runtime);
+                
+                let clock = quanta::Clock::new();
+                let start_cycles = clock.now();
+                let start_tx = std::time::Instant::now();
                 let result = transact(args, None, &mut overlayed, &invoker);
+                TRANSACTION_EXECUTION_TIME.observe(start_tx.elapsed().as_secs_f64());
+                CPU_CYCLES_TOTAL.inc_by(clock.now().duration_since(start_cycles).as_nanos() as f64);
+                
                 match result {
-                    Ok(value) => results.push(value),
+                    Ok(value) => {
+                        INSTRUCTION_COUNT_TOTAL.inc_by(value.instruction_count as f64);
+                        GAS_PROCESSED_TOTAL.inc_by(value.used_gas.as_u64() as f64);
+                        results.push(value)
+                    },
                     Err(e) => return Err(format!("Transaction execution failed: {:?}", e)),
                 }
             }
             Ok(results)
+        };
+
+        if result.is_ok() {
+            BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
         }
+
+        result
     }
 }
 

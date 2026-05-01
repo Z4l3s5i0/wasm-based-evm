@@ -1,5 +1,5 @@
 use alloy_primitives::{Address, B256, U256 as AlloyU256};
-pub use evm_interpreter::uint::{H160, H256, U256 as EvmU256};
+pub use evm::interpreter::uint::{H160, H256, U256 as EvmU256};
 pub use evm;
 
 #[allow(dead_code)]
