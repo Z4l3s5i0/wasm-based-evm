@@ -2,8 +2,6 @@ use std::net::SocketAddr;
 use crate::cli::Args;
 use crate::storage::storage::{InMemoryStorage, StorageProvider, GenesisInit};
 use alloy_primitives::U256;
-use alloy_consensus::{Block, Header, TxEnvelope as Transaction};
-use alloy_genesis::{Genesis as AlloyGenesis, Genesis};
 use std::sync::Arc;
 use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
@@ -12,7 +10,10 @@ use crate::{info, debug, error};
 use crate::rpc::account_manager::AccountManager;
 use tokio::sync::RwLock;
 use std::path::PathBuf;
+use axum::Router;
+use axum::routing::get;
 use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
+use prometheus::{Encoder, TextEncoder};
 use crate::evm::ev::alloy_u256_to_evm_u256;
 use crate::evm::executor::Executor;
 use crate::identity::identity::Identity;
@@ -42,8 +43,16 @@ pub struct App {
     state_filename: String,
     dev_interval: Option<u64>,
     auth_rpc_jwt_secret: Option<[u8; 32]>,
+    metrics_port: u16
 }
 
+async fn metrics_handler() -> String {
+    let encoder = TextEncoder::new();
+    let metric_families = prometheus::gather();
+    let mut buffer = Vec::new();
+    encoder.encode(&metric_families, &mut buffer).unwrap();
+    String::from_utf8(buffer).unwrap()
+}
 impl App {
     pub fn builder() -> AppBuilder {
         AppBuilder::default()
@@ -91,6 +100,16 @@ impl App {
         // });
 
         let _eth_handle = eth_server.start(self.eth_module);
+
+        // Start metrics server
+        crate::misc::metrics::init_metrics();
+        let metrics_addr: SocketAddr = format!("0.0.0.0:{}", self.metrics_port).parse().unwrap();
+        let metrics_app: Router = Router::new().route("/metrics", get(metrics_handler));
+        info!("[App] Prometheus metrics server listening on {}", metrics_addr);
+        tokio::spawn(async move {
+            let listener = tokio::net::TcpListener::bind(metrics_addr).await.unwrap();
+            axum::serve(listener, metrics_app).await.unwrap();
+        });
 
         if let Some(interval) = self.dev_interval {
             let dev_mode = crate::dev::DevMode::new(
@@ -442,6 +461,7 @@ impl AppBuilder {
             state_filename,
             dev_interval: args.dev,
             auth_rpc_jwt_secret,
+            metrics_port: args.metrics_port
         })
     }
 }

@@ -63,4 +63,8 @@ pub struct Args {
     /// Descriptive name for the node, used in storage filenames
     #[arg(long)]
     pub peer_name: Option<String>,
+
+    /// Descriptive name for the node, used in storage filenames
+    #[arg(long, default_value_t = 9050)]
+    pub metrics_port: u16,
 }
