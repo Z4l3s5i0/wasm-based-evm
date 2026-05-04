@@ -49,6 +49,34 @@ wasmer run . --enable-threads --net --http-client --enable-exceptions --volume .
 --p2p-port <port> --discovery-port <other-port> --rpc-port <other-other-port> --bootnodes <bootnode-address, other-bootnode-address,...> --max_peers <max-connections> --ext_ip <optional-external-ip>
 ```
 
+### Monitoring
+To monitor the node performance, you can use Prometheus and Grafana.
+
+#### 1. Install Prometheus and Grafana
+The easiest way is to use Docker:
+```shell
+docker run -d --name prometheus -p 9090:9090 prom/prometheus
+docker run -d --name grafana -p 3001:3000 grafana/grafana
+```
+
+#### 2. Configure Prometheus
+Add the following to your `prometheus.yml`:
+```yaml
+scrape_configs:
+  - job_name: 'wasm-evm'
+    static_configs:
+      - targets: ['localhost:9050'] # Replace with your node's metrics port
+```
+
+#### 3. Import Dashboards
+Pre-configured dashboards are available in `./wasix-based-evm/grafana/dashboards/`:
+- `global-comparison.json`
+- `execution-efficiency.json`
+- `network-health.json`
+- `system-resources.json`
+
+Open Grafana at `http://localhost:3001`, go to **Dashboards** -> **Import**, and upload these JSON files.
+
 ### references
 for the [Ethereum Json-Rpc specification](https://ethereum.github.io/execution-apis/)
 for the [Ethereum Netwrok-layer specification (p2p)](https://ethereum.org/developers/docs/networking-layer/)
@@ -82,10 +110,13 @@ For example use cases to test, see the Readme [here](./tester/README.md).
 
 ### Missing Todos
 - [ ] encryption for connections to execution client
-- [ ] initializing of the execution client with command line arguments
-- [ ] complete p2p
+- [ ] complete spec compliant p2p
 - [ ] implementing persistent storage
-- [ ] complete engine_api specs
 - [ ] including features of forks after shanghai-capella
-
-For an AI analysis of missing components see [here](KI_Analysis_missing_pieces.md) 
+- [ ] metrics dumping
+- [ ] State pruning
+- [ ] comprehensive syncing
+- [ ] browser compatibility
+- [ ] Genesis Account setup
+- [ ] implementing the [EIP-2718](https://eips.ethereum.org/EIPS/eip-2718) typed transaction signing
+- [ ] implementing the [EIP-1559](https://eips.ethereum.org/EIPS/eip-1559) fee schedule

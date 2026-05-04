@@ -24,7 +24,7 @@ pub struct Args {
     #[arg(long, default_value_t = 3000)]
     pub frontend_port: u16,
 
-    /// Comma-separated list of Multiaddrs for bootstrapping (must include /p2p/PeerId)
+    /// Comma-separated list of Multiaddrs for bootstrapping
     #[arg(long, value_delimiter = ',')]
     pub bootnodes: Vec<String>,
 
