@@ -1,6 +1,5 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::mempool::Mempool;
 use crate::storage::storage::InMemoryStorage;
 use crate::storage::traits::StateProvider;
 use alloy_consensus::{Block, Header, transaction::SignerRecoverable};
@@ -8,6 +7,7 @@ use alloy_primitives::{Bytes, B256, U256};
 use crate::{info, debug, error};
 use crate::evm::executor::Executor;
 use crate::misc::metrics::{BLOCK_PRODUCTION_SUCCESS, BLOCK_PRODUCTION_FAILED};
+use crate::storage::mempool::Mempool;
 
 pub struct DevMode {
     mempool: Arc<RwLock<Mempool>>,

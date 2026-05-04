@@ -4,13 +4,13 @@ use tokio::sync::RwLock;
 use crate::storage::storage::InMemoryStorage;
 use crate::storage::traits::StateProvider;
 use crate::p2p::peer_manager::PeerManager;
-use crate::mempool::Mempool;
 use crate::{info, error, debug};
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_primitives::{U256};
 use alloy_rpc_types::{SyncStatus, SyncInfo};
 use crate::evm::executor::Executor;
 use crate::misc::metrics::SYNC_STATUS;
+use crate::storage::mempool::Mempool;
 use crate::sync::downloader::Downloader;
 use crate::sync::processor::BlockProcessor;
 

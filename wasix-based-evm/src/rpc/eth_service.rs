@@ -4,7 +4,6 @@ use alloy_rpc_types::{Block, Filter, Log, SyncStatus, TransactionReceipt, Transa
 use crate::storage::traits::{StateProvider};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use tokio::sync::RwLock;
-use crate::mempool::Mempool;
 use crate::rpc::account_manager::AccountManager;
 use crate::p2p::peer_manager::PeerManager;
 use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRecoverable};
@@ -18,6 +17,7 @@ use crate::misc::error::RpcError::Internal;
 use crate::misc::error::{RpcError, RpcResult};
 use crate::rpc::block_mapper::BlockMapper;
 use crate::rpc::transaction_mapper::TransactionMapper;
+use crate::storage::mempool::Mempool;
 use crate::sync::controller::SyncController;
 
 #[derive(Clone)]

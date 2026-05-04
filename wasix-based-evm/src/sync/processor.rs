@@ -1,13 +1,12 @@
-use std::sync::Arc;
-use tokio::sync::RwLock;
-use std::time::Instant;
-use crate::storage::storage::InMemoryStorage;
-use crate::mempool::Mempool;
-use alloy_consensus::{Block, TxEnvelope as Transaction};
-use alloy_primitives::U256;
 use crate::evm::executor::Executor;
 use crate::info;
-use crate::misc::metrics::{BLOCK_EXECUTION_TIME, CURRENT_HEAD_BLOCK, GAS_PROCESSED_TOTAL};
+use crate::misc::metrics::CURRENT_HEAD_BLOCK;
+use crate::storage::mempool::Mempool;
+use crate::storage::storage::InMemoryStorage;
+use alloy_consensus::{Block, TxEnvelope as Transaction};
+use alloy_primitives::U256;
+use std::sync::Arc;
+use tokio::sync::RwLock;
 
 pub struct BlockProcessor {
     storage: Arc<RwLock<InMemoryStorage>>,

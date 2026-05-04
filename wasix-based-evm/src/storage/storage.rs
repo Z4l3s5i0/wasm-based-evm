@@ -11,7 +11,6 @@ use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
 use crate::storage::traits::{StateProvider};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_rpc_types::engine::PayloadId;
-use crate::mempool::Mempool;
 use alloy_eips::BlockId;
 use anyhow::Result;
 use async_trait::async_trait;
@@ -21,6 +20,7 @@ use serde::{Serialize, Deserialize};
 use std::fs::File;
 use std::path::Path;
 use crate::evm::executor::Executor;
+use crate::storage::mempool::Mempool;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]

@@ -87,10 +87,11 @@ tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch =
 socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31", default-features = false, features = [ "tls12"] }
 
-
+rustlite = { version = "0.8.0", default-features = false }
 
 
 [patch.crates-io]
+symlink = {path="../symlink"}
 wasm-bindgen = {git = "https://github.com/wasix-org/wasm-bindgen.git" , branch = "wasi"}
 getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
 mio = { git = "https://github.com/wasix-org/mio" }

@@ -3,7 +3,6 @@ use crate::cli::Args;
 use crate::storage::storage::{InMemoryStorage, StorageProvider, GenesisInit};
 use alloy_primitives::U256;
 use std::sync::Arc;
-use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
 use crate::{info, debug, error};
 
@@ -25,6 +24,7 @@ use crate::rpc::eth_service::EthService;
 use crate::rpc::debug_service::DebugService;
 use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
+use crate::storage::mempool::Mempool;
 use crate::sync::controller::SyncController;
 
 pub struct App {

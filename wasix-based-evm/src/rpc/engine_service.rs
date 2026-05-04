@@ -1,5 +1,4 @@
 use crate::evm::executor::Executor;
-use crate::mempool::Mempool;
 use crate::misc::error::{RpcError, RpcResult};
 use crate::rpc::engine_mapper::EngineMapper;
 use crate::storage::storage::InMemoryStorage;
@@ -16,6 +15,7 @@ use alloy_rpc_types::engine::{
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::storage::mempool::Mempool;
 
 pub struct EngineService {
     pub storage: Arc<RwLock<InMemoryStorage>>,

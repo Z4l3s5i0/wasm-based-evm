@@ -5,11 +5,11 @@ use alloy_consensus::Block as ConsensusBlock;
 use alloy_consensus::TxEnvelope as Transaction;
 use alloy_consensus::transaction::SignerRecoverable;
 use alloy_rlp::Decodable;
-use crate::mempool::Mempool;
 use crate::p2p::peer_manager::PeerManager;
 use crate::{info, error, debug};
 use crate::sync::controller::SyncController;
 use crate::misc::metrics::GOSSIP_MESSAGES_RECEIVED;
+use crate::storage::mempool::Mempool;
 
 pub struct GossipHandler {
     mempool: Arc<RwLock<Mempool>>,

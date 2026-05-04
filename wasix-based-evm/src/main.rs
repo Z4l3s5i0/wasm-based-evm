@@ -1,6 +1,5 @@
 mod rpc;
 mod storage;
-mod mempool;
 mod dev;
 mod p2p;
 mod frontend;
