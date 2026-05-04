@@ -2,7 +2,7 @@ use crate::evm::executor::Executor;
 use crate::misc::error::{RpcError, RpcResult};
 use crate::rpc::engine_mapper::EngineMapper;
 use crate::storage::storage::InMemoryStorage;
-use crate::sync::controller::SyncController;
+use crate::storage::traits::StateProvider;
 use crate::{error, info, debug};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, Transaction, TxEnvelope};
 use alloy_primitives::{Bytes, B256, U256};
@@ -12,13 +12,14 @@ use alloy_rpc_types::engine::{
     ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId,
     PayloadStatus, PayloadStatusEnum, TransitionConfiguration, ExecutionPayloadEnvelopeV2,
 };
+use crate::sync::controller::SyncController;
 use std::collections::HashMap;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::storage::mempool::Mempool;
 
 pub struct EngineService {
-    pub storage: Arc<RwLock<InMemoryStorage>>,
+    pub state_storage: Arc<dyn StateProvider>,
     pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
     pub sync_engine: Arc<SyncController>,
@@ -26,14 +27,14 @@ pub struct EngineService {
 
 impl EngineService {
     pub fn new(
-        storage: Arc<RwLock<InMemoryStorage>>,
+        state_storage: Arc<dyn StateProvider>,
         mempool: Arc<RwLock<Mempool>>,
         executor: Executor,
         sync_engine: Arc<SyncController>,
     ) -> Self {
         info!("[EngineService] Initializing engine service");
         Self {
-            storage,
+            state_storage,
             mempool,
             executor,
             sync_engine,
@@ -98,10 +99,11 @@ impl EngineService {
         &self,
         hashes: Vec<B256>,
     ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
-        let storage = self.storage.read().await;
         let mut bodies = Vec::new();
         for hash in hashes {
-            let body = storage.get_block_by_hash(hash).map(|block| {
+            let block = self.state_storage.block(alloy_eips::BlockId::Hash(hash.into())).await
+                .map_err(|e| RpcError::Internal(e.to_string()))?;
+            let body = block.map(|block| {
                 EngineMapper::to_execution_payload_body_v1(&block)
             });
             bodies.push(body);
@@ -121,11 +123,12 @@ impl EngineService {
         start: u64,
         count: u64,
     ) -> RpcResult<Vec<Option<ExecutionPayloadBodyV1>>> {
-        let storage = self.storage.read().await;
         let mut bodies = Vec::new();
         for i in 0..count {
             let number = start + i;
-            let body = storage.get_block_by_number(number).map(|block| {
+            let block = self.state_storage.block(alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Number(number))).await
+                .map_err(|e| RpcError::Internal(e.to_string()))?;
+            let body = block.map(|block| {
                 EngineMapper::to_execution_payload_body_v1(&block)
             });
             bodies.push(body);
@@ -142,16 +145,18 @@ impl EngineService {
     }
 
     pub async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV3> {
-        let storage = self.storage.read().await;
-        let (block, _) = storage.get_payload(&payload_id)
+        let storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        let (block, _) = storage_clone.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(EngineMapper::to_execution_payload_v3(&block.clone()))
     }
 
     pub async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV4> {
-        let storage = self.storage.read().await;
-        let (block, _) = storage.get_payload(&payload_id)
+        let storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        let (block, _) = storage_clone.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(EngineMapper::to_execution_payload_v4(&block.clone()))
@@ -209,23 +214,28 @@ impl EngineService {
         _version: u8,
     ) -> RpcResult<ForkchoiceUpdated> {
         debug!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
-        let mut storage = self.storage.write().await;
+        let storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
 
         // Save current forkchoice state for potential rollback
-        let old_head = storage.head_block_hash;
-        let old_safe = storage.safe_block_hash;
-        let old_finalized = storage.finalized_block_hash;
+        let old_head = storage_clone.head_block_hash;
+        let old_safe = storage_clone.safe_block_hash;
+        let old_finalized = storage_clone.finalized_block_hash;
+
+        let writer = self.state_storage.writer();
 
         // Update forkchoice in storage
-        storage.update_forkchoice(forkchoice_state.head_block_hash, Some(forkchoice_state.safe_block_hash), Some(forkchoice_state.finalized_block_hash));
+        writer.update_forkchoice(forkchoice_state.head_block_hash, Some(forkchoice_state.safe_block_hash), Some(forkchoice_state.finalized_block_hash)).await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
 
         // 1. Determine payload status based on head block availability
-        let status = self.determine_payload_status(&storage, forkchoice_state.head_block_hash).await;
+        let status = self.determine_payload_status(&storage_clone, forkchoice_state.head_block_hash).await;
 
         // 2. Build payload if requested and status is VALID (or SYNCING)
         let (status, payload_id) = if status.status == PayloadStatusEnum::Valid || (status.status == PayloadStatusEnum::Syncing && payload_attributes.is_some()) {
             if let Some(attr) = payload_attributes {
-                match self.build_new_payload(&mut storage, forkchoice_state.head_block_hash, attr, &status).await {
+                let mut mut_storage_clone = storage_clone;
+                match self.build_new_payload(&mut mut_storage_clone, forkchoice_state.head_block_hash, attr, &status).await {
                     Ok(id) => (status, id),
                     Err(RpcError::InvalidParams(e)) if e == "Invalid timestamp" => {
                         (PayloadStatus {
@@ -235,7 +245,8 @@ impl EngineService {
                     }
                     Err(e) => {
                         // Rollback forkchoice in storage on error
-                        storage.update_forkchoice(old_head, Some(old_safe), Some(old_finalized));
+                        writer.update_forkchoice(old_head, Some(old_safe), Some(old_finalized)).await
+                            .map_err(|re| RpcError::Internal(format!("Rollback failed: {} after {}", re, e)))?;
                         return Err(e);
                     }
                 }
@@ -393,8 +404,9 @@ impl EngineService {
     }
 
     pub async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
-        let storage = self.storage.read().await;
-        let (block, _) = storage.get_payload(&payload_id)
+        let storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        let (block, _) = storage_clone.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         Ok(EngineMapper::to_execution_payload_v1(block))
@@ -418,8 +430,9 @@ impl EngineService {
     }
 
     pub async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
-        let storage = self.storage.read().await;
-        let (block, receipts) = storage.get_payload(&payload_id)
+        let storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        let (block, receipts) = storage_clone.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
         let execution_payload = EngineMapper::to_execution_payload_v2(block);
@@ -457,13 +470,21 @@ impl EngineService {
         }
 
         // 2. Validate parent and Execute Block
-        let mut storage = self.storage.write().await;
-        if let Some(status) = self.validate_parent_block(&storage, payload_v1.parent_hash) {
+        let mut storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| RpcError::Internal(e.to_string()))?;
+
+        if let Some(status) = self.validate_parent_block(&storage_clone, payload_v1.parent_hash) {
             return Ok(status);
         }
 
-        match self.executor.execute_block(&mut storage, transactions, block) {
-            Ok(_) => {
+        match self.executor.execute_with_changeset(&mut storage_clone, transactions.clone(), block.clone()) {
+            Ok((_, receipts, changeset)) => {
+                let writer = self.state_storage.writer();
+                let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
+                writer.commit_block(block, receipts, changeset, withdrawals.into_iter().collect())
+                    .await
+                    .map_err(|e| RpcError::Internal(e.to_string()))?;
+
                 Ok(PayloadStatus {
                     status: PayloadStatusEnum::Valid,
                     latest_valid_hash: Some(actual_hash),

@@ -662,6 +662,10 @@ impl StateProvider for InMemoryStorage {
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
         Ok(self.tx_location.get(&hash).cloned())
     }
+
+    async fn get_storage_clone(&self) -> Result<InMemoryStorage> {
+        Ok(self.clone())
+    }
 }
 
 #[cfg(test)]

@@ -4,8 +4,11 @@ use alloy_consensus::{Header, Block, ReceiptWithBloom as Receipt, TxEnvelope as 
 use alloy_eips::BlockId;
 use alloy_genesis::GenesisAccount;
 use alloy_rpc_types::engine::PayloadId;
+use alloy_rpc_types::Withdrawal;
+use evm::backend::OverlayedChangeSet;
 use anyhow::Result;
 use async_trait::async_trait;
+use crate::storage::storage::InMemoryStorage;
 
 #[async_trait]
 pub trait StateProvider: Send + Sync {
@@ -25,6 +28,9 @@ pub trait StateProvider: Send + Sync {
     async fn transaction(&self, hash: B256) -> Result<Option<Transaction>>;
     async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>>;
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>>; // (number, hash, index)
+
+    /// Returns a clone of the underlying storage for simulations
+    async fn get_storage_clone(&self) -> Result<InMemoryStorage>;
 }
 
 
@@ -38,4 +44,5 @@ pub trait WriteProvider: Send + Sync {
     async fn remove_payload(&self, payload_id: &PayloadId) -> Result<Option<(Block<Transaction>, Vec<Receipt>)>>;
     async fn update_forkchoice(&self, head: B256, safe: Option<B256>, finalized: Option<B256>) -> Result<()>;
     async fn revert_to_height(&self, height: u64) -> Result<Vec<Transaction>>;
+    async fn commit_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, changeset: OverlayedChangeSet, withdrawals: Vec<Withdrawal>) -> Result<()>;
 }

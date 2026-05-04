@@ -11,7 +11,7 @@ use crate::storage::mempool::Mempool;
 
 pub struct DevMode {
     mempool: Arc<RwLock<Mempool>>,
-    storage: Arc<RwLock<InMemoryStorage>>,
+    state_storage: Arc<dyn StateProvider>,
     executor: Arc<Executor>,
     interval: u64,
 }
@@ -19,13 +19,13 @@ pub struct DevMode {
 impl DevMode {
     pub fn new(
         mempool: Arc<RwLock<Mempool>>,
-        storage: Arc<RwLock<InMemoryStorage>>,
+        state_storage: Arc<dyn StateProvider>,
         executor: Arc<Executor>,
         interval: u64,
     ) -> Self {
         Self {
             mempool,
-            storage,
+            state_storage,
             executor,
             interval,
         }
@@ -47,10 +47,11 @@ impl DevMode {
     }
 
     async fn produce_block(&self) -> Result<(), String> {
-        let mut storage = self.storage.write().await;
+        let mut storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| e.to_string())?;
         let mut mempool = self.mempool.write().await;
 
-        let latest_block = storage.get_latest_block()
+        let latest_block = storage_clone.get_latest_block()
             .cloned()
             .ok_or_else(|| "Latest block not found".to_string())?;
 
@@ -98,18 +99,21 @@ impl DevMode {
 
         debug!("[DevMode] Producing block #{} with {} transactions", number, transactions.len());
 
-        match self.executor.execute_block(&mut storage, transactions.clone(), block.clone()) {
-            Ok(_) => {
+        match self.executor.execute_with_changeset(&mut storage_clone, transactions.clone(), block.clone()) {
+            Ok((_, receipts, changeset)) => {
                 BLOCK_PRODUCTION_SUCCESS.inc();
                 let block_hash = block.header.hash_slow();
                 let new_base_fee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-                storage.add_block(block);
-                storage.update_forkchoice(block_hash, Some(block_hash), Some(block_hash));
+                
+                let writer = self.state_storage.writer();
+                let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
+                writer.commit_block(block, receipts, changeset, withdrawals.into_iter().collect()).await.map_err(|e| e.to_string())?;
+                writer.update_forkchoice(block_hash, Some(block_hash), Some(block_hash)).await.map_err(|e| e.to_string())?;
                 
                 debug!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);
 
                 // Update mempool base fee (this will trigger revalidation and eviction if needed)
-                mempool.update_base_fee(new_base_fee, &*storage).await;
+                mempool.update_base_fee(new_base_fee, &storage_clone).await;
 
                 Ok(())
             }
@@ -119,7 +123,7 @@ impl DevMode {
                 info!("[DevMode] Block execution failed: {}. Putting {} transactions back into mempool.", e, transactions.len());
                 for tx in transactions {
                     let from = tx.recover_signer().unwrap_or_default();
-                    let current_nonce = storage.transaction_count(from, alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Latest)).await.unwrap_or(0);
+                    let current_nonce = self.state_storage.transaction_count(from, alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Latest)).await.unwrap_or(0);
                     mempool.add_transaction(tx, current_nonce);
                 }
                 Err(format!("Block execution failed: {}", e))

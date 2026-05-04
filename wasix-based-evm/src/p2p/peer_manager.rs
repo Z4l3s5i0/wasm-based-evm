@@ -11,8 +11,10 @@ use jsonrpsee::core::RpcResult;
 use crate::{info, error, debug};
 use tokio::sync::mpsc;
 
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::traits::StateProvider;
 use alloy_rlp::Encodable;
+use jsonrpsee::core::client::Error;
+use jsonrpsee::types::ErrorCode::InternalError;
 use crate::identity::identity::Identity;
 use crate::misc::metrics::{CONNECTED_PEERS, P2P_MESSAGES_SENT_BYTES, NETWORK_HEAD};
 
@@ -31,7 +33,7 @@ pub struct PeerManager {
     local_identity: Identity,
     peers: Arc<RwLock<HashMap<String, PeerInfo>>>,
     gossip_tx: mpsc::Sender<Vec<u8>>,
-    storage: Arc<RwLock<InMemoryStorage>>,
+    state_storage: Arc<dyn StateProvider>,
     pub discovery_port: u16,
     pub p2p_port: u16,
     pub ext_ip: Option<std::net::IpAddr>,
@@ -89,8 +91,7 @@ impl DiscoveryApiServer for PeerManager {
 #[async_trait::async_trait]
 impl P2pApiServer for PeerManager {
     async fn get_block_by_number(&self, number: u64) -> RpcResult<Option<Vec<u8>>> {
-        let storage = self.storage.read().await;
-        if let Some(block) = storage.get_block_by_number(number) {
+        if let Ok(Some(block)) = self.state_storage.block(alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Number(number))).await {
             let mut out = Vec::new();
             block.encode(&mut out);
             Ok(Some(out))
@@ -100,19 +101,29 @@ impl P2pApiServer for PeerManager {
     }
 
     async fn get_block_hash(&self, number: u64) -> RpcResult<Option<B256>> {
-        let storage = self.storage.read().await;
-        Ok(storage.get_block_hash(number))
+        match self.state_storage.block_hash(number).await {
+            Ok(h) => Ok(h.and_then(|x| Some(x))),
+            Err(e) => Err(jsonrpsee::types::error::ErrorObject::owned(
+                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                e.to_string(),
+                None::<()>,
+            ).into()),
+        }
     }
 
     async fn get_block_by_hash(&self, hash: B256) -> RpcResult<Option<Vec<u8>>> {
-        let storage = self.storage.read().await;
-        match storage.get_block_by_hash(hash) {
-            Some(block) => {
+        match self.state_storage.block(alloy_eips::BlockId::Hash(hash.into())).await {
+            Ok(Some(block)) => {
                 let mut buf = Vec::new();
-                alloy_rlp::Encodable::encode(&block, &mut buf);
+                Encodable::encode(&block, &mut buf);
                 Ok(Some(buf))
             }
-            None => Ok(None),
+            Ok(None) => Ok(None),
+            Err(e) => Err(jsonrpsee::types::error::ErrorObject::owned(
+                jsonrpsee::types::error::INTERNAL_ERROR_CODE,
+                e.to_string(),
+                None::<()>,
+            ).into()),
         }
     }
 
@@ -123,8 +134,7 @@ impl P2pApiServer for PeerManager {
     }
 
     async fn block_number(&self) -> RpcResult<String> {
-        let storage = self.storage.read().await;
-        let num = storage.get_latest_block_number();
+        let num = self.state_storage.latest_block_number().await.unwrap_or(0);
         Ok(format!("0x{:x}", num))
     }
 }
@@ -132,7 +142,7 @@ impl P2pApiServer for PeerManager {
 impl PeerManager {
     pub fn new(
         identity: Identity,
-        storage: Arc<RwLock<InMemoryStorage>>,
+        state_storage: Arc<dyn StateProvider>,
         discovery_port: u16,
         p2p_port: u16,
         ext_ip: Option<std::net::IpAddr>,
@@ -143,7 +153,7 @@ impl PeerManager {
             local_identity: identity,
             peers: Arc::new(RwLock::new(HashMap::new())),
             gossip_tx,
-            storage,
+            state_storage,
             discovery_port,
             p2p_port,
             ext_ip,

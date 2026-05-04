@@ -4,6 +4,8 @@ use async_trait::async_trait;
 use alloy_primitives::{Address, B256, U256, Bytes, B64};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_rpc_types::engine::PayloadId;
+use alloy_rpc_types::Withdrawal;
+use evm::backend::OverlayedChangeSet;
 use alloy_eips::BlockId;
 use alloy_genesis::GenesisAccount;
 use anyhow::Result;
@@ -176,6 +178,10 @@ impl StateProvider for StorageProvider {
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
         self.inner.read().await.transaction_block_reference(hash).await
     }
+
+    async fn get_storage_clone(&self) -> Result<InMemoryStorage> {
+        Ok(self.inner.read().await.clone())
+    }
 }
 
 #[async_trait]
@@ -217,6 +223,42 @@ impl WriteProvider for StorageWriter {
     async fn revert_to_height(&self, height: u64) -> Result<Vec<Transaction>> {
         Ok(self.inner.write().await.revert_to_height(height))
     }
+
+    async fn commit_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, changeset: OverlayedChangeSet, withdrawals: Vec<Withdrawal>) -> Result<()> {
+        let mut storage = self.inner.write().await;
+        
+        // 1. Apply changeset
+        storage.backend.apply_overlayed(&changeset);
+
+        // 2. Apply withdrawals
+        for withdrawal in withdrawals {
+            let addr = withdrawal.address;
+            let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64);
+            let evm_amount_wei = crate::evm::ev::alloy_u256_to_evm_u256(amount_wei);
+            let h160_addr = crate::evm::ev::address_to_h160(addr);
+            
+            let account = storage.backend.state.entry(h160_addr).or_insert_with(|| evm::backend::InMemoryAccount {
+                balance: crate::evm::ev::EvmU256::zero(),
+                nonce: crate::evm::ev::EvmU256::zero(),
+                code: Vec::new(),
+                storage: std::collections::BTreeMap::new(),
+                transient_storage: std::collections::BTreeMap::new(),
+            });
+            account.balance += evm_amount_wei;
+        }
+
+        // 3. Add transactions and receipts
+        for (tx, receipt) in block.body.transactions.iter().zip(receipts.iter()) {
+            let hash = *tx.hash();
+            storage.add_transaction(tx.clone());
+            storage.add_receipt(hash, receipt.clone());
+        }
+
+        // 4. Add block
+        storage.add_block(block);
+        
+        Ok(())
+    }
 }
 
 #[async_trait]
@@ -251,5 +293,9 @@ impl WriteProvider for StorageProvider {
 
     async fn revert_to_height(&self, height: u64) -> Result<Vec<Transaction>> {
         self.writer.revert_to_height(height).await
+    }
+
+    async fn commit_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, changeset: OverlayedChangeSet, withdrawals: Vec<Withdrawal>) -> Result<()> {
+        self.writer.commit_block(block, receipts, changeset, withdrawals).await
     }
 }

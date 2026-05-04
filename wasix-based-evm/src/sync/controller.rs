@@ -1,7 +1,6 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::storage::storage::InMemoryStorage;
 use crate::storage::traits::StateProvider;
 use crate::p2p::peer_manager::PeerManager;
 use crate::{info, error, debug};
@@ -15,7 +14,7 @@ use crate::sync::downloader::Downloader;
 use crate::sync::processor::BlockProcessor;
 
 pub struct SyncController {
-    storage: Arc<RwLock<InMemoryStorage>>,
+    state_storage: Arc<dyn StateProvider>,
     mempool: Arc<RwLock<Mempool>>,
     downloader: Downloader,
     processor: BlockProcessor,
@@ -26,16 +25,16 @@ pub struct SyncController {
 
 impl SyncController {
     pub fn new(
-        storage: Arc<RwLock<InMemoryStorage>>,
+        state_storage: Arc<dyn StateProvider>,
         mempool: Arc<RwLock<Mempool>>,
         peer_manager: Arc<PeerManager>,
         executor: Arc<Executor>
     ) -> Self {
         Self {
-            storage: storage.clone(),
+            state_storage: state_storage.clone(),
             mempool: mempool.clone(),
             downloader: Downloader::new(peer_manager),
-            processor: BlockProcessor::new(storage, executor, mempool),
+            processor: BlockProcessor::new(state_storage, executor, mempool),
             is_syncing: AtomicBool::new(false),
             current_block: AtomicU64::new(0),
             highest_block: AtomicU64::new(0),
@@ -64,16 +63,12 @@ impl SyncController {
     }
 
     pub async fn has_block(&self, hash: alloy_primitives::B256) -> bool {
-        let storage = self.storage.read().await;
-        storage.get_block_by_hash(hash).is_some()
+        self.state_storage.block(alloy_eips::BlockId::Hash(hash.into())).await.map(|b| b.is_some()).unwrap_or(false)
     }
 
     pub async fn status(&self) -> SyncStatus {
         if self.is_syncing.load(Ordering::SeqCst) {
-            let starting_block = {
-                let storage_read = self.storage.read().await;
-                storage_read.get_latest_block_number()
-            };
+            let starting_block = self.state_storage.latest_block_number().await.unwrap_or(0);
             SyncStatus::Info(Box::new(SyncInfo {
                 current_block: U256::from(self.current_block.load(Ordering::SeqCst)),
                 highest_block: U256::from(self.highest_block.load(Ordering::SeqCst)),
@@ -89,9 +84,8 @@ impl SyncController {
 
     async fn sync_step(&self) -> anyhow::Result<()> {
         let (local_height, local_hash) = {
-            let storage_read = self.storage.read().await;
-            let height = storage_read.get_latest_block_number();
-            let hash = storage_read.get_block_hash(height).unwrap_or_default();
+            let height = self.state_storage.latest_block_number().await.unwrap_or(0);
+            let hash = self.state_storage.block_hash(height).await.unwrap_or_default().unwrap_or_default();
             (height, hash)
         };
 
@@ -114,7 +108,7 @@ impl SyncController {
                         // Find common ancestor
                         let mut ancestor_height = local_height - 1;
                         while ancestor_height > 0 {
-                            let local_ancestor_hash = self.storage.read().await.get_block_hash(ancestor_height).unwrap_or_default();
+                            let local_ancestor_hash = self.state_storage.block_hash(ancestor_height).await.unwrap_or_default().unwrap_or_default();
                             match self.downloader.get_block_hash(&best_peer_url, ancestor_height).await {
                                 Ok(Some(peer_ancestor_hash)) if peer_ancestor_hash == local_ancestor_hash => {
                                     debug!("[Sync] Common ancestor found at height {}", ancestor_height);
@@ -125,18 +119,14 @@ impl SyncController {
                         }
                         
                         // Reorg
-                        let reverted_txs = {
-                            let mut storage_write = self.storage.write().await;
-                            storage_write.revert_to_height(ancestor_height)
-                        };
+                        let reverted_txs = self.state_storage.writer().revert_to_height(ancestor_height).await?;
                         
                         debug!("[Sync] Reverted {} blocks. Re-adding {} transactions to mempool", local_height - ancestor_height, reverted_txs.len());
                         {
                             let mut mempool_write = self.mempool.write().await;
-                            let storage_read = self.storage.read().await;
                             for tx in reverted_txs {
                                 let from = tx.recover_signer().unwrap_or_default();
-                                let current_nonce = storage_read.transaction_count(from, alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Latest)).await.unwrap_or(0);
+                                let current_nonce = self.state_storage.transaction_count(from, alloy_eips::BlockId::Number(alloy_eips::BlockNumberOrTag::Latest)).await.unwrap_or(0);
                                 mempool_write.add_transaction(tx, current_nonce);
                             }
                         }
@@ -183,10 +173,7 @@ impl SyncController {
 
             // Check if parent exists in storage
             let parent_hash = block.header.parent_hash;
-            let parent_exists = {
-                let storage = self.storage.read().await;
-                storage.get_block_by_hash(parent_hash).is_some()
-            };
+            let parent_exists = self.state_storage.block(alloy_eips::BlockId::Hash(parent_hash.into())).await.map(|b| b.is_some()).unwrap_or(false);
 
             if !parent_exists && next_block_num > 0 {
                 debug!("[Sync] Parent block {:?} for {} missing, fetching ancestors", parent_hash, next_block_num);
@@ -210,11 +197,8 @@ impl SyncController {
 
         while current_hash != alloy_primitives::B256::ZERO {
             // Check if we already have it
-            {
-                let storage = self.storage.read().await;
-                if storage.get_block_by_hash(current_hash).is_some() {
-                    break;
-                }
+            if self.state_storage.block(alloy_eips::BlockId::Hash(current_hash.into())).await.map(|b| b.is_some()).unwrap_or(false) {
+                break;
             }
 
             debug!("[Sync] Fetching ancestor block {:?}", current_hash);

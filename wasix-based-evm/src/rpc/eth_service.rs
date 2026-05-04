@@ -26,7 +26,6 @@ pub struct EthService {
     pub mempool: Arc<RwLock<Mempool>>,
     pub peer_manager: Arc<PeerManager>,
     pub executor: Executor,
-    pub storage: Arc<RwLock<InMemoryStorage>>,
     pub account_manager: Arc<AccountManager>,
     pub sync_engine: Arc<SyncController>,
 }
@@ -173,9 +172,10 @@ impl EthService {
             Transaction::Legacy(alloy_consensus::Signed::new_unchecked(tx, signature, hash))
         };
 
-        let storage_lock = self.storage.read().await;
+        let mut storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| error::RpcError::Internal(e.to_string()))?;
 
-        let result = self.executor.run_execution(&mut storage_lock.clone(), vec![tx_envelope], block, false)
+        let result = self.executor.run_execution(&mut storage_clone, vec![tx_envelope], block, false)
             .map(|mut v| v.remove(0)).map_err(|e| error::RpcError::Internal(e))?;
         
         match result.call_create {
@@ -221,9 +221,10 @@ impl EthService {
             Transaction::Legacy(alloy_consensus::Signed::new_unchecked(tx, signature, hash))
         };
 
-        let storage_lock = self.storage.read().await;
+        let mut storage_clone = self.state_storage.get_storage_clone().await
+            .map_err(|e| error::RpcError::Internal(e.to_string()))?;
 
-        let result = self.executor.run_execution(&mut storage_lock.clone(), vec![tx_envelope], block, false).map(|mut v| v.remove(0))
+        let result = self.executor.run_execution(&mut storage_clone, vec![tx_envelope], block, false).map(|mut v| v.remove(0))
             .map_err(|e| error::RpcError::Internal(e))?;
 
         Ok(U256::from(result.used_gas.as_u64()))
@@ -409,7 +410,6 @@ mod tests {
             mempool,
             peer_manager,
             executor: (*executor).clone(),
-            storage,
             account_manager,
             sync_engine,
         }
@@ -440,7 +440,7 @@ mod tests {
     async fn test_eth_get_balance() {
         let service = setup_eth_service().await;
         let addr = Address::repeat_byte(0x1);
-        service.storage.write().await.set_balance(addr, U256::from(1000));
+        service.state_storage.writer().set_balance(addr, U256::from(1000)).await.unwrap();
         
         let balance = service.get_balance(addr, BlockId::latest()).await.unwrap();
         assert_eq!(balance, U256::from(1000));

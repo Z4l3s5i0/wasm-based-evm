@@ -26,6 +26,7 @@ use crate::rpc::debug_service::DebugService;
 use crate::rpc::engine_service::EngineService;
 use crate::p2p::gossip_handler::GossipHandler;
 use crate::storage::mempool::Mempool;
+use crate::storage::traits::StateProvider;
 use crate::sync::controller::SyncController;
 
 pub struct App {
@@ -131,9 +132,10 @@ impl App {
         });
 
         if let Some(interval) = self.dev_interval {
+            let provider = Arc::new(StorageProvider::new(self.storage.clone(), self.mempool.clone(), self.executor.clone()));
             let dev_mode = crate::dev::DevMode::new(
                 self.mempool.clone(),
-                self.storage.clone(),
+                provider,
                 self.executor.clone(),
                 interval,
             );
@@ -322,9 +324,10 @@ impl AppBuilder {
     }
 
     fn setup_p2p(&self, args: &Args, p2p_identity: Identity, storage: Arc<RwLock<InMemoryStorage>>, mempool: Arc<RwLock<Mempool>>, executor: Arc<Executor>) -> Result<(Arc<PeerManager>, Arc<SyncController>), Box<dyn std::error::Error>> {
+        let provider = Arc::new(StorageProvider::new(storage, mempool.clone(), executor.clone()));
         let (peer_manager, gossip_rx) = PeerManager::new(
             p2p_identity,
-            storage.clone(),
+            provider.clone(),
             args.discovery_port,
             args.p2p_port,
             args.ext_ip,
@@ -333,7 +336,7 @@ impl AppBuilder {
         let peer_manager = Arc::new(peer_manager);
 
         let sync_engine = Arc::new(SyncController::new(
-            storage.clone(),
+            provider.clone(),
             mempool.clone(),
             peer_manager.clone(),
             executor.clone(),
@@ -395,7 +398,7 @@ impl AppBuilder {
 
     fn setup_rpc_services(
         &self,
-        storage: Arc<RwLock<InMemoryStorage>>,
+        provider: Arc<dyn StateProvider>,
         mempool: Arc<RwLock<Mempool>>,
         executor: Arc<Executor>,
         peer_manager: Arc<PeerManager>,
@@ -404,14 +407,12 @@ impl AppBuilder {
     ) -> Result<(jsonrpsee::RpcModule<()>, jsonrpsee::RpcModule<()>), Box<dyn std::error::Error>> {
         let mut eth_facade = RpcServerFacade::new();
         let mut auth_facade = RpcServerFacade::new();
-        let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
 
         let eth_service = EthService {
             state_storage: provider.clone(),
             mempool: mempool.clone(),
             peer_manager: peer_manager.clone(),
             executor: (*executor).clone(),
-            storage: storage.clone(),
             account_manager: account_manager.clone(),
             sync_engine: sync_engine.clone(),
         };
@@ -420,7 +421,7 @@ impl AppBuilder {
         eth_facade.register_eth(eth_service.clone())?;
 
         auth_facade.register_engine(EngineService::new(
-            storage.clone(),
+            provider.clone(),
             mempool.clone(),
             (*executor).clone(),
             sync_engine.clone(),
@@ -451,12 +452,13 @@ impl AppBuilder {
         let executor = self.setup_executor()?;
 
         let (peer_manager, sync_engine) = self.setup_p2p(&args, p2p_identity, storage.clone(), mempool.clone(), executor.clone())?;
+        let provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
 
         let storage_name_from_id = args.peer_name.clone().unwrap_or_else(|| peer_id.clone());
         let auth_rpc_jwt_secret = self.setup_jwt_secret(&args, &data_dir, &storage_name_from_id)?;
 
         let (eth_module, auth_module) = self.setup_rpc_services(
-            storage.clone(),
+            provider.clone(),
             mempool.clone(),
             executor.clone(),
             peer_manager.clone(),
