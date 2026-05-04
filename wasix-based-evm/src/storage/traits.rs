@@ -1,12 +1,15 @@
+use std::sync::Arc;
 use alloy_primitives::{Address, B256, U256, Bytes};
 use alloy_consensus::{Header, Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_eips::BlockId;
 use alloy_genesis::GenesisAccount;
+use alloy_rpc_types::engine::PayloadId;
 use anyhow::Result;
 use async_trait::async_trait;
 
 #[async_trait]
 pub trait StateProvider: Send + Sync {
+    fn writer(&self) -> Arc<dyn WriteProvider>;
     async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<GenesisAccount>>;
     async fn storage(&self, address: Address, slot: B256, block_id: BlockId) -> Result<Option<U256>>;
     async fn code(&self, address: Address, block_id: BlockId) -> Result<Option<Bytes>>;
@@ -24,3 +27,15 @@ pub trait StateProvider: Send + Sync {
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>>; // (number, hash, index)
 }
 
+
+#[async_trait]
+pub trait WriteProvider: Send + Sync {
+    async fn add_block(&self, block: Block<Transaction>) -> Result<()>;
+    async fn add_transaction(&self, tx: Transaction) -> Result<()>;
+    async fn add_receipt(&self, tx_hash: B256, receipt: Receipt) -> Result<()>;
+    async fn set_balance(&self, address: Address, balance: U256) -> Result<()>;
+    async fn add_payload(&self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>) -> Result<()>;
+    async fn remove_payload(&self, payload_id: &PayloadId) -> Result<Option<(Block<Transaction>, Vec<Receipt>)>>;
+    async fn update_forkchoice(&self, head: B256, safe: Option<B256>, finalized: Option<B256>) -> Result<()>;
+    async fn revert_to_height(&self, height: u64) -> Result<Vec<Transaction>>;
+}

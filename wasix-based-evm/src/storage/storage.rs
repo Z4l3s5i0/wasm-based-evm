@@ -8,7 +8,7 @@ use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::{BTreeMap, HashMap};
 use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
-use crate::storage::traits::{StateProvider};
+use crate::storage::traits::{StateProvider, WriteProvider};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_rpc_types::engine::PayloadId;
 use alloy_eips::BlockId;
@@ -573,6 +573,18 @@ pub struct StorageProvider {
     inner: Arc<RwLock<InMemoryStorage>>,
     mempool: Arc<RwLock<Mempool>>,
     executor: Arc<Executor>,
+    writer: StorageWriter,
+}
+
+#[derive(Clone)]
+pub struct StorageWriter {
+    inner: Arc<RwLock<InMemoryStorage>>,
+}
+
+impl StorageWriter {
+    pub fn new(inner: Arc<RwLock<InMemoryStorage>>) -> Self {
+        Self { inner }
+    }
 }
 
 impl StorageProvider {
@@ -582,10 +594,15 @@ impl StorageProvider {
         executor: Arc<Executor>,
     ) -> Self {
         Self {
-            inner: storage,
+            inner: storage.clone(),
             mempool,
             executor,
+            writer: StorageWriter::new(storage),
         }
+    }
+
+    pub fn writer(&self) -> &StorageWriter {
+        &self.writer
     }
 
     async fn get_pending_state(&self) -> Result<InMemoryStorage> {
@@ -637,6 +654,10 @@ impl StorageProvider {
 
 #[async_trait]
 impl StateProvider for StorageProvider {
+    fn writer(&self) -> Arc<dyn WriteProvider> {
+        Arc::new(self.writer.clone())
+    }
+
     async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<GenesisAccount>> {
         if matches!(block_id, BlockId::Number(alloy_eips::BlockNumberOrTag::Pending)) {
             return self.get_pending_state().await?.account(address, block_id).await;
@@ -715,6 +736,10 @@ impl StateProvider for StorageProvider {
 
 #[async_trait]
 impl StateProvider for InMemoryStorage {
+    fn writer(&self) -> Arc<dyn WriteProvider> {
+        unimplemented!("InMemoryStorage does not support WriteProvider directly")
+    }
+
     async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<GenesisAccount>> {
         let start = Instant::now();
         let h160 = H160::from_slice(address.as_slice());
@@ -906,3 +931,79 @@ mod tests {
     }
 }
 
+
+#[async_trait]
+impl WriteProvider for StorageWriter {
+    async fn add_block(&self, block: Block<Transaction>) -> Result<()> {
+        self.inner.write().await.add_block(block);
+        Ok(())
+    }
+
+    async fn add_transaction(&self, tx: Transaction) -> Result<()> {
+        self.inner.write().await.add_transaction(tx);
+        Ok(())
+    }
+
+    async fn add_receipt(&self, tx_hash: B256, receipt: Receipt) -> Result<()> {
+        self.inner.write().await.add_receipt(tx_hash, receipt);
+        Ok(())
+    }
+
+    async fn set_balance(&self, address: Address, balance: U256) -> Result<()> {
+        self.inner.write().await.set_balance(address, balance);
+        Ok(())
+    }
+
+    async fn add_payload(&self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>) -> Result<()> {
+        self.inner.write().await.add_payload(payload_id, block, receipts);
+        Ok(())
+    }
+
+    async fn remove_payload(&self, payload_id: &PayloadId) -> Result<Option<(Block<Transaction>, Vec<Receipt>)>> {
+        Ok(self.inner.write().await.remove_payload(payload_id))
+    }
+
+    async fn update_forkchoice(&self, head: B256, safe: Option<B256>, finalized: Option<B256>) -> Result<()> {
+        self.inner.write().await.update_forkchoice(head, safe, finalized);
+        Ok(())
+    }
+
+    async fn revert_to_height(&self, height: u64) -> Result<Vec<Transaction>> {
+        Ok(self.inner.write().await.revert_to_height(height))
+    }
+}
+
+#[async_trait]
+impl WriteProvider for StorageProvider {
+    async fn add_block(&self, block: Block<Transaction>) -> Result<()> {
+        self.writer.add_block(block).await
+    }
+
+    async fn add_transaction(&self, tx: Transaction) -> Result<()> {
+        self.writer.add_transaction(tx).await
+    }
+
+    async fn add_receipt(&self, tx_hash: B256, receipt: Receipt) -> Result<()> {
+        self.writer.add_receipt(tx_hash, receipt).await
+    }
+
+    async fn set_balance(&self, address: Address, balance: U256) -> Result<()> {
+        self.writer.set_balance(address, balance).await
+    }
+
+    async fn add_payload(&self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>) -> Result<()> {
+        self.writer.add_payload(payload_id, block, receipts).await
+    }
+
+    async fn remove_payload(&self, payload_id: &PayloadId) -> Result<Option<(Block<Transaction>, Vec<Receipt>)>> {
+        self.writer.remove_payload(payload_id).await
+    }
+
+    async fn update_forkchoice(&self, head: B256, safe: Option<B256>, finalized: Option<B256>) -> Result<()> {
+        self.writer.update_forkchoice(head, safe, finalized).await
+    }
+
+    async fn revert_to_height(&self, height: u64) -> Result<Vec<Transaction>> {
+        self.writer.revert_to_height(height).await
+    }
+}
