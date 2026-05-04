@@ -390,7 +390,7 @@ mod tests {
     use crate::evm::ev::EvmU256;
 
     async fn setup_eth_service() -> EthService {
-        use crate::storage::storage::StorageProvider;
+        use crate::storage::storage_provider::StorageProvider;
         let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
         
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));

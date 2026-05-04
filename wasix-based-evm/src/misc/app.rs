@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use crate::cli::Args;
-use crate::storage::storage::{InMemoryStorage, StorageProvider, GenesisInit};
+use crate::storage::storage::{InMemoryStorage, GenesisInit};
+use crate::storage::storage_provider::StorageProvider;
 use alloy_primitives::U256;
 use std::sync::Arc;
 use crate::p2p::peer_manager::PeerManager;
