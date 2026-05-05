@@ -10,7 +10,7 @@ use evm::{
     standard::{Config, Invoker, ExecutionEtable, GasometerEtable, TransactArgs, TransactArgsCallCreate, TransactGasPrice, EtableResolver, TransactValue},
 };
 use evm_precompile::StandardPrecompileSet;
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::traits::{SyncStateProvider};
 use crate::misc::metrics::{
     TRANSACTION_EXECUTION_TIME, CPU_CYCLES_TOTAL, INSTRUCTION_COUNT_TOTAL, BLOCK_EXECUTION_TIME,
     GAS_PROCESSED_TOTAL,
@@ -53,7 +53,7 @@ impl Executor {
         }
     }
 
-    pub fn execute_with_changeset(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
+    pub fn execute_with_changeset(&self, storage: &mut dyn SyncStateProvider, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
         info!("[Executor] Executing {} transactions for block {}", transactions.len(), block.header.number);
         let precompiles = StandardPrecompileSet;
         let etable = evm::interpreter::etable::Chained(ExecutionEtable::new(), GasometerEtable::new());
@@ -61,9 +61,11 @@ impl Executor {
         let invoker = Invoker::new(&resolver);
 
         // Update backend environment for the current block
-        storage.backend.environment.block_number = EvmU256::from(block.header.number);
-        storage.backend.environment.block_timestamp = EvmU256::from(block.header.timestamp);
-        storage.backend.environment.block_base_fee_per_gas = alloy_u256_to_evm_u256(U256::from(block.header.base_fee_per_gas.unwrap_or(0)));
+        storage.set_block_environment(
+            block.header.number,
+            block.header.timestamp,
+            U256::from(block.header.base_fee_per_gas.unwrap_or(0))
+        );
 
         let mut results = Vec::new();
         let mut receipts = Vec::new();
@@ -90,7 +92,7 @@ impl Executor {
             let args = self.tx_to_transact_args(tx, sender)?;
 
             // Use an overlay that includes changes from previous transactions in the same block
-            let mut current_backend = storage.backend.clone();
+            let mut current_backend = storage.backend().clone();
             current_backend.apply_overlayed(&total_changeset);
             let mut overlayed = OverlayedBackend::new(&current_backend, &self.config.runtime);
 
@@ -188,7 +190,7 @@ impl Executor {
         }
     }
 
-    pub fn execute_block(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
+    pub fn execute_block(&self, storage: &mut dyn SyncStateProvider, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
         let start = std::time::Instant::now();
         let (results, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
         BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
@@ -213,14 +215,14 @@ impl Executor {
 
     fn calculate_roots(
         &self, 
-        storage: &InMemoryStorage, 
+        storage: &dyn SyncStateProvider, 
         transactions: &[TxEnvelope], 
         receipts: &[Receipt], 
         withdrawals: &[Withdrawal],
         total_changeset: &OverlayedChangeSet
     ) -> BlockRoots {
-        let mut storage_for_root = storage.clone();
-        storage_for_root.backend.apply_overlayed(total_changeset);
+        let mut storage_for_root = storage.clone_box();
+        storage_for_root.apply_changeset(total_changeset);
         let state_root = storage_for_root.calculate_state_root();
 
         let transactions_root = if transactions.is_empty() { 
@@ -318,15 +320,14 @@ impl Executor {
 
     fn finalize_state(
         &self,
-        storage: &mut InMemoryStorage,
+        storage: &mut dyn SyncStateProvider,
         total_changeset: &OverlayedChangeSet,
         transactions: &[TxEnvelope],
         receipts: &[Receipt],
         withdrawals: &[Withdrawal],
         finalized_block: Block<TxEnvelope>,
     ) {
-        // Apply total changeset to actual storage
-        storage.backend.apply_overlayed(total_changeset);
+        storage.apply_changeset(total_changeset);
 
         // Add transactions, receipts and block to storage
         for (tx, receipt) in transactions.iter().cloned().zip(receipts.iter().cloned()) {
@@ -340,13 +341,13 @@ impl Executor {
             let addr = withdrawal.address;
             let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64);
             let evm_amount_wei = alloy_u256_to_evm_u256(amount_wei);
-            let h160_addr = address_to_h160(addr);
             
-            if let Some(account) = storage.backend.state.get_mut(&h160_addr) {
+            if let Some(mut account) = storage.get_account(addr) {
                 account.balance += evm_amount_wei;
+                storage.set_account(addr, account);
                 debug!("[Executor] Applied withdrawal: address={:?}, amount={} Gwei", addr, withdrawal.amount);
             } else {
-                storage.backend.state.insert(h160_addr, InMemoryAccount {
+                storage.set_account(addr, InMemoryAccount {
                     balance: evm_amount_wei,
                     nonce: EvmU256::zero(),
                     code: Vec::new(),
@@ -364,7 +365,7 @@ impl Executor {
 
     pub fn execute_block_for_payload(
         &self,
-        storage: &mut InMemoryStorage,
+        storage: &mut dyn SyncStateProvider,
         transactions: Vec<TxEnvelope>,
         parent_header: &Header,
         attr: &alloy_rpc_types::engine::PayloadAttributes,
@@ -433,7 +434,7 @@ impl Executor {
         }, receipts))
     }
 
-    pub fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
+    pub fn run_execution(&self, storage: &mut dyn SyncStateProvider, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
         let start = std::time::Instant::now();
         let result = if apply_changes {
             self.execute_block(storage, transactions, block)
@@ -448,7 +449,7 @@ impl Executor {
             for tx in &transactions {
                 let sender = tx.recover_signer().map_err(|e| format!("Failed to recover signer: {:?}", e))?;
                 let args = self.tx_to_transact_args(tx, sender)?;
-                let mut overlayed = OverlayedBackend::new(&storage.backend, &self.config.runtime);
+                let mut overlayed = OverlayedBackend::new(storage.backend(), &self.config.runtime);
                 
                 let clock = quanta::Clock::new();
                 let start_cycles = clock.now();
@@ -480,6 +481,7 @@ impl Executor {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::storage::storage::InMemoryStorage;
     use alloy_consensus::TxLegacy;
     use alloy_consensus::SignableTransaction;
 
@@ -492,7 +494,7 @@ mod tests {
     #[test]
     fn test_run_execution_dry_run() {
         let executor = Executor::new();
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut storage = crate::storage::storage::InMemoryStorage::new(EvmU256::from(1));
         
         let tx = TxEnvelope::Legacy(TxLegacy {
             nonce: 0,

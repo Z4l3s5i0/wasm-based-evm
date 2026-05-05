@@ -2,7 +2,8 @@ use crate::evm::executor::Executor;
 use crate::info;
 use crate::misc::metrics::CURRENT_HEAD_BLOCK;
 use crate::storage::mempool::Mempool;
-use crate::storage::traits::StateProvider;
+use crate::storage::traits::{StateProvider, SyncStateProvider, StateSnapshot};
+use crate::storage::storage::InMemoryStorage;
 use alloy_consensus::{Block, TxEnvelope as Transaction};
 use alloy_primitives::U256;
 use std::sync::Arc;
@@ -21,9 +22,9 @@ impl BlockProcessor {
 
     pub async fn process_block(&self, block: Block<Transaction>) -> Result<(), Box<dyn std::error::Error>> {
         let block_num = block.header.number;
-        let mut storage_clone = self.state_storage.get_storage_clone().await?;
+        let mut storage_snapshot = self.state_storage.get_snapshot().await?;
         
-        match self.executor.execute_with_changeset(&mut storage_clone, block.body.transactions.clone(), block.clone()) {
+        match self.executor.execute_with_changeset(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), block.body.transactions.clone(), block.clone()) {
             Ok((_, receipts, changeset)) => {
                 CURRENT_HEAD_BLOCK.set(block_num as f64);
                 
@@ -38,7 +39,7 @@ impl BlockProcessor {
                 // Update mempool after successful block processing
                 let mut mempool_write = self.mempool.write().await;
                 let new_base_fee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-                mempool_write.update_base_fee(new_base_fee, &storage_clone).await;
+                mempool_write.update_base_fee(new_base_fee, storage_snapshot.as_any().downcast_ref::<InMemoryStorage>().unwrap()).await;
                 
                 Ok(())
             }
@@ -53,6 +54,7 @@ impl BlockProcessor {
 mod tests {
     use super::*;
     use crate::evm::ev::EvmU256;
+    use crate::storage::storage::InMemoryStorage;
 
     #[tokio::test]
     async fn test_process_block_empty() {

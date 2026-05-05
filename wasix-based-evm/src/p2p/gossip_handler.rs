@@ -115,13 +115,15 @@ mod tests {
     use alloy_consensus::SignableTransaction;
 
     async fn setup_gossip_handler() -> (GossipHandler, mpsc::Sender<Vec<u8>>) {
+        use crate::storage::storage_provider::StorageProvider;
         let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
         let identity = Identity::new(None, None).unwrap();
-        let (peer_manager, _) = PeerManager::new(identity, storage.clone(), 0, 0, None, vec![]).unwrap();
-        let peer_manager = Arc::new(peer_manager);
         let executor = Arc::new(Executor::new());
-        let sync_engine = Arc::new(SyncController::new(storage.clone(), mempool.clone(), peer_manager.clone(), executor));
+        let storage_provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
+        let (peer_manager, _) = PeerManager::new(identity, storage_provider.clone(), 0, 0, None, vec![]).unwrap();
+        let peer_manager = Arc::new(peer_manager);
+        let sync_engine = Arc::new(SyncController::new(storage_provider.clone(), mempool.clone(), peer_manager.clone(), executor));
         let (tx, rx) = mpsc::channel(10);
         
         (GossipHandler::new(mempool, peer_manager, sync_engine, rx), tx)

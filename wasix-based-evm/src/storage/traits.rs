@@ -5,10 +5,47 @@ use alloy_eips::BlockId;
 use alloy_genesis::GenesisAccount;
 use alloy_rpc_types::engine::PayloadId;
 use alloy_rpc_types::Withdrawal;
-use evm::backend::OverlayedChangeSet;
+use evm::backend::{OverlayedChangeSet, InMemoryAccount};
 use anyhow::Result;
 use async_trait::async_trait;
 use crate::storage::storage::InMemoryStorage;
+
+use std::any::Any;
+
+#[async_trait]
+pub trait StateSnapshot: SyncStateProvider + StateProvider + Send + Sync {
+    fn as_any(&self) -> &dyn Any;
+    fn as_any_mut(&mut self) -> &mut dyn Any;
+}
+
+#[async_trait]
+impl StateSnapshot for InMemoryStorage {
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn Any {
+        self
+    }
+}
+
+pub trait SyncStateProvider: Send + Sync {
+    fn set_block_environment(&mut self, number: u64, timestamp: u64, base_fee: U256);
+    fn get_account(&self, address: Address) -> Option<InMemoryAccount>;
+    fn apply_changeset(&mut self, changeset: &OverlayedChangeSet);
+    fn backend(&self) -> &evm::backend::InMemoryBackend;
+    fn add_transaction(&mut self, tx: Transaction);
+    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt);
+    fn add_block(&mut self, block: Block<Transaction>);
+    fn set_account(&mut self, address: Address, account: InMemoryAccount);
+    fn calculate_state_root(&self) -> B256;
+    fn clone_box(&self) -> Box<dyn SyncStateProvider>;
+}
+
+impl Clone for Box<dyn SyncStateProvider> {
+    fn clone(&self) -> Box<dyn SyncStateProvider> {
+        self.clone_box()
+    }
+}
 
 #[async_trait]
 pub trait StateProvider: Send + Sync {
@@ -29,8 +66,8 @@ pub trait StateProvider: Send + Sync {
     async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>>;
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>>; // (number, hash, index)
 
-    /// Returns a clone of the underlying storage for simulations
-    async fn get_storage_clone(&self) -> Result<InMemoryStorage>;
+    /// Returns a snapshot of the underlying storage for simulations
+    async fn get_snapshot(&self) -> Result<Box<dyn StateSnapshot>>;
 }
 
 

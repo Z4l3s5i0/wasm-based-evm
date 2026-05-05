@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use alloy_primitives::{U256, Address, Bytes, B256};
 use alloy_rpc_types::{Block, Filter, Log, SyncStatus, TransactionReceipt, TransactionRequest};
-use crate::storage::traits::{StateProvider};
+use crate::storage::traits::{StateProvider, StateSnapshot};
 use alloy_eips::{BlockId, BlockNumberOrTag};
 use tokio::sync::RwLock;
 use crate::rpc::account_manager::AccountManager;
@@ -172,10 +172,10 @@ impl EthService {
             Transaction::Legacy(alloy_consensus::Signed::new_unchecked(tx, signature, hash))
         };
 
-        let mut storage_clone = self.state_storage.get_storage_clone().await
+        let mut storage_snapshot = self.state_storage.get_snapshot().await
             .map_err(|e| error::RpcError::Internal(e.to_string()))?;
 
-        let result = self.executor.run_execution(&mut storage_clone, vec![tx_envelope], block, false)
+        let result = self.executor.run_execution(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), vec![tx_envelope], block, false)
             .map(|mut v| v.remove(0)).map_err(|e| error::RpcError::Internal(e))?;
         
         match result.call_create {
@@ -221,10 +221,10 @@ impl EthService {
             Transaction::Legacy(alloy_consensus::Signed::new_unchecked(tx, signature, hash))
         };
 
-        let mut storage_clone = self.state_storage.get_storage_clone().await
+        let mut storage_snapshot = self.state_storage.get_snapshot().await
             .map_err(|e| error::RpcError::Internal(e.to_string()))?;
 
-        let result = self.executor.run_execution(&mut storage_clone, vec![tx_envelope], block, false).map(|mut v| v.remove(0))
+        let result = self.executor.run_execution(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), vec![tx_envelope], block, false).map(|mut v| v.remove(0))
             .map_err(|e| error::RpcError::Internal(e))?;
 
         Ok(U256::from(result.used_gas.as_u64()))
@@ -396,14 +396,14 @@ mod tests {
         
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
         let identity = Identity::new(None, None).unwrap();
-        let (peer_manager, _) = PeerManager::new(identity, storage.clone(), 0, 0, None, vec![]).unwrap();
-        let peer_manager = Arc::new(peer_manager);
         let executor = Arc::new(Executor::new());
-        let account_manager = Arc::new(AccountManager::new());
-        
         let storage_provider = Arc::new(StorageProvider::new(storage.clone(), mempool.clone(), executor.clone()));
         
-        let sync_engine = Arc::new(SyncController::new(storage.clone(), mempool.clone(), peer_manager.clone(), executor.clone()));
+        let (peer_manager, _) = PeerManager::new(identity, storage_provider.clone(), 0, 0, None, vec![]).unwrap();
+        let peer_manager = Arc::new(peer_manager);
+        let account_manager = Arc::new(AccountManager::new());
+        
+        let sync_engine = Arc::new(SyncController::new(storage_provider.clone(), mempool.clone(), peer_manager.clone(), executor.clone()));
 
         EthService {
             state_storage: storage_provider,

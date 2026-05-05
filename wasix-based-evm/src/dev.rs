@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use crate::storage::traits::{StateProvider, SyncStateProvider, StateSnapshot};
 use crate::storage::storage::InMemoryStorage;
-use crate::storage::traits::StateProvider;
 use alloy_consensus::{Block, Header, transaction::SignerRecoverable};
 use alloy_primitives::{Bytes, B256, U256};
 use crate::{info, debug, error};
@@ -47,11 +47,14 @@ impl DevMode {
     }
 
     async fn produce_block(&self) -> Result<(), String> {
-        let mut storage_clone = self.state_storage.get_storage_clone().await
+        let mut storage_snapshot = self.state_storage.get_snapshot().await
             .map_err(|e| e.to_string())?;
         let mut mempool = self.mempool.write().await;
 
-        let latest_block = storage_clone.get_latest_block()
+        let storage = storage_snapshot.as_any().downcast_ref::<InMemoryStorage>()
+            .ok_or_else(|| "Failed to downcast storage".to_string())?;
+
+        let latest_block = storage.get_latest_block()
             .cloned()
             .ok_or_else(|| "Latest block not found".to_string())?;
 
@@ -99,7 +102,7 @@ impl DevMode {
 
         debug!("[DevMode] Producing block #{} with {} transactions", number, transactions.len());
 
-        match self.executor.execute_with_changeset(&mut storage_clone, transactions.clone(), block.clone()) {
+        match self.executor.execute_with_changeset(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), transactions.clone(), block.clone()) {
             Ok((_, receipts, changeset)) => {
                 BLOCK_PRODUCTION_SUCCESS.inc();
                 let block_hash = block.header.hash_slow();
@@ -113,7 +116,7 @@ impl DevMode {
                 debug!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);
 
                 // Update mempool base fee (this will trigger revalidation and eviction if needed)
-                mempool.update_base_fee(new_base_fee, &storage_clone).await;
+                mempool.update_base_fee(new_base_fee, storage_snapshot.as_any().downcast_ref::<InMemoryStorage>().unwrap()).await;
 
                 Ok(())
             }

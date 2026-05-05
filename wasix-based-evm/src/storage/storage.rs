@@ -2,13 +2,13 @@ use crate::evm::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_ev
 use std::time::Instant;
 use crate::misc::metrics::{STORAGE_READ_LATENCY, STORAGE_WRITE_LATENCY, FORK_CHOICE_UPDATED_TOTAL, REORG_COUNT_TOTAL};
 use crate::{info, debug, error};
-use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
+use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount, OverlayedChangeSet};
 use alloy_primitives::{Address, B256, U256, Bytes, B64};
 use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::{BTreeMap, HashMap};
 use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
-use crate::storage::traits::{StateProvider, WriteProvider};
+use crate::storage::traits::{StateProvider, WriteProvider, SyncStateProvider, StateSnapshot};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_rpc_types::engine::PayloadId;
 use alloy_eips::BlockId;
@@ -570,6 +570,106 @@ impl InMemoryStorage {
 }
 
 
+impl SyncStateProvider for InMemoryBackend {
+    fn set_block_environment(&mut self, number: u64, timestamp: u64, base_fee: U256) {
+        self.environment.block_number = EvmU256::from(number);
+        self.environment.block_timestamp = EvmU256::from(timestamp);
+        self.environment.block_base_fee_per_gas = alloy_u256_to_evm_u256(base_fee);
+    }
+
+    fn get_account(&self, address: Address) -> Option<InMemoryAccount> {
+        self.state.get(&address_to_h160(address)).cloned()
+    }
+
+    fn apply_changeset(&mut self, changeset: &OverlayedChangeSet) {
+        self.apply_overlayed(changeset);
+    }
+
+    fn backend(&self) -> &InMemoryBackend {
+        self
+    }
+
+    fn add_transaction(&mut self, _tx: Transaction) {
+        // InMemoryBackend only stores state
+    }
+
+    fn add_receipt(&mut self, _tx_hash: B256, _receipt: Receipt) {
+        // InMemoryBackend only stores state
+    }
+
+    fn add_block(&mut self, _block: Block<Transaction>) {
+        // InMemoryBackend only stores state
+    }
+
+    fn set_account(&mut self, address: Address, account: InMemoryAccount) {
+        self.state.insert(address_to_h160(address), account);
+    }
+
+    fn calculate_state_root(&self) -> B256 {
+        let mut state = BTreeMap::new();
+        for (addr, acc) in &self.state {
+            let mut storage = BTreeMap::new();
+            for (k, v) in &acc.storage {
+                storage.insert(B256::from(k.0), evm_u256_to_alloy_u256(EvmU256::from_big_endian(&v.0)));
+            }
+            let trie_acc = TrieAccount {
+                nonce: acc.nonce.as_u64(),
+                balance: evm_u256_to_alloy_u256(acc.balance),
+                storage_root: storage_root_unsorted(&mut storage.iter().map(|(k, v)| (*k, *v))),
+                code_hash: alloy_primitives::keccak256(&acc.code),
+            };
+            state.insert(Address::from(addr.0), trie_acc);
+        }
+        state_root_unhashed(&mut state.iter().map(|(k, v)| (*k, v.clone())))
+    }
+
+    fn clone_box(&self) -> Box<dyn SyncStateProvider> {
+        Box::new(self.clone())
+    }
+}
+
+impl SyncStateProvider for InMemoryStorage {
+    fn set_block_environment(&mut self, number: u64, timestamp: u64, base_fee: U256) {
+        self.backend.set_block_environment(number, timestamp, base_fee);
+    }
+
+    fn get_account(&self, address: Address) -> Option<InMemoryAccount> {
+        self.backend.get_account(address)
+    }
+
+    fn apply_changeset(&mut self, changeset: &OverlayedChangeSet) {
+        self.backend.apply_changeset(changeset);
+    }
+
+    fn backend(&self) -> &InMemoryBackend {
+        &self.backend
+    }
+
+    fn add_transaction(&mut self, tx: Transaction) {
+        self.add_transaction(tx);
+    }
+
+    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
+        self.add_receipt(tx_hash, receipt);
+    }
+
+    fn add_block(&mut self, block: Block<Transaction>) {
+        self.add_block(block);
+    }
+
+    fn set_account(&mut self, address: Address, account: InMemoryAccount) {
+        self.backend.set_account(address, account);
+    }
+
+    fn calculate_state_root(&self) -> B256 {
+        self.calculate_state_root()
+    }
+
+    fn clone_box(&self) -> Box<dyn SyncStateProvider> {
+        Box::new(self.clone())
+    }
+}
+
 #[async_trait]
 impl StateProvider for InMemoryStorage {
     fn writer(&self) -> Arc<dyn WriteProvider> {
@@ -663,8 +763,8 @@ impl StateProvider for InMemoryStorage {
         Ok(self.tx_location.get(&hash).cloned())
     }
 
-    async fn get_storage_clone(&self) -> Result<InMemoryStorage> {
-        Ok(self.clone())
+    async fn get_snapshot(&self) -> Result<Box<dyn crate::storage::traits::StateSnapshot>> {
+        Ok(Box::new(self.clone()))
     }
 }
 

@@ -10,7 +10,7 @@ use alloy_eips::BlockId;
 use alloy_genesis::GenesisAccount;
 use anyhow::Result;
 
-use crate::storage::traits::{StateProvider, WriteProvider};
+use crate::storage::traits::{StateProvider, WriteProvider, SyncStateProvider, StateSnapshot};
 use crate::storage::storage::InMemoryStorage;
 use crate::storage::mempool::Mempool;
 use crate::evm::executor::Executor;
@@ -51,12 +51,12 @@ impl StorageProvider {
         &self.writer
     }
 
-    async fn get_pending_state(&self) -> Result<InMemoryStorage> {
+    async fn get_pending_state(&self) -> Result<Box<dyn StateSnapshot>> {
         let storage = self.inner.read().await.clone();
         let transactions = self.mempool.read().await.peek_transactions(100); // Take a reasonable amount for pending
         
         if transactions.is_empty() {
-            return Ok(storage);
+            return Ok(Box::new(storage));
         }
 
         let mut pending_storage = storage;
@@ -92,9 +92,9 @@ impl StorageProvider {
         };
 
         // We don't want to fail if some txs in mempool are invalid, just apply what we can
-        let _ = self.executor.execute_block(&mut pending_storage, transactions, pending_block);
+        let _ = self.executor.execute_block(&mut pending_storage as &mut dyn SyncStateProvider, transactions, pending_block);
         
-        Ok(pending_storage)
+        Ok(Box::new(pending_storage))
     }
 }
 
@@ -179,8 +179,8 @@ impl StateProvider for StorageProvider {
         self.inner.read().await.transaction_block_reference(hash).await
     }
 
-    async fn get_storage_clone(&self) -> Result<InMemoryStorage> {
-        Ok(self.inner.read().await.clone())
+    async fn get_snapshot(&self) -> Result<Box<dyn StateSnapshot>> {
+        Ok(Box::new(self.inner.read().await.clone()))
     }
 }
 
