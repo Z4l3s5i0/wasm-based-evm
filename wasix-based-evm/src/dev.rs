@@ -102,15 +102,14 @@ impl DevMode {
 
         debug!("[DevMode] Producing block #{} with {} transactions", number, transactions.len());
 
-        match self.executor.execute_with_changeset(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), transactions.clone(), block.clone()) {
-            Ok((_, receipts, changeset)) => {
+        match self.executor.execute_block(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), transactions.clone(), block.clone()) {
+            Ok(result) => {
                 BLOCK_PRODUCTION_SUCCESS.inc();
-                let block_hash = block.header.hash_slow();
-                let new_base_fee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
+                let block_hash = result.finalized_block.header.hash_slow();
+                let new_base_fee = U256::from(result.finalized_block.header.base_fee_per_gas.unwrap_or_default());
                 
                 let writer = self.state_storage.writer();
-                let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
-                writer.commit_block(block, receipts, changeset, withdrawals.into_iter().collect()).await.map_err(|e| e.to_string())?;
+                writer.commit_block(result.finalized_block, result.receipts, result.changeset, result.withdrawals).await.map_err(|e| e.to_string())?;
                 writer.update_forkchoice(block_hash, Some(block_hash), Some(block_hash)).await.map_err(|e| e.to_string())?;
                 
                 debug!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);

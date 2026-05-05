@@ -2,12 +2,35 @@
 mod tests {
     use crate::evm::executor::Executor;
     use crate::storage::storage::InMemoryStorage;
+    use crate::storage::traits::SyncStateProvider;
     use crate::evm::ev::alloy_u256_to_evm_u256;
     use alloy_primitives::{Address, U256, B256, TxKind, Bytes, FixedBytes};
     use alloy_consensus::{TxLegacy, TxEnvelope, Block, Header, BlockBody, SignableTransaction};
     use alloy_signer_local::PrivateKeySigner;
     use alloy_network::TxSignerSync;
     use evm_interpreter::uint::H160;
+
+    fn apply_result(storage: &mut InMemoryStorage, result: crate::evm::executor::BlockExecutionResult) {
+        storage.apply_changeset(&result.changeset);
+        for (tx, receipt) in result.finalized_block.body.transactions.iter().zip(result.receipts.iter()) {
+            storage.add_transaction(tx.clone());
+            storage.add_receipt(*tx.hash(), receipt.clone());
+        }
+        for withdrawal in result.withdrawals {
+            let addr = withdrawal.address;
+            let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64);
+            let mut account = storage.get_account(addr).unwrap_or_else(|| evm::backend::InMemoryAccount {
+                balance: crate::evm::ev::EvmU256::zero(),
+                nonce: crate::evm::ev::EvmU256::zero(),
+                code: Vec::new(),
+                storage: std::collections::BTreeMap::new(),
+                transient_storage: std::collections::BTreeMap::new(),
+            });
+            account.balance += crate::evm::ev::alloy_u256_to_evm_u256(amount_wei);
+            storage.set_account(addr, account);
+        }
+        storage.add_block(result.finalized_block);
+    }
 
     fn setup_executor() -> (Executor, InMemoryStorage, PrivateKeySigner, Address) {
         let chain_id = 1337u64;
@@ -70,7 +93,8 @@ mod tests {
             body: BlockBody { transactions: vec![envelope.clone()], ..Default::default() },
         };
 
-        executor.execute_block(&mut storage, vec![envelope], block).expect("Execution failed");
+        let res = executor.execute_block(&mut storage, vec![envelope], block).expect("Execution failed");
+        apply_result(&mut storage, res);
 
         assert_eq!(storage.get_balance(addr_b), U256::from(1000));
         assert_eq!(storage.get_balance(addr_a), U256::from(10).pow(U256::from(25)) - U256::from(22000));
@@ -102,8 +126,10 @@ mod tests {
             body: BlockBody { transactions: vec![envelope_deploy.clone()], ..Default::default() },
         };
 
-        executor.execute_block(&mut storage, vec![envelope_deploy], block1).unwrap();
+        let res1 = executor.execute_block(&mut storage, vec![envelope_deploy], block1).unwrap();
+        apply_result(&mut storage, res1);
         let contract_addr = calculate_contract_address(addr, 0);
+        let contract_addr_h160 = H160::from_slice(contract_addr.as_slice());
         println!("CODE: {:x?}", storage.get_code(contract_addr));
         assert!(!storage.get_code(contract_addr).is_empty());
 
@@ -124,9 +150,8 @@ mod tests {
             body: BlockBody { transactions: vec![envelope_call.clone()], ..Default::default() },
         };
 
-        executor.execute_block(&mut storage, vec![envelope_call], block2).unwrap();
-
-        let contract_addr_h160 = H160::from_slice(contract_addr.as_slice());
+        let res2 = executor.execute_block(&mut storage, vec![envelope_call], block2).unwrap();
+        apply_result(&mut storage, res2);
         let account = storage.state.backend.state.get(&contract_addr_h160).expect("Account not found");
         println!("Account balance: {:?}", account.balance);
         println!("Account nonce: {:?}", account.nonce);
@@ -173,7 +198,8 @@ mod tests {
             body: BlockBody { transactions: vec![env1.clone(), env2.clone()], ..Default::default() },
         };
 
-        executor.execute_block(&mut storage, vec![env1, env2], block).unwrap();
+        let res = executor.execute_block(&mut storage, vec![env1, env2], block).unwrap();
+        apply_result(&mut storage, res);
 
         assert_eq!(storage.get_balance(addr_b), U256::from(500));
         assert_eq!(storage.get_balance(addr_c), U256::from(300));
@@ -204,7 +230,9 @@ mod tests {
         };
 
         let res = executor.execute_block(&mut storage, vec![envelope], block);
-        // Depending on executor implementation, it might return Err or Ok with failed status.
+        if let Ok(ref result) = res {
+            apply_result(&mut storage, result.clone());
+        }
         // If it returns Err, it's because transact() returned Err.
         assert!(res.is_err() || storage.get_balance(addr_b) == U256::ZERO);
     }
@@ -235,7 +263,8 @@ mod tests {
             body: BlockBody { transactions: vec![envelope_deploy.clone()], ..Default::default() },
         };
 
-        executor.execute_block(&mut storage, vec![envelope_deploy], block1).unwrap();
+        let res1 = executor.execute_block(&mut storage, vec![envelope_deploy], block1).unwrap();
+        apply_result(&mut storage, res1);
         let contract_addr = addr.create(0);
 
         let mut tx_call = TxLegacy {
@@ -255,8 +284,9 @@ mod tests {
             body: BlockBody { transactions: vec![envelope_call.clone()], ..Default::default() },
         };
 
-        let results = executor.execute_block(&mut storage, vec![envelope_call], block2).unwrap();
-        assert_eq!(results.len(), 1);
+        let res2 = executor.execute_block(&mut storage, vec![envelope_call], block2).unwrap();
+        apply_result(&mut storage, res2.clone());
+        assert_eq!(res2.results.len(), 1);
     }
 
     #[tokio::test]
@@ -301,7 +331,8 @@ mod tests {
             body: BlockBody { transactions: vec![env1.clone(), env2.clone()], ..Default::default() },
         };
 
-        executor.execute_block(&mut storage, vec![env1, env2], block).unwrap();
+        let res = executor.execute_block(&mut storage, vec![env1, env2], block).unwrap();
+        apply_result(&mut storage, res);
 
         assert_eq!(storage.get_balance(addr_c), U256::from(800));
     }

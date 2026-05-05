@@ -598,10 +598,6 @@ impl SyncStateProvider for StateStore {
         &self.backend
     }
 
-    fn add_transaction(&mut self, _tx: Transaction) {}
-    fn add_receipt(&mut self, _tx_hash: B256, _receipt: Receipt) {}
-    fn add_block(&mut self, _block: Block<Transaction>) {}
-
     fn set_account(&mut self, address: Address, account: InMemoryAccount) {
         self.backend.state.insert(address_to_h160(address), account);
     }
@@ -645,18 +641,6 @@ impl SyncStateProvider for InMemoryStorage {
 
     fn backend(&self) -> &InMemoryBackend {
         self.state.backend()
-    }
-
-    fn add_transaction(&mut self, tx: Transaction) {
-        self.add_transaction(tx);
-    }
-
-    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
-        self.add_receipt(tx_hash, receipt);
-    }
-
-    fn add_block(&mut self, block: Block<Transaction>) {
-        self.add_block(block);
     }
 
     fn set_account(&mut self, address: Address, account: InMemoryAccount) {

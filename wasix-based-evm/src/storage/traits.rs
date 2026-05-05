@@ -21,9 +21,6 @@ pub trait SyncStateProvider: Send + Sync {
     fn get_account(&self, address: Address) -> Option<InMemoryAccount>;
     fn apply_changeset(&mut self, changeset: &OverlayedChangeSet);
     fn backend(&self) -> &evm::backend::InMemoryBackend;
-    fn add_transaction(&mut self, tx: Transaction);
-    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt);
-    fn add_block(&mut self, block: Block<Transaction>);
     fn set_account(&mut self, address: Address, account: InMemoryAccount);
     fn calculate_state_root(&self) -> B256;
     fn clone_box(&self) -> Box<dyn SyncStateProvider>;

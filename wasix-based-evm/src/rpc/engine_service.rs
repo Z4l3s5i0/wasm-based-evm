@@ -483,11 +483,10 @@ impl EngineService {
             return Ok(status);
         }
 
-        match self.executor.execute_with_changeset(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), transactions.clone(), block.clone()) {
-            Ok((_, receipts, changeset)) => {
+        match self.executor.execute_block(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), transactions.clone(), block.clone()) {
+            Ok(result) => {
                 let writer = self.state_storage.writer();
-                let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
-                writer.commit_block(block, receipts, changeset, withdrawals.into_iter().collect())
+                writer.commit_block(result.finalized_block, result.receipts, result.changeset, result.withdrawals)
                     .await
                     .map_err(|e| RpcError::Internal(e.to_string()))?;
 

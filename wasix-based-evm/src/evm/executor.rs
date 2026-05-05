@@ -41,7 +41,16 @@ impl OverlayedChangeSetExt for OverlayedChangeSet {
     }
 }
 
-#[derive(Clone)]
+#[derive(Debug, Clone)]
+pub struct BlockExecutionResult {
+    pub results: Vec<TransactValue>,
+    pub receipts: Vec<Receipt>,
+    pub changeset: OverlayedChangeSet,
+    pub finalized_block: Block<TxEnvelope>,
+    pub withdrawals: Vec<Withdrawal>,
+}
+
+#[derive(Debug, Clone)]
 pub struct Executor {
     pub config: Config,
 }
@@ -190,16 +199,16 @@ impl Executor {
         }
     }
 
-    pub fn execute_block(&self, storage: &mut dyn SyncStateProvider, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
+    pub fn execute_block(&self, storage: &mut dyn SyncStateProvider, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<BlockExecutionResult, String> {
         let start = std::time::Instant::now();
-        let (results, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
+        let (results, receipts, changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
         BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
         
         let cumulative_gas_used = receipts.last().map(|r| r.receipt.cumulative_gas_used).unwrap_or(0);
         let bloom = logs_bloom(receipts.iter().flat_map(|r| r.receipt.logs.iter()));
         let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
 
-        let roots = self.calculate_roots(storage, &transactions, &receipts, &withdrawals, &total_changeset);
+        let roots = self.calculate_roots(storage, &transactions, &receipts, &withdrawals, &changeset);
         
         debug!("[Executor] Block finalization: state_root={:?}, transactions_root={:?}, receipts_root={:?}, withdrawals_root={:?}", 
             roots.state_root, roots.transactions_root, roots.receipts_root, roots.withdrawals_root);
@@ -208,9 +217,13 @@ impl Executor {
 
         let finalized_block = self.create_finalized_block(&block, &transactions, &withdrawals, &roots, cumulative_gas_used, bloom);
 
-        self.finalize_state(storage, &total_changeset, &transactions, &receipts, &withdrawals, finalized_block);
-
-        Ok(results)
+        Ok(BlockExecutionResult {
+            results,
+            receipts,
+            changeset,
+            finalized_block,
+            withdrawals: withdrawals.into_iter().collect(),
+        })
     }
 
     fn calculate_roots(
@@ -318,50 +331,6 @@ impl Executor {
         }
     }
 
-    fn finalize_state(
-        &self,
-        storage: &mut dyn SyncStateProvider,
-        total_changeset: &OverlayedChangeSet,
-        transactions: &[TxEnvelope],
-        receipts: &[Receipt],
-        withdrawals: &[Withdrawal],
-        finalized_block: Block<TxEnvelope>,
-    ) {
-        storage.apply_changeset(total_changeset);
-
-        // Add transactions, receipts and block to storage
-        for (tx, receipt) in transactions.iter().cloned().zip(receipts.iter().cloned()) {
-            let hash = *tx.hash();
-            storage.add_transaction(tx);
-            storage.add_receipt(hash, receipt);
-        }
-
-        // Apply withdrawals
-        for withdrawal in withdrawals {
-            let addr = withdrawal.address;
-            let amount_wei = U256::from(withdrawal.amount) * U256::from(1_000_000_000u64);
-            let evm_amount_wei = alloy_u256_to_evm_u256(amount_wei);
-            
-            if let Some(mut account) = storage.get_account(addr) {
-                account.balance += evm_amount_wei;
-                storage.set_account(addr, account);
-                debug!("[Executor] Applied withdrawal: address={:?}, amount={} Gwei", addr, withdrawal.amount);
-            } else {
-                storage.set_account(addr, InMemoryAccount {
-                    balance: evm_amount_wei,
-                    nonce: EvmU256::zero(),
-                    code: Vec::new(),
-                    storage: std::collections::BTreeMap::new(),
-                    transient_storage: std::collections::BTreeMap::new(),
-                });
-                debug!("[Executor] Applied withdrawal (new account): address={:?}, amount={} Gwei", addr, withdrawal.amount);
-            }
-        }
-
-        let block_number = finalized_block.header.number;
-        storage.add_block(finalized_block);
-        debug!("[Executor] Block finalized and saved to storage: number={:?}", block_number);
-    }
 
     pub fn execute_block_for_payload(
         &self,
@@ -437,7 +406,7 @@ impl Executor {
     pub fn run_execution(&self, storage: &mut dyn SyncStateProvider, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
         let start = std::time::Instant::now();
         let result = if apply_changes {
-            self.execute_block(storage, transactions, block)
+            self.execute_block(storage, transactions, block).map(|res| res.results)
         } else {
             // Just for call/dry-run, we don't need the complex block logic
             let precompiles = StandardPrecompileSet;

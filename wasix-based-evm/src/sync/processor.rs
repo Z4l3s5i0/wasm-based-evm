@@ -24,16 +24,15 @@ impl BlockProcessor {
         let block_num = block.header.number;
         let mut storage_snapshot = self.state_storage.get_snapshot().await?;
         
-        match self.executor.execute_with_changeset(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), block.body.transactions.clone(), block.clone()) {
-            Ok((_, receipts, changeset)) => {
+        match self.executor.execute_block(storage_snapshot.as_any_mut().downcast_mut::<InMemoryStorage>().unwrap(), block.body.transactions.clone(), block.clone()) {
+            Ok(result) => {
                 CURRENT_HEAD_BLOCK.set(block_num as f64);
                 
                 info!("[Processor] Successfully executed and stored block {}", block_num);
-                let block_hash = block.header.hash_slow();
+                let block_hash = result.finalized_block.header.hash_slow();
                 
                 let writer = self.state_storage.writer();
-                let withdrawals = block.body.withdrawals.clone().unwrap_or_default();
-                writer.commit_block(block.clone(), receipts, changeset, withdrawals.into_iter().collect()).await?;
+                writer.commit_block(result.finalized_block, result.receipts, result.changeset, result.withdrawals).await?;
                 writer.update_forkchoice(block_hash, Some(block_hash), Some(block_hash)).await?;
                 
                 // Update mempool after successful block processing
