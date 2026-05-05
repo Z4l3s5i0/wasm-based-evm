@@ -127,7 +127,7 @@ mod tests {
         executor.execute_block(&mut storage, vec![envelope_call], block2).unwrap();
 
         let contract_addr_h160 = H160::from_slice(contract_addr.as_slice());
-        let account = storage.backend.state.get(&contract_addr_h160).expect("Account not found");
+        let account = storage.state.backend.state.get(&contract_addr_h160).expect("Account not found");
         println!("Account balance: {:?}", account.balance);
         println!("Account nonce: {:?}", account.nonce);
         println!("Account storage: {:?}", account.storage);

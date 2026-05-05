@@ -8,24 +8,12 @@ use alloy_rpc_types::Withdrawal;
 use evm::backend::{OverlayedChangeSet, InMemoryAccount};
 use anyhow::Result;
 use async_trait::async_trait;
-use crate::storage::storage::InMemoryStorage;
-
 use std::any::Any;
 
 #[async_trait]
 pub trait StateSnapshot: SyncStateProvider + StateProvider + Send + Sync {
     fn as_any(&self) -> &dyn Any;
     fn as_any_mut(&mut self) -> &mut dyn Any;
-}
-
-#[async_trait]
-impl StateSnapshot for InMemoryStorage {
-    fn as_any(&self) -> &dyn Any {
-        self
-    }
-    fn as_any_mut(&mut self) -> &mut dyn Any {
-        self
-    }
 }
 
 pub trait SyncStateProvider: Send + Sync {
@@ -82,4 +70,10 @@ pub trait WriteProvider: Send + Sync {
     async fn update_forkchoice(&self, head: B256, safe: Option<B256>, finalized: Option<B256>) -> Result<()>;
     async fn revert_to_height(&self, height: u64) -> Result<Vec<Transaction>>;
     async fn commit_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, changeset: OverlayedChangeSet, withdrawals: Vec<Withdrawal>) -> Result<()>;
+    async fn apply_state_changeset(&self, changeset: OverlayedChangeSet) -> Result<()>;
+}
+
+pub trait Database: Send + Sync {
+    fn state_store(&self) -> Arc<dyn StateProvider>;
+    fn chain_store(&self) -> Arc<dyn StateProvider>;
 }

@@ -68,7 +68,7 @@ mod tests {
         let mut block: Block<Transaction> = Block::default();
         block.header.number = 1;
         // Need to set parent hash to genesis hash or it might fail if there's parent validation
-        let genesis_hash = storage.read().await.head_block_hash;
+        let genesis_hash = storage.read().await.chain.head_block_hash;
         block.header.parent_hash = genesis_hash;
         
         let result = processor.process_block(block).await;

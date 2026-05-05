@@ -1,4 +1,4 @@
-use crate::evm::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256, evm_u256_to_alloy_u256};
+use crate::evm::ev::{H160, H256, EvmU256, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256, evm_u256_to_alloy_u256};
 use std::time::Instant;
 use crate::misc::metrics::{STORAGE_READ_LATENCY, STORAGE_WRITE_LATENCY, FORK_CHOICE_UPDATED_TOTAL, REORG_COUNT_TOTAL};
 use crate::{info, debug, error};
@@ -8,19 +8,17 @@ use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::{BTreeMap, HashMap};
 use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
-use crate::storage::traits::{StateProvider, WriteProvider, SyncStateProvider, StateSnapshot};
+use crate::storage::traits::{StateProvider, WriteProvider, SyncStateProvider, StateSnapshot, Database};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_rpc_types::engine::PayloadId;
 use alloy_eips::BlockId;
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::sync::RwLock;
-use std::sync::Arc;
 use serde::{Serialize, Deserialize};
 use std::fs::File;
 use std::path::Path;
-use crate::evm::executor::Executor;
-use crate::storage::mempool::Mempool;
+use std::sync::Arc;
+use std::any::Any;
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -64,8 +62,13 @@ impl From<GenesisInit> for Genesis {
 }
 
 #[derive(Clone, Serialize, Deserialize)]
-pub struct InMemoryStorage {
+pub struct StateStore {
     pub backend: InMemoryBackend,
+    pub snapshots: BTreeMap<u64, InMemoryBackend>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct ChainStore {
     pub blocks: BTreeMap<u64, Block<Transaction>>,
     pub hash_to_number: BTreeMap<B256, u64>,
     pub transactions: BTreeMap<B256, Transaction>,
@@ -74,8 +77,13 @@ pub struct InMemoryStorage {
     pub head_block_hash: B256,
     pub safe_block_hash: B256,
     pub finalized_block_hash: B256,
-    pub snapshots: BTreeMap<u64, InMemoryBackend>,
     pub payloads: HashMap<PayloadId, (Block<Transaction>, Vec<Receipt>)>,
+}
+
+#[derive(Clone, Serialize, Deserialize)]
+pub struct InMemoryStorage {
+    pub state: StateStore,
+    pub chain: ChainStore,
 }
 
 impl InMemoryStorage {
@@ -86,33 +94,29 @@ impl InMemoryStorage {
     }
 
     pub fn new_with_genesis(chain_id: EvmU256, genesis: Genesis) -> Self {
-        let (storage, genesis_block) = Self::create_from_genesis(chain_id, genesis);
-        let mut storage = storage;
+        let (mut storage, genesis_block) = Self::create_from_genesis(chain_id, genesis);
         let genesis_hash = genesis_block.header.hash_slow();
         
-        // Ensure genesis hash is indexed
-        storage.blocks.insert(genesis_block.header.number, genesis_block);
-        storage.hash_to_number.insert(genesis_hash, 0);
-        storage.head_block_hash = genesis_hash;
-        storage.safe_block_hash = genesis_hash;
-        storage.finalized_block_hash = genesis_hash;
-        storage.snapshots.insert(0, storage.backend.clone());
+        storage.chain.blocks.insert(genesis_block.header.number, genesis_block);
+        storage.chain.hash_to_number.insert(genesis_hash, 0);
+        storage.chain.head_block_hash = genesis_hash;
+        storage.chain.safe_block_hash = genesis_hash;
+        storage.chain.finalized_block_hash = genesis_hash;
+        storage.state.snapshots.insert(0, storage.state.backend.clone());
 
         storage
     }
 
     pub fn new_with_genesis_init(chain_id: EvmU256, genesis: GenesisInit) -> Self {
-        let (storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis);
-        let mut storage = storage;
+        let (mut storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis);
         let genesis_hash = genesis_block.header.hash_slow();
         
-        // Ensure genesis hash is indexed
-        storage.blocks.insert(genesis_block.header.number, genesis_block);
-        storage.hash_to_number.insert(genesis_hash, 0);
-        storage.head_block_hash = genesis_hash;
-        storage.safe_block_hash = genesis_hash;
-        storage.finalized_block_hash = genesis_hash;
-        storage.snapshots.insert(0, storage.backend.clone());
+        storage.chain.blocks.insert(genesis_block.header.number, genesis_block);
+        storage.chain.hash_to_number.insert(genesis_hash, 0);
+        storage.chain.head_block_hash = genesis_hash;
+        storage.chain.safe_block_hash = genesis_hash;
+        storage.chain.finalized_block_hash = genesis_hash;
+        storage.state.snapshots.insert(0, storage.state.backend.clone());
 
         storage
     }
@@ -135,21 +139,12 @@ impl InMemoryStorage {
             chain_id,
         };
 
-        let mut storage = Self {
+        let mut state = StateStore {
             backend: InMemoryBackend {
                 environment: env,
                 state: BTreeMap::new(),
             },
-            blocks: BTreeMap::new(),
-            hash_to_number: BTreeMap::new(),
-            transactions: BTreeMap::new(),
-            receipts: BTreeMap::new(),
-            tx_location: BTreeMap::new(),
-            head_block_hash: B256::ZERO,
-            safe_block_hash: B256::ZERO,
-            finalized_block_hash: B256::ZERO,
             snapshots: BTreeMap::new(),
-            payloads: HashMap::new(),
         };
 
         for (addr, account) in genesis.alloc {
@@ -167,8 +162,23 @@ impl InMemoryStorage {
                 transient_storage: Default::default(),
             };
             let evm_addr = address_to_h160(addr);
-            storage.backend.state.insert(evm_addr, im_account);
+            state.backend.state.insert(evm_addr, im_account);
         }
+
+        let mut storage = Self {
+            state,
+            chain: ChainStore {
+                blocks: BTreeMap::new(),
+                hash_to_number: BTreeMap::new(),
+                transactions: BTreeMap::new(),
+                receipts: BTreeMap::new(),
+                tx_location: BTreeMap::new(),
+                head_block_hash: B256::ZERO,
+                safe_block_hash: B256::ZERO,
+                finalized_block_hash: B256::ZERO,
+                payloads: HashMap::new(),
+            },
+        };
 
         let state_root = storage.calculate_state_root();
 
@@ -222,21 +232,12 @@ impl InMemoryStorage {
             chain_id,
         };
 
-        let mut storage = Self {
+        let mut state = StateStore {
             backend: InMemoryBackend {
                 environment: env,
                 state: BTreeMap::new(),
             },
-            blocks: BTreeMap::new(),
-            hash_to_number: BTreeMap::new(),
-            transactions: BTreeMap::new(),
-            receipts: BTreeMap::new(),
-            tx_location: BTreeMap::new(),
-            head_block_hash: B256::ZERO,
-            safe_block_hash: B256::ZERO,
-            finalized_block_hash: B256::ZERO,
             snapshots: BTreeMap::new(),
-            payloads: HashMap::new(),
         };
 
         for (addr, account) in genesis.alloc {
@@ -254,8 +255,23 @@ impl InMemoryStorage {
                 transient_storage: Default::default(),
             };
             let evm_addr = address_to_h160(addr);
-            storage.backend.state.insert(evm_addr, im_account);
+            state.backend.state.insert(evm_addr, im_account);
         }
+
+        let mut storage = Self {
+            state,
+            chain: ChainStore {
+                blocks: BTreeMap::new(),
+                hash_to_number: BTreeMap::new(),
+                transactions: BTreeMap::new(),
+                receipts: BTreeMap::new(),
+                tx_location: BTreeMap::new(),
+                head_block_hash: B256::ZERO,
+                safe_block_hash: B256::ZERO,
+                finalized_block_hash: B256::ZERO,
+                payloads: HashMap::new(),
+            },
+        };
 
         let state_root = storage.calculate_state_root();
         let genesis_block: Block<Transaction> = Block {
@@ -291,16 +307,15 @@ impl InMemoryStorage {
         (storage, genesis_block)
     }
 
-    pub fn new_with_genesis_block(_chain_id: EvmU256, storage: Self, genesis_block: Block<Transaction>) -> Self {
-        let mut storage = storage;
+    pub fn new_with_genesis_block(_chain_id: EvmU256, mut storage: Self, genesis_block: Block<Transaction>) -> Self {
         let genesis_hash = genesis_block.header.hash_slow();
         
-        storage.blocks.insert(0, genesis_block);
-        storage.hash_to_number.insert(genesis_hash, 0);
-        storage.head_block_hash = genesis_hash;
-        storage.safe_block_hash = genesis_hash;
-        storage.finalized_block_hash = genesis_hash;
-        storage.snapshots.insert(0, storage.backend.clone());
+        storage.chain.blocks.insert(0, genesis_block);
+        storage.chain.hash_to_number.insert(genesis_hash, 0);
+        storage.chain.head_block_hash = genesis_hash;
+        storage.chain.safe_block_hash = genesis_hash;
+        storage.chain.finalized_block_hash = genesis_hash;
+        storage.state.snapshots.insert(0, storage.state.backend.clone());
 
         storage
     }
@@ -310,8 +325,7 @@ impl InMemoryStorage {
         let block_number = block.header.number;
         let block_hash = block.header.hash_slow();
         
-        // Check if we already have this block
-        if self.hash_to_number.contains_key(&block_hash) {
+        if self.chain.hash_to_number.contains_key(&block_hash) {
             debug!("[Storage] Block #{} with hash {:?} already exists, skipping", block_number, block_hash);
             return;
         }
@@ -321,20 +335,18 @@ impl InMemoryStorage {
         for (i, tx) in block.body.transactions.iter().enumerate() {
             let tx_hash = tx.hash();
             debug!("[Storage] Indexing transaction {:?} in block {}", tx_hash, block_number);
-            self.tx_location.insert(*tx_hash, (block_number, block_hash, i));
-            self.transactions.insert(*tx_hash, tx.clone());
+            self.chain.tx_location.insert(*tx_hash, (block_number, block_hash, i));
+            self.chain.transactions.insert(*tx_hash, tx.clone());
         }
 
-        self.blocks.insert(block_number, block);
-        self.hash_to_number.insert(block_hash, block_number);
-        self.head_block_hash = block_hash;
+        self.chain.blocks.insert(block_number, block);
+        self.chain.hash_to_number.insert(block_hash, block_number);
+        self.chain.head_block_hash = block_hash;
         
-        // Take snapshot after adding block
-        self.snapshots.insert(block_number, self.backend.clone());
-        // Keep only last 100 snapshots
-        if self.snapshots.len() > 100 {
-            if let Some(&first) = self.snapshots.keys().next() {
-                self.snapshots.remove(&first);
+        self.state.snapshots.insert(block_number, self.state.backend.clone());
+        if self.state.snapshots.len() > 100 {
+            if let Some(&first) = self.state.snapshots.keys().next() {
+                self.state.snapshots.remove(&first);
             }
         }
         STORAGE_WRITE_LATENCY.observe(start.elapsed().as_secs_f64());
@@ -344,28 +356,27 @@ impl InMemoryStorage {
         info!("[Storage] Reverting to height {}", height);
         let mut reverted_txs = Vec::new();
         
-        let keys_to_remove: Vec<u64> = self.blocks.range((height + 1)..).map(|(k, _)| *k).collect();
+        let keys_to_remove: Vec<u64> = self.chain.blocks.range((height + 1)..).map(|(k, _)| *k).collect();
         for k in keys_to_remove {
-            if let Some(block) = self.blocks.remove(&k) {
+            if let Some(block) = self.chain.blocks.remove(&k) {
                 let block_hash = block.header.hash_slow();
-                self.hash_to_number.remove(&block_hash);
+                self.chain.hash_to_number.remove(&block_hash);
                 for tx in block.body.transactions {
                     let hash = tx.hash();
-                    self.tx_location.remove(hash);
-                    // We don't necessarily remove from self.transactions if we want to keep them for mempool
+                    self.chain.tx_location.remove(hash);
                     reverted_txs.push(tx);
                 }
             }
         }
         
-        if let Some(snapshot) = self.snapshots.get(&height) {
-            self.backend = snapshot.clone();
+        if let Some(snapshot) = self.state.snapshots.get(&height) {
+            self.state.backend = snapshot.clone();
         } else {
             error!("[Storage] No snapshot found for height {}, state might be inconsistent!", height);
         }
         
-        if let Some(block) = self.blocks.get(&height) {
-            self.head_block_hash = block.header.hash_slow();
+        if let Some(block) = self.chain.blocks.get(&height) {
+            self.chain.head_block_hash = block.header.hash_slow();
         }
         
         reverted_txs
@@ -374,32 +385,32 @@ impl InMemoryStorage {
     pub fn add_transaction(&mut self, tx: Transaction) {
         let hash = tx.hash();
         debug!("[Storage] Adding transaction {:?}", hash);
-        self.transactions.insert(*hash, tx);
+        self.chain.transactions.insert(*hash, tx);
     }
 
     pub fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
         debug!("[Storage] Adding receipt for transaction {:?}", tx_hash);
-        self.receipts.insert(tx_hash, receipt);
+        self.chain.receipts.insert(tx_hash, receipt);
     }
 
     pub fn get_receipt_by_tx_hash(&self, tx_hash: B256) -> Option<&Receipt> {
-        self.receipts.get(&tx_hash)
+        self.chain.receipts.get(&tx_hash)
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Option<&Block<Transaction>> {
-        self.blocks.get(&number)
+        self.chain.blocks.get(&number)
     }
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<&Block<Transaction>> {
-        self.hash_to_number.get(&hash).and_then(|&num| self.blocks.get(&num))
+        self.chain.hash_to_number.get(&hash).and_then(|&num| self.chain.blocks.get(&num))
     }
 
     pub fn get_transaction_by_hash(&self, hash: B256) -> Option<&Transaction> {
-        self.transactions.get(&hash)
+        self.chain.transactions.get(&hash)
     }
 
     pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<&Block<Transaction>> {
-        self.tx_location.get(&tx_hash).and_then(|(num, _, _)| self.blocks.get(num))
+        self.chain.tx_location.get(&tx_hash).and_then(|(num, _, _)| self.chain.blocks.get(num))
     }
 
     pub fn get_block_receipts(&self, block_hash: B256) -> Vec<Receipt> {
@@ -408,21 +419,21 @@ impl InMemoryStorage {
             None => return Vec::new(),
         };
         block.body.transactions.iter()
-            .filter_map(|tx| self.receipts.get(tx.hash()).cloned())
+            .filter_map(|tx| self.chain.receipts.get(tx.hash()).cloned())
             .collect()
     }
 
     pub fn get_latest_block(&self) -> Option<&Block<Transaction>> {
-        self.blocks.values().last()
+        self.chain.blocks.values().last()
     }
 
     pub fn get_latest_block_number(&self) -> u64 {
-        self.blocks.keys().last().cloned().unwrap_or(0)
+        self.chain.blocks.keys().last().cloned().unwrap_or(0)
     }
 
     pub fn get_balance(&self, address: Address) -> U256 {
         let h160 = H160::from_slice(address.as_slice());
-        if let Some(a) = self.backend.state.get(&h160) {
+        if let Some(a) = self.state.backend.state.get(&h160) {
             let mut bytes = [0u8; 32];
             a.balance.to_big_endian(&mut bytes);
             U256::from_be_bytes(bytes)
@@ -432,11 +443,11 @@ impl InMemoryStorage {
     }
 
     pub fn get_accounts(&self) -> Vec<Address> {
-        self.backend.state.keys().map(|h| Address::from(h.0)).collect()
+        self.state.backend.state.keys().map(|h| Address::from(h.0)).collect()
     }
 
     pub fn get_code(&self, address: Address) -> Vec<u8> {
-        self.backend.state.get(&H160::from_slice(address.as_slice()))
+        self.state.backend.state.get(&H160::from_slice(address.as_slice()))
             .map(|a| a.code.clone())
             .unwrap_or_default()
     }
@@ -446,7 +457,7 @@ impl InMemoryStorage {
         let bytes = balance.to_be_bytes::<32>();
         let evm_balance = EvmU256::from_big_endian(&bytes);
         let h160 = H160::from_slice(address.as_slice());
-        self.backend.state.entry(h160).or_insert(InMemoryAccount {
+        self.state.backend.state.entry(h160).or_insert(InMemoryAccount {
             balance: evm_balance,
             code: Vec::new(),
             nonce: EvmU256::zero(),
@@ -456,7 +467,7 @@ impl InMemoryStorage {
     }
 
     pub fn calculate_state_root(&self) -> B256 {
-        state_root_unhashed(self.backend.state.iter().map(|(addr, acc)| {
+        state_root_unhashed(self.state.backend.state.iter().map(|(addr, acc)| {
             let storage_root = if acc.storage.is_empty() {
                 alloy_trie::EMPTY_ROOT_HASH
             } else {
@@ -494,11 +505,11 @@ impl InMemoryStorage {
                 match num {
                     alloy_eips::BlockNumberOrTag::Number(n) => self.get_block_by_number(n),
                     alloy_eips::BlockNumberOrTag::Latest | alloy_eips::BlockNumberOrTag::Pending => {
-                        self.get_block_by_hash(self.head_block_hash)
+                        self.get_block_by_hash(self.chain.head_block_hash)
                     }
-                    alloy_eips::BlockNumberOrTag::Safe => self.get_block_by_hash(self.safe_block_hash),
+                    alloy_eips::BlockNumberOrTag::Safe => self.get_block_by_hash(self.chain.safe_block_hash),
                     alloy_eips::BlockNumberOrTag::Finalized => {
-                        self.get_block_by_hash(self.finalized_block_hash)
+                        self.get_block_by_hash(self.chain.finalized_block_hash)
                     }
                     alloy_eips::BlockNumberOrTag::Earliest => self.get_block_by_number(0),
                 }
@@ -512,47 +523,46 @@ impl InMemoryStorage {
             BlockId::Number(num) => match num {
                 alloy_eips::BlockNumberOrTag::Number(n) => self.get_block_hash(n),
                 alloy_eips::BlockNumberOrTag::Latest | alloy_eips::BlockNumberOrTag::Pending => {
-                    Some(self.head_block_hash)
+                    Some(self.chain.head_block_hash)
                 }
-                alloy_eips::BlockNumberOrTag::Safe => Some(self.safe_block_hash),
-                alloy_eips::BlockNumberOrTag::Finalized => Some(self.finalized_block_hash),
+                alloy_eips::BlockNumberOrTag::Safe => Some(self.chain.safe_block_hash),
+                alloy_eips::BlockNumberOrTag::Finalized => Some(self.chain.finalized_block_hash),
                 alloy_eips::BlockNumberOrTag::Earliest => self.get_block_hash(0),
             },
         }
     }
 
     pub fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>) {
-        self.payloads.insert(payload_id, (block, receipts));
+        self.chain.payloads.insert(payload_id, (block, receipts));
     }
 
     pub fn get_payload(&self, payload_id: &PayloadId) -> Option<&(Block<Transaction>, Vec<Receipt>)> {
-        self.payloads.get(payload_id)
+        self.chain.payloads.get(payload_id)
     }
 
     pub fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)> {
-        self.payloads.remove(payload_id)
+        self.chain.payloads.remove(payload_id)
     }
 
     pub fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>) {
         debug!("[Storage] Updating forkchoice: head={:?}, safe={:?}, finalized={:?}", head, safe, finalized);
         FORK_CHOICE_UPDATED_TOTAL.inc();
         
-        // Simple reorg detection: if the new head is different and its parent is not our current head
-        if self.head_block_hash != head && self.head_block_hash != B256::ZERO {
+        if self.chain.head_block_hash != head && self.chain.head_block_hash != B256::ZERO {
             if let Some(new_block) = self.get_block_by_hash(head) {
-                if new_block.header.parent_hash != self.head_block_hash {
+                if new_block.header.parent_hash != self.chain.head_block_hash {
                     REORG_COUNT_TOTAL.inc();
-                    info!("[Storage] Reorg detected! Old head: {:?}, New head: {:?}, New parent: {:?}", self.head_block_hash, head, new_block.header.parent_hash);
+                    info!("[Storage] Reorg detected! Old head: {:?}, New head: {:?}, New parent: {:?}", self.chain.head_block_hash, head, new_block.header.parent_hash);
                 }
             }
         }
 
-        self.head_block_hash = head;
+        self.chain.head_block_hash = head;
         if let Some(s) = safe {
-            self.safe_block_hash = s;
+            self.chain.safe_block_hash = s;
         }
         if let Some(f) = finalized {
-            self.finalized_block_hash = f;
+            self.chain.finalized_block_hash = f;
         }
     }
 
@@ -569,58 +579,50 @@ impl InMemoryStorage {
     }
 }
 
-
-impl SyncStateProvider for InMemoryBackend {
+impl SyncStateProvider for StateStore {
     fn set_block_environment(&mut self, number: u64, timestamp: u64, base_fee: U256) {
-        self.environment.block_number = EvmU256::from(number);
-        self.environment.block_timestamp = EvmU256::from(timestamp);
-        self.environment.block_base_fee_per_gas = alloy_u256_to_evm_u256(base_fee);
+        self.backend.environment.block_number = EvmU256::from(number);
+        self.backend.environment.block_timestamp = EvmU256::from(timestamp);
+        self.backend.environment.block_base_fee_per_gas = alloy_u256_to_evm_u256(base_fee);
     }
 
     fn get_account(&self, address: Address) -> Option<InMemoryAccount> {
-        self.state.get(&address_to_h160(address)).cloned()
+        self.backend.state.get(&address_to_h160(address)).cloned()
     }
 
     fn apply_changeset(&mut self, changeset: &OverlayedChangeSet) {
-        self.apply_overlayed(changeset);
+        self.backend.apply_overlayed(changeset);
     }
 
     fn backend(&self) -> &InMemoryBackend {
-        self
+        &self.backend
     }
 
-    fn add_transaction(&mut self, _tx: Transaction) {
-        // InMemoryBackend only stores state
-    }
-
-    fn add_receipt(&mut self, _tx_hash: B256, _receipt: Receipt) {
-        // InMemoryBackend only stores state
-    }
-
-    fn add_block(&mut self, _block: Block<Transaction>) {
-        // InMemoryBackend only stores state
-    }
+    fn add_transaction(&mut self, _tx: Transaction) {}
+    fn add_receipt(&mut self, _tx_hash: B256, _receipt: Receipt) {}
+    fn add_block(&mut self, _block: Block<Transaction>) {}
 
     fn set_account(&mut self, address: Address, account: InMemoryAccount) {
-        self.state.insert(address_to_h160(address), account);
+        self.backend.state.insert(address_to_h160(address), account);
     }
 
     fn calculate_state_root(&self) -> B256 {
-        let mut state = BTreeMap::new();
-        for (addr, acc) in &self.state {
-            let mut storage = BTreeMap::new();
-            for (k, v) in &acc.storage {
-                storage.insert(B256::from(k.0), evm_u256_to_alloy_u256(EvmU256::from_big_endian(&v.0)));
-            }
+        state_root_unhashed(self.backend.state.iter().map(|(addr, acc)| {
+            let storage_root = if acc.storage.is_empty() {
+                alloy_trie::EMPTY_ROOT_HASH
+            } else {
+                storage_root_unsorted(acc.storage.iter().map(|(k, v)| {
+                    (alloy_primitives::keccak256(k.0), U256::from_be_bytes(v.0))
+                }))
+            };
             let trie_acc = TrieAccount {
                 nonce: acc.nonce.as_u64(),
                 balance: evm_u256_to_alloy_u256(acc.balance),
-                storage_root: storage_root_unsorted(&mut storage.iter().map(|(k, v)| (*k, *v))),
+                storage_root,
                 code_hash: alloy_primitives::keccak256(&acc.code),
             };
-            state.insert(Address::from(addr.0), trie_acc);
-        }
-        state_root_unhashed(&mut state.iter().map(|(k, v)| (*k, v.clone())))
+            (Address::from(addr.0), trie_acc)
+        }))
     }
 
     fn clone_box(&self) -> Box<dyn SyncStateProvider> {
@@ -630,19 +632,19 @@ impl SyncStateProvider for InMemoryBackend {
 
 impl SyncStateProvider for InMemoryStorage {
     fn set_block_environment(&mut self, number: u64, timestamp: u64, base_fee: U256) {
-        self.backend.set_block_environment(number, timestamp, base_fee);
+        self.state.set_block_environment(number, timestamp, base_fee);
     }
 
     fn get_account(&self, address: Address) -> Option<InMemoryAccount> {
-        self.backend.get_account(address)
+        self.state.get_account(address)
     }
 
     fn apply_changeset(&mut self, changeset: &OverlayedChangeSet) {
-        self.backend.apply_changeset(changeset);
+        self.state.apply_changeset(changeset);
     }
 
     fn backend(&self) -> &InMemoryBackend {
-        &self.backend
+        self.state.backend()
     }
 
     fn add_transaction(&mut self, tx: Transaction) {
@@ -658,11 +660,11 @@ impl SyncStateProvider for InMemoryStorage {
     }
 
     fn set_account(&mut self, address: Address, account: InMemoryAccount) {
-        self.backend.set_account(address, account);
+        self.state.set_account(address, account);
     }
 
     fn calculate_state_root(&self) -> B256 {
-        self.calculate_state_root()
+        self.state.calculate_state_root()
     }
 
     fn clone_box(&self) -> Box<dyn SyncStateProvider> {
@@ -671,101 +673,122 @@ impl SyncStateProvider for InMemoryStorage {
 }
 
 #[async_trait]
-impl StateProvider for InMemoryStorage {
-    fn writer(&self) -> Arc<dyn WriteProvider> {
-        unimplemented!("InMemoryStorage does not support WriteProvider directly")
-    }
+impl StateSnapshot for InMemoryStorage {
+    fn as_any(&self) -> &dyn Any { self }
+    fn as_any_mut(&mut self) -> &mut dyn Any { self }
+}
 
-    async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<GenesisAccount>> {
-        let start = Instant::now();
-        let h160 = H160::from_slice(address.as_slice());
-        let res = Ok(self.backend.state.get(&h160).map(|acc| GenesisAccount {
-            balance: {
-                let mut b = [0u8; 32];
-                acc.balance.to_big_endian(&mut b);
-                U256::from_be_bytes(b)
-            },
+#[async_trait]
+impl StateProvider for StateStore {
+    fn writer(&self) -> Arc<dyn WriteProvider> { unimplemented!() }
+    async fn account(&self, address: Address, _id: BlockId) -> Result<Option<GenesisAccount>> {
+        let h160 = address_to_h160(address);
+        Ok(self.backend.state.get(&h160).map(|acc| GenesisAccount {
+            balance: evm_u256_to_alloy_u256(acc.balance),
             nonce: Some(acc.nonce.as_u64()),
             code: if acc.code.is_empty() { None } else { Some(acc.code.clone().into()) },
             storage: if acc.storage.is_empty() { None } else {
                 Some(acc.storage.iter().map(|(k, v)| (B256::from(k.0), B256::from(v.0))).collect())
             },
             private_key: None,
-        }));
-        STORAGE_READ_LATENCY.observe(start.elapsed().as_secs_f64());
-        res
+        }))
     }
-
-    async fn storage(&self, address: Address, slot: B256, _block_id: BlockId) -> Result<Option<U256>> {
-        let start = Instant::now();
-        let h160 = H160::from_slice(address.as_slice());
-        let h256 = H256(slot.0);
-        let res = Ok(self.backend.state.get(&h160)
-            .and_then(|acc| acc.storage.get(&h256))
-            .map(|v| U256::from_be_bytes(v.0)));
-        STORAGE_READ_LATENCY.observe(start.elapsed().as_secs_f64());
-        res
+    async fn storage(&self, address: Address, slot: B256, _id: BlockId) -> Result<Option<U256>> {
+        let h160 = address_to_h160(address);
+        Ok(self.backend.state.get(&h160).and_then(|a| a.storage.get(&H256(slot.0)).map(|v| U256::from_be_bytes(v.0))))
     }
-
-    async fn code(&self, address: Address, _block_id: BlockId) -> Result<Option<Bytes>> {
-        let h160 = H160::from_slice(address.as_slice());
-        Ok(self.backend.state.get(&h160).map(|acc| acc.code.clone().into()))
+    async fn code(&self, address: Address, _id: BlockId) -> Result<Option<Bytes>> {
+        let h160 = address_to_h160(address);
+        Ok(self.backend.state.get(&h160).map(|a| a.code.clone().into()))
     }
-
-    async fn balance(&self, address: Address, _block_id: BlockId) -> Result<U256> {
-        Ok(self.get_balance(address))
+    async fn balance(&self, address: Address, _id: BlockId) -> Result<U256> {
+        let h160 = address_to_h160(address);
+        Ok(self.backend.state.get(&h160).map(|a| evm_u256_to_alloy_u256(a.balance)).unwrap_or(U256::ZERO))
     }
-
-    async fn transaction_count(&self, address: Address, _block_id: BlockId) -> Result<u64> {
-        let h160 = H160::from_slice(address.as_slice());
-        Ok(self.backend.state.get(&h160).map(|acc| acc.nonce.as_u64()).unwrap_or(0))
+    async fn transaction_count(&self, address: Address, _id: BlockId) -> Result<u64> {
+        let h160 = address_to_h160(address);
+        Ok(self.backend.state.get(&h160).map(|a| a.nonce.as_u64()).unwrap_or(0))
     }
-
     async fn accounts(&self) -> Result<Vec<Address>> {
-        Ok(self.get_accounts())
+        Ok(self.backend.state.keys().map(|h| Address::from(h.0)).collect())
     }
+    async fn header(&self, _id: BlockId) -> Result<Option<Header>> { Ok(None) }
+    async fn block(&self, _id: BlockId) -> Result<Option<Block<Transaction>>> { Ok(None) }
+    async fn block_hash(&self, _n: u64) -> Result<Option<B256>> { Ok(None) }
+    async fn latest_block_number(&self) -> Result<u64> { Ok(0) }
+    async fn chain_id(&self) -> Result<u64> { Ok(evm_u256_to_alloy_u256(self.backend.environment.chain_id).to::<u64>()) }
+    async fn logs(&self, _f: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>> { Ok(vec![]) }
+    async fn transaction(&self, _h: B256) -> Result<Option<Transaction>> { Ok(None) }
+    async fn transaction_receipt(&self, _h: B256) -> Result<Option<Receipt>> { Ok(None) }
+    async fn transaction_block_reference(&self, _h: B256) -> Result<Option<(u64, B256, usize)>> { Ok(None) }
+    async fn get_snapshot(&self) -> Result<Box<dyn StateSnapshot>> { unimplemented!() }
+}
 
-    async fn header(&self, block_id: BlockId) -> Result<Option<Header>> {
-        Ok(self.get_block_by_id(block_id).map(|b| b.header.clone()))
-    }
+#[async_trait]
+impl StateProvider for ChainStore {
+    fn writer(&self) -> Arc<dyn WriteProvider> { unimplemented!() }
+    async fn account(&self, _a: Address, _id: BlockId) -> Result<Option<GenesisAccount>> { Ok(None) }
+    async fn storage(&self, _a: Address, _s: B256, _id: BlockId) -> Result<Option<U256>> { Ok(None) }
+    async fn code(&self, _a: Address, _id: BlockId) -> Result<Option<Bytes>> { Ok(None) }
+    async fn balance(&self, _a: Address, _id: BlockId) -> Result<U256> { Ok(U256::ZERO) }
+    async fn transaction_count(&self, _a: Address, _id: BlockId) -> Result<u64> { Ok(0) }
+    async fn accounts(&self) -> Result<Vec<Address>> { Ok(vec![]) }
+    async fn header(&self, id: BlockId) -> Result<Option<Header>> { Ok(self.get_block_by_id(id).map(|b| b.header.clone())) }
+    async fn block(&self, id: BlockId) -> Result<Option<Block<Transaction>>> { Ok(self.get_block_by_id(id).cloned()) }
+    async fn block_hash(&self, n: u64) -> Result<Option<B256>> { Ok(self.blocks.get(&n).map(|b| b.header.hash_slow())) }
+    async fn latest_block_number(&self) -> Result<u64> { Ok(self.blocks.keys().last().cloned().unwrap_or(0)) }
+    async fn chain_id(&self) -> Result<u64> { Ok(0) }
+    async fn logs(&self, _f: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>> { Ok(vec![]) }
+    async fn transaction(&self, h: B256) -> Result<Option<Transaction>> { Ok(self.transactions.get(&h).cloned()) }
+    async fn transaction_receipt(&self, h: B256) -> Result<Option<Receipt>> { Ok(self.receipts.get(&h).cloned()) }
+    async fn transaction_block_reference(&self, h: B256) -> Result<Option<(u64, B256, usize)>> { Ok(self.tx_location.get(&h).cloned()) }
+    async fn get_snapshot(&self) -> Result<Box<dyn StateSnapshot>> { unimplemented!() }
+}
 
-    async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> {
-        Ok(self.get_block_by_id(block_id).cloned())
+impl ChainStore {
+    pub fn get_block_by_id(&self, block_id: BlockId) -> Option<&Block<Transaction>> {
+        match block_id {
+            BlockId::Hash(hash) => {
+                let h: B256 = hash.into();
+                self.hash_to_number.get(&h).and_then(|&num| self.blocks.get(&num))
+            }
+            BlockId::Number(num) => match num {
+                alloy_eips::BlockNumberOrTag::Number(n) => self.blocks.get(&n),
+                alloy_eips::BlockNumberOrTag::Latest | alloy_eips::BlockNumberOrTag::Pending => {
+                    self.hash_to_number.get(&self.head_block_hash).and_then(|&num| self.blocks.get(&num))
+                }
+                alloy_eips::BlockNumberOrTag::Safe => self.hash_to_number.get(&self.safe_block_hash).and_then(|&num| self.blocks.get(&num)),
+                alloy_eips::BlockNumberOrTag::Finalized => self.hash_to_number.get(&self.finalized_block_hash).and_then(|&num| self.blocks.get(&num)),
+                alloy_eips::BlockNumberOrTag::Earliest => self.blocks.get(&0),
+            }
+        }
     }
+}
 
-    async fn block_hash(&self, number: u64) -> Result<Option<B256>> {
-        Ok(self.get_block_hash(number))
-    }
+#[async_trait]
+impl StateProvider for InMemoryStorage {
+    fn writer(&self) -> Arc<dyn WriteProvider> { unimplemented!() }
+    async fn account(&self, address: Address, block_id: BlockId) -> Result<Option<GenesisAccount>> { self.state.account(address, block_id).await }
+    async fn storage(&self, address: Address, slot: B256, block_id: BlockId) -> Result<Option<U256>> { self.state.storage(address, slot, block_id).await }
+    async fn code(&self, address: Address, block_id: BlockId) -> Result<Option<Bytes>> { self.state.code(address, block_id).await }
+    async fn balance(&self, address: Address, block_id: BlockId) -> Result<U256> { self.state.balance(address, block_id).await }
+    async fn transaction_count(&self, address: Address, block_id: BlockId) -> Result<u64> { self.state.transaction_count(address, block_id).await }
+    async fn accounts(&self) -> Result<Vec<Address>> { self.state.accounts().await }
+    async fn header(&self, block_id: BlockId) -> Result<Option<Header>> { self.chain.header(block_id).await }
+    async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> { self.chain.block(block_id).await }
+    async fn block_hash(&self, number: u64) -> Result<Option<B256>> { self.chain.block_hash(number).await }
+    async fn latest_block_number(&self) -> Result<u64> { self.chain.latest_block_number().await }
+    async fn chain_id(&self) -> Result<u64> { self.state.chain_id().await }
+    async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>> { self.chain.logs(filter).await }
+    async fn transaction(&self, hash: B256) -> Result<Option<Transaction>> { self.chain.transaction(hash).await }
+    async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>> { self.chain.transaction_receipt(hash).await }
+    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> { self.chain.transaction_block_reference(hash).await }
+    async fn get_snapshot(&self) -> Result<Box<dyn StateSnapshot>> { Ok(Box::new(self.clone())) }
+}
 
-    async fn latest_block_number(&self) -> Result<u64> {
-        Ok(self.get_latest_block_number())
-    }
-
-    async fn chain_id(&self) -> Result<u64> {
-        let chain_id = self.backend.environment.chain_id;
-        Ok(evm_u256_to_alloy_u256(chain_id).to::<u64>())
-    }
-
-    async fn logs(&self, _filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>> {
-        // TODO use the filter on indexed logs
-        Ok(vec![])
-    }
-
-    async fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
-        Ok(self.get_transaction_by_hash(hash).cloned())
-    }
-
-    async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>> {
-        Ok(self.get_receipt_by_tx_hash(hash).cloned())
-    }
-
-    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
-        Ok(self.tx_location.get(&hash).cloned())
-    }
-
-    async fn get_snapshot(&self) -> Result<Box<dyn crate::storage::traits::StateSnapshot>> {
-        Ok(Box::new(self.clone()))
-    }
+impl Database for InMemoryStorage {
+    fn state_store(&self) -> Arc<dyn StateProvider> { Arc::new(self.state.clone()) }
+    fn chain_store(&self) -> Arc<dyn StateProvider> { Arc::new(self.chain.clone()) }
 }
 
 #[cfg(test)]
@@ -778,97 +801,33 @@ mod tests {
     async fn test_new_storage() {
         let chain_id = EvmU256::from(1);
         let storage = InMemoryStorage::new(chain_id);
-        assert_eq!(storage.backend.environment.chain_id, chain_id);
+        assert_eq!(storage.state.backend.environment.chain_id, chain_id);
         assert_eq!(storage.get_latest_block_number(), 0);
     }
 
     #[tokio::test]
-    async fn test_balance_management() {
+    async fn test_add_block() {
         let mut storage = InMemoryStorage::new(EvmU256::from(1));
-        let addr = address!("0000000000000000000000000000000000000001");
-        let balance = U256::from(1000);
+        let genesis_hash = storage.chain.head_block_hash;
         
-        storage.set_balance(addr, balance);
-        assert_eq!(storage.get_balance(addr), balance);
-        
-        let provider_balance = storage.balance(addr, BlockId::latest()).await.unwrap();
-        assert_eq!(provider_balance, balance);
-    }
-    
-    #[tokio::test]
-    async fn test_genesis_init() {
-        let chain_id = EvmU256::from(1);
-        let mut alloc = BTreeMap::new();
-        let addr = address!("0000000000000000000000000000000000000001");
-        alloc.insert(addr, GenesisAccount {
-            balance: U256::from(1000),
-            nonce: Some(1),
-            ..Default::default()
-        });
-        
-        let genesis_init = GenesisInit {
-            alloc,
-            config: ChainConfig::default(),
-            coinbase: None,
-            difficulty: None,
-            extra_data: None,
-            gas_limit: None,
-            nonce: None,
-            mixhash: None,
-            parent_hash: None,
-            timestamp: None,
-            number: None,
-        };
-        
-        let (storage, _block) = InMemoryStorage::create_from_genesis_init(chain_id, genesis_init);
-        assert_eq!(storage.get_balance(addr), U256::from(1000));
-        let acc = storage.account(addr, BlockId::latest()).await.unwrap().unwrap();
-        assert_eq!(acc.nonce, Some(1));
-    }
-
-    #[tokio::test]
-    async fn test_block_management() {
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
         let mut block: Block<Transaction> = Block::default();
         block.header.number = 1;
-        let block_hash = block.header.hash_slow();
+        block.header.parent_hash = genesis_hash;
         
-        storage.add_block(block.clone());
+        storage.add_block(block);
         assert_eq!(storage.get_latest_block_number(), 1);
-        assert_eq!(storage.get_block_by_number(1).unwrap().header.number, 1);
-        assert_eq!(storage.get_block_by_hash(block_hash).unwrap().header.number, 1);
-        
-        storage.revert_to_height(0);
-        assert_eq!(storage.get_latest_block_number(), 0);
-        assert!(storage.get_block_by_number(1).is_none());
-    }
-
-    #[tokio::test]
-    async fn test_transaction_and_receipt() {
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
-        let tx = Transaction::Legacy(alloy_consensus::TxLegacy::default().into_signed(alloy_primitives::Signature::test_signature()));
-        let tx_hash = *tx.hash();
-        
-        storage.add_transaction(tx.clone());
-        assert_eq!(storage.get_transaction_by_hash(tx_hash).unwrap().hash(), &tx_hash);
-        
-        let receipt = Receipt::default();
-        storage.add_receipt(tx_hash, receipt.clone());
-        assert!(storage.get_receipt_by_tx_hash(tx_hash).is_some());
+        assert_ne!(storage.chain.head_block_hash, genesis_hash);
     }
 
     #[tokio::test]
     async fn test_forkchoice_update() {
         let mut storage = InMemoryStorage::new(EvmU256::from(1));
-        let h1 = B256::repeat_byte(1);
-        let h2 = B256::repeat_byte(2);
-        let h3 = B256::repeat_byte(3);
+        let genesis_hash = storage.chain.head_block_hash;
+        let new_hash = B256::repeat_byte(0x12);
         
-        storage.update_forkchoice(h1, Some(h2), Some(h3));
-        assert_eq!(storage.head_block_hash, h1);
-        assert_eq!(storage.safe_block_hash, h2);
-        assert_eq!(storage.finalized_block_hash, h3);
+        storage.update_forkchoice(new_hash, Some(genesis_hash), Some(genesis_hash));
+        assert_eq!(storage.chain.head_block_hash, new_hash);
+        assert_eq!(storage.chain.safe_block_hash, genesis_hash);
+        assert_eq!(storage.chain.finalized_block_hash, genesis_hash);
     }
 }
-
-

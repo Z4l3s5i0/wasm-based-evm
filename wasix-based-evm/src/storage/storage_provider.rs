@@ -60,7 +60,7 @@ impl StorageProvider {
         }
 
         let mut pending_storage = storage;
-        let latest_block = pending_storage.get_latest_block().cloned().unwrap();
+        let latest_block = pending_storage.chain.blocks.values().last().cloned().unwrap();
         let pending_block = Block {
             header: Header {
                 number: latest_block.header.number + 1,
@@ -228,7 +228,7 @@ impl WriteProvider for StorageWriter {
         let mut storage = self.inner.write().await;
         
         // 1. Apply changeset
-        storage.backend.apply_overlayed(&changeset);
+        storage.state.backend.apply_overlayed(&changeset);
 
         // 2. Apply withdrawals
         for withdrawal in withdrawals {
@@ -237,7 +237,7 @@ impl WriteProvider for StorageWriter {
             let evm_amount_wei = crate::evm::ev::alloy_u256_to_evm_u256(amount_wei);
             let h160_addr = crate::evm::ev::address_to_h160(addr);
             
-            let account = storage.backend.state.entry(h160_addr).or_insert_with(|| evm::backend::InMemoryAccount {
+            let account = storage.state.backend.state.entry(h160_addr).or_insert_with(|| evm::backend::InMemoryAccount {
                 balance: crate::evm::ev::EvmU256::zero(),
                 nonce: crate::evm::ev::EvmU256::zero(),
                 code: Vec::new(),
@@ -257,6 +257,11 @@ impl WriteProvider for StorageWriter {
         // 4. Add block
         storage.add_block(block);
         
+        Ok(())
+    }
+
+    async fn apply_state_changeset(&self, changeset: OverlayedChangeSet) -> Result<()> {
+        self.inner.write().await.state.backend.apply_overlayed(&changeset);
         Ok(())
     }
 }
@@ -297,5 +302,9 @@ impl WriteProvider for StorageProvider {
 
     async fn commit_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, changeset: OverlayedChangeSet, withdrawals: Vec<Withdrawal>) -> Result<()> {
         self.writer.commit_block(block, receipts, changeset, withdrawals).await
+    }
+
+    async fn apply_state_changeset(&self, changeset: OverlayedChangeSet) -> Result<()> {
+        self.writer.apply_state_changeset(changeset).await
     }
 }

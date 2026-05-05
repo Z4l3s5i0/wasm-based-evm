@@ -222,9 +222,9 @@ impl EngineService {
         let storage = storage_snapshot.as_any().downcast_ref::<InMemoryStorage>().unwrap();
 
         // Save current forkchoice state for potential rollback
-        let old_head = storage.head_block_hash;
-        let old_safe = storage.safe_block_hash;
-        let old_finalized = storage.finalized_block_hash;
+        let old_head = storage.chain.head_block_hash;
+        let old_safe = storage.chain.safe_block_hash;
+        let old_finalized = storage.chain.finalized_block_hash;
 
         let writer = self.state_storage.writer();
 
@@ -274,7 +274,7 @@ impl EngineService {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),
             }
-        } else if let Some((payload_block, _)) = storage.payloads.values().find(|(b, _)| b.header.hash_slow() == head_block_hash) {
+        } else if let Some((payload_block, _)) = storage.chain.payloads.values().find(|(b, _)| b.header.hash_slow() == head_block_hash) {
             debug!("[EngineService] Head block found in payload map: #{} hash={:?}", payload_block.header.number, head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
@@ -290,7 +290,7 @@ impl EngineService {
                     latest_valid_hash: Some(head_block_hash),
                 }
             } else {
-                let local_head_hash = storage.head_block_hash;
+                let local_head_hash = storage.chain.head_block_hash;
                 debug!("[EngineService] Head block NOT found: requested_hash={:?}. Local head is {:?} (genesis is {:?}). Returning Syncing.", 
                     head_block_hash, local_head_hash, genesis_hash);
 
@@ -327,9 +327,9 @@ impl EngineService {
             .cloned()
             .or_else(|| {
                 // Fallback to payloads map if head is not in storage yet
-                storage.payloads.values()
+                storage.chain.payloads.values()
                     .find(|(b, _)| b.header.hash_slow() == head_block_hash)
-                    .map(|(b, _)| b.clone())
+                    .map(|(b, _): &(Block<TxEnvelope>, Vec<Receipt>)| b.clone())
             })
             .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found for payload building: {:?}", head_block_hash)))?;
 
