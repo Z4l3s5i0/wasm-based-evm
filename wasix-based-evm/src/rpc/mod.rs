@@ -6,7 +6,7 @@ pub mod engine_service;
 pub mod account_manager;
 
 mod block_mapper;
-mod engine_mapper;
+pub mod engine_mapper;
 mod transaction_mapper;
 mod debug_controller;
 

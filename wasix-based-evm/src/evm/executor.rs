@@ -63,6 +63,10 @@ impl Executor {
     }
 
     pub fn execute_with_changeset(&self, storage: &mut dyn SyncStateProvider, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
+        // 1. prepare environment for execution
+        // 2. initialize variables for results and receipts
+        // 3. execute transaction in a loop and create receipt
+        // 4. collect results and receipts and return
         info!("[Executor] Executing {} transactions for block {}", transactions.len(), block.header.number);
         let precompiles = StandardPrecompileSet;
         let etable = evm::interpreter::etable::Chained(ExecutionEtable::new(), GasometerEtable::new());
@@ -234,6 +238,7 @@ impl Executor {
         withdrawals: &[Withdrawal],
         total_changeset: &OverlayedChangeSet
     ) -> BlockRoots {
+        // Calculate state root
         let mut storage_for_root = storage.clone_box();
         storage_for_root.apply_changeset(total_changeset);
         let state_root = storage_for_root.calculate_state_root();
@@ -340,6 +345,14 @@ impl Executor {
         attr: &alloy_rpc_types::engine::PayloadAttributes,
         base_fee_per_gas: Option<u64>,
     ) -> Result<(Block<TxEnvelope>, Vec<Receipt>), String> {
+
+        // 1. Mock a blocks header and body for execute_with_changeset
+        // 2. Execute with changeset
+        // 3. Collect receipts, logs and withdrawals
+        // 4. Calculate roots
+        // 5. create finalized header
+        // 6. create finalized block
+
         let start = std::time::Instant::now();
         let block_number = parent_header.number + 1;
         

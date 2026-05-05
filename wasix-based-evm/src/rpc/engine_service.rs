@@ -216,6 +216,15 @@ impl EngineService {
         _version: u8,
     ) -> RpcResult<ForkchoiceUpdated> {
         debug!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
+
+        //1. get storage snapshot
+        //2. save state for potential rollback
+        //3. update forkchoice in storage
+        //4. determine payload status based on head block availability
+        //5. build payload if requested and status is VALID (or SYNCING)
+        //  - update forkchoice in storage as a rollback mechanism if error when building payload
+        //6. return payload status and payload_id (if any)
+
         let storage_snapshot = self.state_storage.get_snapshot().await
             .map_err(|e| RpcError::Internal(e.to_string()))?;
 
@@ -268,6 +277,12 @@ impl EngineService {
     }
 
     async fn determine_payload_status(&self, storage: &InMemoryStorage, head_block_hash: B256) -> PayloadStatus {
+
+        // 1. Check if head block is already in storage
+        // 2. Check if head block is in payload map (fallback)
+        // 3. Check if head block is the genesis block (by hash)
+        //  - if yes, return Valid
+        //  - if no, trigger syncing and return Syncing status
         if let Some(head_block) = storage.get_block_by_hash(head_block_hash) {
             debug!("[EngineService] Head block found in storage: #{} hash={:?}", head_block.header.number, head_block_hash);
             PayloadStatus {
@@ -317,6 +332,18 @@ impl EngineService {
         attr: PayloadAttributes,
         status: &PayloadStatus,
     ) -> RpcResult<Option<PayloadId>> {
+        // 1.check if we are in syncing mode
+        // 2.check if head block is in storage
+        // 3.check if head block is in payload map (fallback)
+        // - if block not found, return error
+        // - if block timestamp is in the future, return error
+        // 4. generate payload_id
+        // 5. calculate base fee
+        // 6. get transactions from mempool
+        // 7. execute block with payload
+        // 8. add block to storage
+
+
         if status.status == PayloadStatusEnum::Syncing {
             debug!("[EngineService] Cannot build payload: head block missing (status is Syncing)");
             return Ok(None);
