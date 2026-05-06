@@ -42,7 +42,7 @@ impl BlockMapper {
             BlockTransactions::Full(block.body.transactions.iter().enumerate().map(|(i, tx)| {
                 crate::rpc::transaction_mapper::TransactionMapper::to_rpc_transaction(
                     tx.clone(), 
-                    Some((block.header.number, hash, i))
+                    Some((block.header.number, hash, i as u64))
                 )
             }).collect())
         } else {

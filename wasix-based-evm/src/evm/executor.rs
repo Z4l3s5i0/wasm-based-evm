@@ -10,7 +10,7 @@ use evm::{
     standard::{Config, Invoker, ExecutionEtable, GasometerEtable, TransactArgs, TransactArgsCallCreate, TransactGasPrice, EtableResolver, TransactValue},
 };
 use evm_precompile::StandardPrecompileSet;
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::RedbStorage;
 use crate::misc::metrics::{
     TRANSACTION_EXECUTION_TIME, CPU_CYCLES_TOTAL, INSTRUCTION_COUNT_TOTAL, BLOCK_EXECUTION_TIME,
     GAS_PROCESSED_TOTAL,
@@ -53,7 +53,7 @@ impl Executor {
         }
     }
 
-    pub fn execute_with_changeset(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
+    pub fn execute_with_changeset(&self, storage: &mut RedbStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Vec<Receipt>, OverlayedChangeSet), String> {
         info!("[Executor] Executing {} transactions for block {}", transactions.len(), block.header.number);
         let precompiles = StandardPrecompileSet;
         let etable = evm::interpreter::etable::Chained(ExecutionEtable::new(), GasometerEtable::new());
@@ -188,7 +188,7 @@ impl Executor {
         }
     }
 
-    pub fn execute_block(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
+    pub fn execute_block(&self, storage: &mut RedbStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
         let start = std::time::Instant::now();
         let (results, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
         BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
@@ -212,10 +212,10 @@ impl Executor {
     }
 
     fn calculate_roots(
-        &self, 
-        storage: &InMemoryStorage, 
-        transactions: &[TxEnvelope], 
-        receipts: &[Receipt], 
+        &self,
+        storage: &RedbStorage,
+        transactions: &[TxEnvelope],
+        receipts: &[Receipt],
         withdrawals: &[Withdrawal],
         total_changeset: &OverlayedChangeSet
     ) -> BlockRoots {
@@ -318,7 +318,7 @@ impl Executor {
 
     fn finalize_state(
         &self,
-        storage: &mut InMemoryStorage,
+        storage: &mut RedbStorage,
         total_changeset: &OverlayedChangeSet,
         transactions: &[TxEnvelope],
         receipts: &[Receipt],
@@ -364,7 +364,7 @@ impl Executor {
 
     pub fn execute_block_for_payload(
         &self,
-        storage: &mut InMemoryStorage,
+        storage: &mut RedbStorage,
         transactions: Vec<TxEnvelope>,
         parent_header: &Header,
         attr: &alloy_rpc_types::engine::PayloadAttributes,
@@ -433,7 +433,7 @@ impl Executor {
         }, receipts))
     }
 
-    pub fn run_execution(&self, storage: &mut InMemoryStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
+    pub fn run_execution(&self, storage: &mut RedbStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
         let start = std::time::Instant::now();
         let result = if apply_changes {
             self.execute_block(storage, transactions, block)
@@ -492,7 +492,7 @@ mod tests {
     #[test]
     fn test_run_execution_dry_run() {
         let executor = Executor::new();
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1));
         
         let tx = TxEnvelope::Legacy(TxLegacy {
             nonce: 0,

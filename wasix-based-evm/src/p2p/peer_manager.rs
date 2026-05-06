@@ -11,7 +11,7 @@ use jsonrpsee::core::RpcResult;
 use crate::{info, error, debug};
 use tokio::sync::mpsc;
 
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::RedbStorage;
 use alloy_rlp::Encodable;
 use crate::identity::identity::Identity;
 use crate::misc::metrics::{CONNECTED_PEERS, P2P_MESSAGES_SENT_BYTES, NETWORK_HEAD};
@@ -31,7 +31,7 @@ pub struct PeerManager {
     local_identity: Identity,
     peers: Arc<RwLock<HashMap<String, PeerInfo>>>,
     gossip_tx: mpsc::Sender<Vec<u8>>,
-    storage: Arc<RwLock<InMemoryStorage>>,
+    storage: Arc<RwLock<RedbStorage>>,
     pub discovery_port: u16,
     pub p2p_port: u16,
     pub ext_ip: Option<std::net::IpAddr>,
@@ -132,7 +132,7 @@ impl P2pApiServer for PeerManager {
 impl PeerManager {
     pub fn new(
         identity: Identity,
-        storage: Arc<RwLock<InMemoryStorage>>,
+        storage: Arc<RwLock<RedbStorage>>,
         discovery_port: u16,
         p2p_port: u16,
         ext_ip: Option<std::net::IpAddr>,

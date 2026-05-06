@@ -2,7 +2,7 @@ use crate::evm::executor::Executor;
 use crate::mempool::Mempool;
 use crate::misc::error::{RpcError, RpcResult};
 use crate::rpc::engine_mapper::EngineMapper;
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::RedbStorage;
 use crate::sync::controller::SyncController;
 use crate::{error, info, debug};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, Transaction, TxEnvelope};
@@ -18,7 +18,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 
 pub struct EngineService {
-    pub storage: Arc<RwLock<InMemoryStorage>>,
+    pub storage: Arc<RwLock<RedbStorage>>,
     pub mempool: Arc<RwLock<Mempool>>,
     pub executor: Executor,
     pub sync_engine: Arc<SyncController>,
@@ -26,7 +26,7 @@ pub struct EngineService {
 
 impl EngineService {
     pub fn new(
-        storage: Arc<RwLock<InMemoryStorage>>,
+        storage: Arc<RwLock<RedbStorage>>,
         mempool: Arc<RwLock<Mempool>>,
         executor: Executor,
         sync_engine: Arc<SyncController>,
@@ -252,14 +252,14 @@ impl EngineService {
         })
     }
 
-    async fn determine_payload_status(&self, storage: &InMemoryStorage, head_block_hash: B256) -> PayloadStatus {
+    async fn determine_payload_status(&self, storage: &RedbStorage, head_block_hash: B256) -> PayloadStatus {
         if let Some(head_block) = storage.get_block_by_hash(head_block_hash) {
             debug!("[EngineService] Head block found in storage: #{} hash={:?}", head_block.header.number, head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),
             }
-        } else if let Some((payload_block, _)) = storage.payloads.values().find(|(b, _)| b.header.hash_slow() == head_block_hash) {
+        } else if let Some((payload_block, _)) = storage.get_payload_by_block_hash(head_block_hash) {
             debug!("[EngineService] Head block found in payload map: #{} hash={:?}", payload_block.header.number, head_block_hash);
             PayloadStatus {
                 status: PayloadStatusEnum::Valid,
@@ -297,7 +297,7 @@ impl EngineService {
 
     async fn build_new_payload(
         &self,
-        storage: &mut InMemoryStorage,
+        storage: &mut RedbStorage,
         head_block_hash: B256,
         attr: PayloadAttributes,
         status: &PayloadStatus,
@@ -309,12 +309,10 @@ impl EngineService {
 
         // Validate attributes
         let parent_block = storage.get_block_by_hash(head_block_hash)
-            .cloned()
             .or_else(|| {
                 // Fallback to payloads map if head is not in storage yet
-                storage.payloads.values()
-                    .find(|(b, _)| b.header.hash_slow() == head_block_hash)
-                    .map(|(b, _)| b.clone())
+                storage.get_payload_by_block_hash(head_block_hash)
+                    .map(|(b, _)| b)
             })
             .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found for payload building: {:?}", head_block_hash)))?;
 
@@ -397,7 +395,7 @@ impl EngineService {
         let (block, _) = storage.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
-        Ok(EngineMapper::to_execution_payload_v1(block))
+        Ok(EngineMapper::to_execution_payload_v1(&block))
     }
 
     pub fn calculate_block_value(&self, block: &Block<TxEnvelope>, receipts: &[Receipt]) -> U256 {
@@ -422,8 +420,8 @@ impl EngineService {
         let (block, receipts) = storage.get_payload(&payload_id)
             .ok_or_else(|| RpcError::UnknownPayload(format!("Payload not found: {:?}", payload_id)))?;
 
-        let execution_payload = EngineMapper::to_execution_payload_v2(block);
-        let block_value = self.calculate_block_value(block, receipts);
+        let execution_payload = EngineMapper::to_execution_payload_v2(&block);
+        let block_value = self.calculate_block_value(&block, &receipts);
         
         Ok(EngineMapper::to_execution_payload_envelope_v2(execution_payload, block_value))
     }
@@ -489,7 +487,7 @@ impl EngineService {
     }
 
 
-    fn validate_parent_block(&self, storage: &InMemoryStorage, parent_hash: B256) -> Option<PayloadStatus> {
+    fn validate_parent_block(&self, storage: &RedbStorage, parent_hash: B256) -> Option<PayloadStatus> {
         if storage.get_block_by_hash(parent_hash).is_none() {
             let genesis_hash = storage.get_block_by_number(0).map(|b| b.header.hash_slow());
             if Some(parent_hash) != genesis_hash {

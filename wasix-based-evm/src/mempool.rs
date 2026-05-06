@@ -557,10 +557,10 @@ mod tests {
 
     #[tokio::test]
     async fn test_revalidate() {
-        use crate::storage::storage::InMemoryStorage;
+        use crate::storage::storage::RedbStorage;
         use crate::evm::ev::EvmU256;
         let mut mempool = Mempool::new(U256::from(100));
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1));
         
         let tx = Transaction::Legacy(TxLegacy {
             nonce: 10,

@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use crate::mempool::Mempool;
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::RedbStorage;
 use crate::storage::traits::StateProvider;
 use alloy_consensus::{Block, Header, transaction::SignerRecoverable};
 use alloy_primitives::{Bytes, B256, U256};
@@ -11,7 +11,7 @@ use crate::misc::metrics::{BLOCK_PRODUCTION_SUCCESS, BLOCK_PRODUCTION_FAILED};
 
 pub struct DevMode {
     mempool: Arc<RwLock<Mempool>>,
-    storage: Arc<RwLock<InMemoryStorage>>,
+    storage: Arc<RwLock<RedbStorage>>,
     executor: Arc<Executor>,
     interval: u64,
 }
@@ -19,7 +19,7 @@ pub struct DevMode {
 impl DevMode {
     pub fn new(
         mempool: Arc<RwLock<Mempool>>,
-        storage: Arc<RwLock<InMemoryStorage>>,
+        storage: Arc<RwLock<RedbStorage>>,
         executor: Arc<Executor>,
         interval: u64,
     ) -> Self {
@@ -51,7 +51,6 @@ impl DevMode {
         let mut mempool = self.mempool.write().await;
 
         let latest_block = storage.get_latest_block()
-            .cloned()
             .ok_or_else(|| "Latest block not found".to_string())?;
 
         let parent_hash = latest_block.header.hash_slow();

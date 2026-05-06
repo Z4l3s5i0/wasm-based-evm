@@ -22,7 +22,7 @@ pub trait StateProvider: Send + Sync {
     async fn logs(&self, filter: alloy_rpc_types::Filter) -> Result<Vec<alloy_rpc_types::eth::Log>>;
     async fn transaction(&self, hash: B256) -> Result<Option<Transaction>>;
     async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>>;
-    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>>; // (number, hash, index)
+    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, u64)>>; // (number, hash, index)
 }
 
 pub trait ChainProvider: Send + Sync {
@@ -32,7 +32,7 @@ pub trait ChainProvider: Send + Sync {
     fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt);
     fn calculate_state_root(&self) -> B256;
     fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>);
-    fn get_payload(&self, payload_id: &PayloadId) -> Option<&(Block<Transaction>, Vec<Receipt>)>;
+    fn get_payload(&self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)>;
     fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)>;
     fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>);
 }

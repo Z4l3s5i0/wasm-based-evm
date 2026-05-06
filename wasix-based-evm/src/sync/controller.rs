@@ -1,7 +1,7 @@
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::RedbStorage;
 use crate::storage::traits::StateProvider;
 use crate::p2p::peer_manager::PeerManager;
 use crate::mempool::Mempool;
@@ -15,7 +15,7 @@ use crate::sync::downloader::Downloader;
 use crate::sync::processor::BlockProcessor;
 
 pub struct SyncController {
-    storage: Arc<RwLock<InMemoryStorage>>,
+    storage: Arc<RwLock<RedbStorage>>,
     mempool: Arc<RwLock<Mempool>>,
     downloader: Downloader,
     processor: BlockProcessor,
@@ -26,7 +26,7 @@ pub struct SyncController {
 
 impl SyncController {
     pub fn new(
-        storage: Arc<RwLock<InMemoryStorage>>,
+        storage: Arc<RwLock<RedbStorage>>,
         mempool: Arc<RwLock<Mempool>>,
         peer_manager: Arc<PeerManager>,
         executor: Arc<Executor>

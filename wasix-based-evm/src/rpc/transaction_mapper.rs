@@ -5,9 +5,9 @@ use alloy_rpc_types::eth::{Transaction, TransactionReceipt};
 pub struct TransactionMapper;
 
 impl TransactionMapper {
-    pub fn to_rpc_transaction(tx: TxEnvelope, block_ref: Option<(u64, B256, usize)>) -> Transaction {
+    pub fn to_rpc_transaction(tx: TxEnvelope, block_ref: Option<(u64, B256, u64)>) -> Transaction {
         let (block_number, block_hash, transaction_index) = match block_ref {
-            Some((num, hash, index)) => (Some(num), Some(hash), Some(index as u64)),
+            Some((num, hash, index)) => (Some(num), Some(hash), Some(index)),
             None => (None, None, None),
         };
 
@@ -23,9 +23,9 @@ impl TransactionMapper {
         }
     }
 
-    pub fn to_rpc_receipt(receipt: ConsensusReceipt, block_ref: Option<(u64, B256, usize)>) -> TransactionReceipt {
+    pub fn to_rpc_receipt(receipt: ConsensusReceipt, block_ref: Option<(u64, B256, u64)>) -> TransactionReceipt {
         let (block_number, block_hash, transaction_index) = match block_ref {
-            Some((num, hash, index)) => (Some(num), Some(hash), Some(index as u64)),
+            Some((num, hash, index)) => (Some(num), Some(hash), Some(index)),
             None => (None, None, None),
         };
 

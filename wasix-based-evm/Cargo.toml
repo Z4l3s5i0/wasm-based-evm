@@ -88,7 +88,7 @@ socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", 
 rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31", default-features = false, features = [ "tls12"] }
 
 
-
+redb = { version = "4.1.0", default-features = false }
 
 [patch.crates-io]
 wasm-bindgen = {git = "https://github.com/wasix-org/wasm-bindgen.git" , branch = "wasi"}

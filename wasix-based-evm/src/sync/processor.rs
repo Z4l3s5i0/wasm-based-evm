@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use std::time::Instant;
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::RedbStorage;
 use crate::mempool::Mempool;
 use alloy_consensus::{Block, TxEnvelope as Transaction};
 use alloy_primitives::U256;
@@ -10,13 +10,13 @@ use crate::info;
 use crate::misc::metrics::{BLOCK_EXECUTION_TIME, CURRENT_HEAD_BLOCK, GAS_PROCESSED_TOTAL};
 
 pub struct BlockProcessor {
-    storage: Arc<RwLock<InMemoryStorage>>,
+    storage: Arc<RwLock<RedbStorage>>,
     executor: Arc<Executor>,
     mempool: Arc<RwLock<Mempool>>,
 }
 
 impl BlockProcessor {
-    pub fn new(storage: Arc<RwLock<InMemoryStorage>>, executor: Arc<Executor>, mempool: Arc<RwLock<Mempool>>) -> Self {
+    pub fn new(storage: Arc<RwLock<RedbStorage>>, executor: Arc<Executor>, mempool: Arc<RwLock<Mempool>>) -> Self {
         Self { storage, executor, mempool }
     }
 
@@ -53,7 +53,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_block_empty() {
-        let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
+        let storage = Arc::new(RwLock::new(RedbStorage::new(EvmU256::from(1))));
         let executor = Arc::new(Executor::new());
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
         let processor = BlockProcessor::new(storage.clone(), executor, mempool);

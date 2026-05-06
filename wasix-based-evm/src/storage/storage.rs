@@ -1,26 +1,36 @@
-use crate::evm::ev::{H160, H256, EvmU256, evm, address_to_h160, alloy_u256_to_evm_u256, b256_to_h256, evm_u256_to_alloy_u256};
-use std::time::Instant;
-use crate::misc::metrics::{STORAGE_READ_LATENCY, STORAGE_WRITE_LATENCY, FORK_CHOICE_UPDATED_TOTAL, REORG_COUNT_TOTAL};
-use crate::{info, debug, error};
-use evm::backend::{InMemoryBackend, InMemoryEnvironment, InMemoryAccount};
-use alloy_primitives::{Address, B256, U256, Bytes, B64};
-use alloy_trie::TrieAccount;
-use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
-use std::collections::{BTreeMap, HashMap};
-use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
-use crate::storage::traits::{ChainProvider, StateProvider};
-use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
-use alloy_rpc_types::engine::PayloadId;
+use crate::evm::ev::{address_to_h160, alloy_u256_to_evm_u256, b256_to_h256, evm, evm_u256_to_alloy_u256, EvmU256, H160, H256};
+use crate::evm::executor::Executor;
 use crate::mempool::Mempool;
+use crate::misc::metrics::{FORK_CHOICE_UPDATED_TOTAL, REORG_COUNT_TOTAL, STORAGE_READ_LATENCY, STORAGE_WRITE_LATENCY};
+use crate::storage::traits::{ChainProvider, StateProvider};
+use crate::{debug, error, info};
+use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_eips::BlockId;
+use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
+use alloy_primitives::{Address, Bytes, B256, B64, U256};
+use alloy_rpc_types::engine::PayloadId;
+use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
+use alloy_trie::TrieAccount;
 use anyhow::Result;
 use async_trait::async_trait;
-use tokio::sync::RwLock;
-use std::sync::Arc;
-use serde::{Serialize, Deserialize};
-use std::fs::File;
+use evm::backend::{InMemoryAccount, InMemoryBackend, InMemoryEnvironment};
+use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
+use serde::{Deserialize, Serialize};
+use std::collections::BTreeMap;
 use std::path::Path;
-use crate::evm::executor::Executor;
+use std::sync::Arc;
+use std::time::Instant;
+use tokio::sync::RwLock;
+
+const BLOCKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("blocks");
+const HASH_TO_NUMBER_TABLE: TableDefinition<&[u8], u64> = TableDefinition::new("hash_to_number");
+const TRANSACTIONS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("transactions");
+const RECEIPTS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("receipts");
+const TX_LOCATION_TABLE: TableDefinition<&[u8], (u64, &[u8], u64)> = TableDefinition::new("tx_location");
+const STATE_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("state");
+const SNAPSHOTS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("snapshots");
+const PAYLOADS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("payloads");
+const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -63,22 +73,38 @@ impl From<GenesisInit> for Genesis {
     }
 }
 
-#[derive(Clone, Serialize, Deserialize)]
-pub struct InMemoryStorage {
-    pub backend: InMemoryBackend,
-    pub blocks: BTreeMap<u64, Block<Transaction>>,
-    pub hash_to_number: BTreeMap<B256, u64>,
-    pub transactions: BTreeMap<B256, Transaction>,
-    pub receipts: BTreeMap<B256, Receipt>,
-    pub tx_location: BTreeMap<B256, (u64, B256, usize)>, // hash -> (number, hash, index)
+#[derive(Clone)]
+pub struct RedbStorage {
+    pub db: Arc<Database>,
     pub head_block_hash: B256,
     pub safe_block_hash: B256,
     pub finalized_block_hash: B256,
-    pub snapshots: BTreeMap<u64, InMemoryBackend>,
-    pub payloads: HashMap<PayloadId, (Block<Transaction>, Vec<Receipt>)>,
+    pub backend: InMemoryBackend, // Keep the latest backend in memory for fast access
 }
 
-impl InMemoryStorage {
+impl RedbStorage {
+    fn create_db() -> Arc<Database> {
+        let db = Database::builder()
+            .create_with_backend(redb::backends::InMemoryBackend::new())
+            .expect("Failed to create in-memory database");
+        
+        // Initialize tables
+        let write_txn = db.begin_write().unwrap();
+        {
+            write_txn.open_table(BLOCKS_TABLE).unwrap();
+            write_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
+            write_txn.open_table(TRANSACTIONS_TABLE).unwrap();
+            write_txn.open_table(RECEIPTS_TABLE).unwrap();
+            write_txn.open_table(TX_LOCATION_TABLE).unwrap();
+            write_txn.open_table(STATE_TABLE).unwrap();
+            write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            write_txn.open_table(PAYLOADS_TABLE).unwrap();
+            write_txn.open_table(METADATA_TABLE).unwrap();
+        }
+        write_txn.commit().unwrap();
+        Arc::new(db)
+    }
+
     pub fn new(chain_id: EvmU256) -> Self {
         let mut genesis = Genesis::default();
         genesis.config.chain_id = evm_u256_to_alloy_u256(chain_id).to::<u64>();
@@ -86,33 +112,21 @@ impl InMemoryStorage {
     }
 
     pub fn new_with_genesis(chain_id: EvmU256, genesis: Genesis) -> Self {
-        let (storage, genesis_block) = Self::create_from_genesis(chain_id, genesis);
-        let mut storage = storage;
+        let (mut storage, genesis_block) = Self::create_from_genesis(chain_id, genesis);
         let genesis_hash = genesis_block.header.hash_slow();
         
-        // Ensure genesis hash is indexed
-        storage.blocks.insert(genesis_block.header.number, genesis_block);
-        storage.hash_to_number.insert(genesis_hash, 0);
-        storage.head_block_hash = genesis_hash;
-        storage.safe_block_hash = genesis_hash;
-        storage.finalized_block_hash = genesis_hash;
-        storage.snapshots.insert(0, storage.backend.clone());
+        storage.add_block(genesis_block);
+        storage.update_forkchoice(genesis_hash, Some(genesis_hash), Some(genesis_hash));
 
         storage
     }
 
     pub fn new_with_genesis_init(chain_id: EvmU256, genesis: GenesisInit) -> Self {
-        let (storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis);
-        let mut storage = storage;
+        let (mut storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis);
         let genesis_hash = genesis_block.header.hash_slow();
         
-        // Ensure genesis hash is indexed
-        storage.blocks.insert(genesis_block.header.number, genesis_block);
-        storage.hash_to_number.insert(genesis_hash, 0);
-        storage.head_block_hash = genesis_hash;
-        storage.safe_block_hash = genesis_hash;
-        storage.finalized_block_hash = genesis_hash;
-        storage.snapshots.insert(0, storage.backend.clone());
+        storage.add_block(genesis_block);
+        storage.update_forkchoice(genesis_hash, Some(genesis_hash), Some(genesis_hash));
 
         storage
     }
@@ -136,20 +150,14 @@ impl InMemoryStorage {
         };
 
         let mut storage = Self {
+            db: Self::create_db(),
             backend: InMemoryBackend {
                 environment: env,
                 state: BTreeMap::new(),
             },
-            blocks: BTreeMap::new(),
-            hash_to_number: BTreeMap::new(),
-            transactions: BTreeMap::new(),
-            receipts: BTreeMap::new(),
-            tx_location: BTreeMap::new(),
             head_block_hash: B256::ZERO,
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
-            snapshots: BTreeMap::new(),
-            payloads: HashMap::new(),
         };
 
         for (addr, account) in genesis.alloc {
@@ -223,20 +231,14 @@ impl InMemoryStorage {
         };
 
         let mut storage = Self {
+            db: Self::create_db(),
             backend: InMemoryBackend {
                 environment: env,
                 state: BTreeMap::new(),
             },
-            blocks: BTreeMap::new(),
-            hash_to_number: BTreeMap::new(),
-            transactions: BTreeMap::new(),
-            receipts: BTreeMap::new(),
-            tx_location: BTreeMap::new(),
             head_block_hash: B256::ZERO,
             safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
-            snapshots: BTreeMap::new(),
-            payloads: HashMap::new(),
         };
 
         for (addr, account) in genesis.alloc {
@@ -291,16 +293,11 @@ impl InMemoryStorage {
         (storage, genesis_block)
     }
 
-    pub fn new_with_genesis_block(_chain_id: EvmU256, storage: Self, genesis_block: Block<Transaction>) -> Self {
-        let mut storage = storage;
+    pub fn new_with_genesis_block(_chain_id: EvmU256, mut storage: Self, genesis_block: Block<Transaction>) -> Self {
         let genesis_hash = genesis_block.header.hash_slow();
         
-        storage.blocks.insert(0, genesis_block);
-        storage.hash_to_number.insert(genesis_hash, 0);
-        storage.head_block_hash = genesis_hash;
-        storage.safe_block_hash = genesis_hash;
-        storage.finalized_block_hash = genesis_hash;
-        storage.snapshots.insert(0, storage.backend.clone());
+        storage.add_block(genesis_block);
+        storage.update_forkchoice(genesis_hash, Some(genesis_hash), Some(genesis_hash));
 
         storage
     }
@@ -311,32 +308,57 @@ impl InMemoryStorage {
         let block_hash = block.header.hash_slow();
         
         // Check if we already have this block
-        if self.hash_to_number.contains_key(&block_hash) {
+        if self.get_block_by_hash(block_hash).is_some() {
             debug!("[Storage] Block #{} with hash {:?} already exists, skipping", block_number, block_hash);
             return;
         }
 
         info!("[Storage] Adding block #{} with hash {:?}", block_number, block_hash);
         
-        for (i, tx) in block.body.transactions.iter().enumerate() {
-            let tx_hash = tx.hash();
-            debug!("[Storage] Indexing transaction {:?} in block {}", tx_hash, block_number);
-            self.tx_location.insert(*tx_hash, (block_number, block_hash, i));
-            self.transactions.insert(*tx_hash, tx.clone());
-        }
+        let write_txn = self.db.begin_write().unwrap();
+        {
+            let mut blocks_table = write_txn.open_table(BLOCKS_TABLE).unwrap();
+            let mut hash_to_number_table = write_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
+            let mut transactions_table = write_txn.open_table(TRANSACTIONS_TABLE).unwrap();
+            let mut tx_location_table = write_txn.open_table(TX_LOCATION_TABLE).unwrap();
+            let mut snapshots_table = write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
 
-        self.blocks.insert(block_number, block);
-        self.hash_to_number.insert(block_hash, block_number);
-        self.head_block_hash = block_hash;
-        
-        // Take snapshot after adding block
-        self.snapshots.insert(block_number, self.backend.clone());
-        // Keep only last 100 snapshots
-        if self.snapshots.len() > 100 {
-            if let Some(&first) = self.snapshots.keys().next() {
-                self.snapshots.remove(&first);
+            for (i, tx) in block.body.transactions.iter().enumerate() {
+                let tx_hash = tx.hash();
+                debug!("[Storage] Indexing transaction {:?} in block {}", tx_hash, block_number);
+                tx_location_table.insert(tx_hash.as_slice(), (block_number, block_hash.as_slice(), i as u64)).unwrap();
+                let tx_bytes = serde_json::to_vec(tx).unwrap();
+                transactions_table.insert(tx_hash.as_slice(), tx_bytes.as_slice()).unwrap();
+            }
+
+            let block_bytes = serde_json::to_vec(&block).unwrap();
+            blocks_table.insert(block_number, block_bytes.as_slice()).unwrap();
+            hash_to_number_table.insert(block_hash.as_slice(), block_number).unwrap();
+            
+            // Take snapshot after adding block
+            let snapshot_bytes = serde_json::to_vec(&self.backend).unwrap();
+            snapshots_table.insert(block_number, snapshot_bytes.as_slice()).unwrap();
+            
+            // Keep only last 100 snapshots
+            // This is a bit inefficient with redb, but let's stick to the logic for now
+            let mut count = 0;
+            let mut first_key = None;
+            for item in snapshots_table.iter().unwrap() {
+                let (key, _) = item.unwrap();
+                if count == 0 {
+                    first_key = Some(key.value());
+                }
+                count += 1;
+            }
+            if count > 100 {
+                if let Some(key) = first_key {
+                    snapshots_table.remove(key).unwrap();
+                }
             }
         }
+        write_txn.commit().unwrap();
+        
+        self.head_block_hash = block_hash;
         STORAGE_WRITE_LATENCY.observe(start.elapsed().as_secs_f64());
     }
 
@@ -344,29 +366,41 @@ impl InMemoryStorage {
         info!("[Storage] Reverting to height {}", height);
         let mut reverted_txs = Vec::new();
         
-        let keys_to_remove: Vec<u64> = self.blocks.range((height + 1)..).map(|(k, _)| *k).collect();
-        for k in keys_to_remove {
-            if let Some(block) = self.blocks.remove(&k) {
-                let block_hash = block.header.hash_slow();
-                self.hash_to_number.remove(&block_hash);
-                for tx in block.body.transactions {
-                    let hash = tx.hash();
-                    self.tx_location.remove(hash);
-                    // We don't necessarily remove from self.transactions if we want to keep them for mempool
-                    reverted_txs.push(tx);
+        let write_txn = self.db.begin_write().unwrap();
+        {
+            let mut blocks_table = write_txn.open_table(BLOCKS_TABLE).unwrap();
+            let mut hash_to_number_table = write_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
+            let mut tx_location_table = write_txn.open_table(TX_LOCATION_TABLE).unwrap();
+            let snapshots_table = write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+
+            let keys_to_remove: Vec<u64> = blocks_table.range((height + 1)..).unwrap()
+                .map(|item| item.unwrap().0.value()).collect();
+
+            for k in keys_to_remove {
+                if let Some(block_bytes) = blocks_table.remove(k).unwrap() {
+                    let block: Block<Transaction> = serde_json::from_slice(block_bytes.value()).unwrap();
+                    let block_hash = block.header.hash_slow();
+                    hash_to_number_table.remove(block_hash.as_slice()).unwrap();
+                    for tx in block.body.transactions {
+                        let hash = tx.hash();
+                        tx_location_table.remove(hash.as_slice()).unwrap();
+                        reverted_txs.push(tx);
+                    }
                 }
             }
+            
+            if let Some(snapshot_bytes) = snapshots_table.get(height).unwrap() {
+                self.backend = serde_json::from_slice(snapshot_bytes.value()).unwrap();
+            } else {
+                error!("[Storage] No snapshot found for height {}, state might be inconsistent!", height);
+            }
+            
+            if let Some(block_bytes) = blocks_table.get(height).unwrap() {
+                let block: Block<Transaction> = serde_json::from_slice(block_bytes.value()).unwrap();
+                self.head_block_hash = block.header.hash_slow();
+            }
         }
-        
-        if let Some(snapshot) = self.snapshots.get(&height) {
-            self.backend = snapshot.clone();
-        } else {
-            error!("[Storage] No snapshot found for height {}, state might be inconsistent!", height);
-        }
-        
-        if let Some(block) = self.blocks.get(&height) {
-            self.head_block_hash = block.header.hash_slow();
-        }
+        write_txn.commit().unwrap();
         
         reverted_txs
     }
@@ -374,32 +408,60 @@ impl InMemoryStorage {
     pub fn add_transaction(&mut self, tx: Transaction) {
         let hash = tx.hash();
         debug!("[Storage] Adding transaction {:?}", hash);
-        self.transactions.insert(*hash, tx);
+        let write_txn = self.db.begin_write().unwrap();
+        {
+            let mut transactions_table = write_txn.open_table(TRANSACTIONS_TABLE).unwrap();
+            let tx_bytes = serde_json::to_vec(&tx).unwrap();
+            transactions_table.insert(hash.as_slice(), tx_bytes.as_slice()).unwrap();
+        }
+        write_txn.commit().unwrap();
     }
 
     pub fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
         debug!("[Storage] Adding receipt for transaction {:?}", tx_hash);
-        self.receipts.insert(tx_hash, receipt);
+        let write_txn = self.db.begin_write().unwrap();
+        {
+            let mut receipts_table = write_txn.open_table(RECEIPTS_TABLE).unwrap();
+            let receipt_bytes = serde_json::to_vec(&receipt).unwrap();
+            receipts_table.insert(tx_hash.as_slice(), receipt_bytes.as_slice()).unwrap();
+        }
+        write_txn.commit().unwrap();
     }
 
-    pub fn get_receipt_by_tx_hash(&self, tx_hash: B256) -> Option<&Receipt> {
-        self.receipts.get(&tx_hash)
+    pub fn get_receipt_by_tx_hash(&self, tx_hash: B256) -> Option<Receipt> {
+        let read_txn = self.db.begin_read().unwrap();
+        let receipts_table = read_txn.open_table(RECEIPTS_TABLE).unwrap();
+        receipts_table.get(tx_hash.as_slice()).unwrap().map(|r| serde_json::from_slice(r.value()).unwrap())
     }
 
-    pub fn get_block_by_number(&self, number: u64) -> Option<&Block<Transaction>> {
-        self.blocks.get(&number)
+    pub fn get_block_by_number(&self, number: u64) -> Option<Block<Transaction>> {
+        let read_txn = self.db.begin_read().unwrap();
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE).unwrap();
+        blocks_table.get(number).unwrap().map(|b| serde_json::from_slice(b.value()).unwrap())
     }
 
-    pub fn get_block_by_hash(&self, hash: B256) -> Option<&Block<Transaction>> {
-        self.hash_to_number.get(&hash).and_then(|&num| self.blocks.get(&num))
+    pub fn get_block_by_hash(&self, hash: B256) -> Option<Block<Transaction>> {
+        let read_txn = self.db.begin_read().unwrap();
+        let hash_to_number_table = read_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE).unwrap();
+        hash_to_number_table.get(hash.as_slice()).unwrap()
+            .and_then(|num| blocks_table.get(num.value()).unwrap())
+            .map(|b| serde_json::from_slice(b.value()).unwrap())
     }
 
-    pub fn get_transaction_by_hash(&self, hash: B256) -> Option<&Transaction> {
-        self.transactions.get(&hash)
+    pub fn get_transaction_by_hash(&self, hash: B256) -> Option<Transaction> {
+        let read_txn = self.db.begin_read().unwrap();
+        let transactions_table = read_txn.open_table(TRANSACTIONS_TABLE).unwrap();
+        transactions_table.get(hash.as_slice()).unwrap().map(|tx| serde_json::from_slice(tx.value()).unwrap())
     }
 
-    pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<&Block<Transaction>> {
-        self.tx_location.get(&tx_hash).and_then(|(num, _, _)| self.blocks.get(num))
+    pub fn get_block_by_transaction_hash(&self, tx_hash: B256) -> Option<Block<Transaction>> {
+        let read_txn = self.db.begin_read().unwrap();
+        let tx_location_table = read_txn.open_table(TX_LOCATION_TABLE).unwrap();
+        tx_location_table.get(tx_hash.as_slice()).unwrap().and_then(|loc| {
+            let (num, _, _) = loc.value();
+            self.get_block_by_number(num)
+        })
     }
 
     pub fn get_block_receipts(&self, block_hash: B256) -> Vec<Receipt> {
@@ -407,17 +469,26 @@ impl InMemoryStorage {
             Some(b) => b,
             None => return Vec::new(),
         };
+        let read_txn = self.db.begin_read().unwrap();
+        let receipts_table = read_txn.open_table(RECEIPTS_TABLE).unwrap();
         block.body.transactions.iter()
-            .filter_map(|tx| self.receipts.get(tx.hash()).cloned())
+            .filter_map(|tx| {
+                receipts_table.get(tx.hash().as_slice()).unwrap()
+                    .map(|r| serde_json::from_slice(r.value()).unwrap())
+            })
             .collect()
     }
 
-    pub fn get_latest_block(&self) -> Option<&Block<Transaction>> {
-        self.blocks.values().last()
+    pub fn get_latest_block(&self) -> Option<Block<Transaction>> {
+        let read_txn = self.db.begin_read().unwrap();
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE).unwrap();
+        blocks_table.iter().unwrap().last().map(|item| serde_json::from_slice(item.unwrap().1.value()).unwrap())
     }
 
     pub fn get_latest_block_number(&self) -> u64 {
-        self.blocks.keys().last().cloned().unwrap_or(0)
+        let read_txn = self.db.begin_read().unwrap();
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE).unwrap();
+        blocks_table.iter().unwrap().last().map(|item| item.unwrap().0.value()).unwrap_or(0)
     }
 
     pub fn get_balance(&self, address: Address) -> U256 {
@@ -487,7 +558,7 @@ impl InMemoryStorage {
         self.get_block_by_number(number).map(|b| b.header.hash_slow())
     }
 
-    pub fn get_block_by_id(&self, block_id: BlockId) -> Option<&Block<Transaction>> {
+    pub fn get_block_by_id(&self, block_id: BlockId) -> Option<Block<Transaction>> {
         match block_id {
             BlockId::Hash(hash) => self.get_block_by_hash(hash.into()),
             BlockId::Number(num) => {
@@ -522,15 +593,51 @@ impl InMemoryStorage {
     }
 
     pub fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>) {
-        self.payloads.insert(payload_id, (block, receipts));
+        let write_txn = self.db.begin_write().unwrap();
+        {
+            let mut payloads_table = write_txn.open_table(PAYLOADS_TABLE).unwrap();
+            let payload_bytes = serde_json::to_vec(&(block, receipts)).unwrap();
+            let bytes: [u8; 8] = payload_id.0.to_vec().try_into().unwrap();
+            let id_u64 = u64::from_be_bytes(bytes);
+            payloads_table.insert(id_u64, payload_bytes.as_slice()).unwrap();
+        }
+        write_txn.commit().unwrap();
     }
 
-    pub fn get_payload(&self, payload_id: &PayloadId) -> Option<&(Block<Transaction>, Vec<Receipt>)> {
-        self.payloads.get(payload_id)
+    pub fn get_payload(&self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)> {
+        let read_txn = self.db.begin_read().unwrap();
+        let payloads_table = read_txn.open_table(PAYLOADS_TABLE).unwrap();
+        let bytes: [u8; 8] = payload_id.0.to_vec().try_into().unwrap();
+        let id_u64 = u64::from_be_bytes(bytes);
+        payloads_table.get(id_u64).unwrap().map(|p| serde_json::from_slice(p.value()).unwrap())
     }
 
     pub fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)> {
-        self.payloads.remove(payload_id)
+        let write_txn = self.db.begin_write().unwrap();
+        let mut res = None;
+        {
+            let mut payloads_table = write_txn.open_table(PAYLOADS_TABLE).unwrap();
+            let bytes: [u8; 8] = payload_id.0.to_vec().try_into().unwrap();
+            let id_u64 = u64::from_be_bytes(bytes);
+            if let Some(p) = payloads_table.remove(id_u64).unwrap() {
+                res = Some(serde_json::from_slice(p.value()).unwrap());
+            }
+        }
+        write_txn.commit().unwrap();
+        res
+    }
+
+    pub fn get_payload_by_block_hash(&self, hash: B256) -> Option<(Block<Transaction>, Vec<Receipt>)> {
+        let read_txn = self.db.begin_read().unwrap();
+        let payloads_table = read_txn.open_table(PAYLOADS_TABLE).unwrap();
+        for item in payloads_table.iter().unwrap() {
+            let (_, value) = item.unwrap();
+            let (block, receipts): (Block<Transaction>, Vec<Receipt>) = serde_json::from_slice(value.value()).unwrap();
+            if block.header.hash_slow() == hash {
+                return Some((block, receipts));
+            }
+        }
+        None
     }
 
     pub fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>) {
@@ -554,30 +661,124 @@ impl InMemoryStorage {
         if let Some(f) = finalized {
             self.finalized_block_hash = f;
         }
-    }
 
-    pub fn save_to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
-        let file = File::create(path)?;
-        serde_json::to_writer_pretty(file, self)?;
-        Ok(())
+        // Persist metadata
+        let write_txn = self.db.begin_write().unwrap();
+        {
+            let mut metadata_table = write_txn.open_table(METADATA_TABLE).unwrap();
+            metadata_table.insert("head_block_hash", head.as_slice()).unwrap();
+            if let Some(s) = safe {
+                metadata_table.insert("safe_block_hash", s.as_slice()).unwrap();
+            }
+            if let Some(f) = finalized {
+                metadata_table.insert("finalized_block_hash", f.as_slice()).unwrap();
+            }
+            
+            let env_bytes = serde_json::to_vec(&self.backend.environment).unwrap();
+            metadata_table.insert("environment", env_bytes.as_slice()).unwrap();
+        }
+        write_txn.commit().unwrap();
+    }
+    
+    pub fn save_to_vec_pretty(&self) -> Result<Vec<u8>> {
+        // Since we can't easily serialize the entire redb Database, 
+        // we export the key components that defined the old InMemoryStorage
+        #[derive(Serialize)]
+        struct StorageDump {
+            head_block_hash: B256,
+            safe_block_hash: B256,
+            finalized_block_hash: B256,
+            backend: InMemoryBackend,
+        }
+        
+        let dump = StorageDump {
+            head_block_hash: self.head_block_hash,
+            safe_block_hash: self.safe_block_hash,
+            finalized_block_hash: self.finalized_block_hash,
+            backend: self.backend.clone(),
+        };
+        
+        serde_json::to_vec_pretty(&dump).map_err(|e| anyhow::anyhow!(e))
     }
 
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
-        let file = File::open(path)?;
-        let storage = serde_json::from_reader(file)?;
-        Ok(storage)
+        let db = Database::builder()
+            .create(path)
+            .expect("Failed to open database");
+        
+        // Ensure tables exist
+        let write_txn = db.begin_write().unwrap();
+        {
+            write_txn.open_table(BLOCKS_TABLE).unwrap();
+            write_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
+            write_txn.open_table(TRANSACTIONS_TABLE).unwrap();
+            write_txn.open_table(RECEIPTS_TABLE).unwrap();
+            write_txn.open_table(TX_LOCATION_TABLE).unwrap();
+            write_txn.open_table(STATE_TABLE).unwrap();
+            write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            write_txn.open_table(PAYLOADS_TABLE).unwrap();
+            write_txn.open_table(METADATA_TABLE).unwrap();
+        }
+        write_txn.commit().unwrap();
+
+        let read_txn = db.begin_read().unwrap();
+        let metadata_table = read_txn.open_table(METADATA_TABLE).unwrap();
+        
+        let head_block_hash = metadata_table.get("head_block_hash").unwrap()
+            .map(|v| B256::from_slice(v.value())).unwrap_or(B256::ZERO);
+        let safe_block_hash = metadata_table.get("safe_block_hash").unwrap()
+            .map(|v| B256::from_slice(v.value())).unwrap_or(B256::ZERO);
+        let finalized_block_hash = metadata_table.get("finalized_block_hash").unwrap()
+            .map(|v| B256::from_slice(v.value())).unwrap_or(B256::ZERO);
+        
+        let env = metadata_table.get("environment").unwrap()
+            .map(|v| serde_json::from_slice(v.value()).unwrap())
+            .unwrap_or_else(|| InMemoryEnvironment {
+                block_hashes: BTreeMap::new(),
+                block_number: EvmU256::zero(),
+                block_coinbase: H160::default(),
+                block_timestamp: EvmU256::zero(),
+                block_difficulty: EvmU256::zero(),
+                block_randomness: None,
+                block_gas_limit: EvmU256::zero(),
+                block_base_fee_per_gas: EvmU256::zero(),
+                blob_base_fee_per_gas: EvmU256::zero(),
+                blob_versioned_hashes: vec![],
+                chain_id: EvmU256::zero(),
+            });
+
+        // Current redb implementation keeps state in the latest backend for compatibility
+        // In a real implementation, we should load it from STATE_TABLE
+        let snapshots_table = read_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+        let latest_block_number = read_txn.open_table(BLOCKS_TABLE).unwrap().iter().unwrap().last()
+            .map(|item| item.unwrap().0.value()).unwrap_or(0);
+        
+        let backend = snapshots_table.get(latest_block_number).unwrap()
+            .map(|v| serde_json::from_slice(v.value()).unwrap())
+            .unwrap_or(InMemoryBackend {
+                environment: env,
+                state: BTreeMap::new(),
+            });
+
+        Ok(Self {
+            db: Arc::new(db),
+            head_block_hash,
+            safe_block_hash,
+            finalized_block_hash,
+            backend,
+        })
     }
 }
 
 pub struct StorageProvider {
-    inner: Arc<RwLock<InMemoryStorage>>,
+    inner: Arc<RwLock<RedbStorage>>,
     mempool: Arc<RwLock<Mempool>>,
     executor: Arc<Executor>,
 }
 
 impl StorageProvider {
     pub fn new(
-        storage: Arc<RwLock<InMemoryStorage>>,
+        storage: Arc<RwLock<RedbStorage>>,
         mempool: Arc<RwLock<Mempool>>,
         executor: Arc<Executor>,
     ) -> Self {
@@ -588,7 +789,7 @@ impl StorageProvider {
         }
     }
 
-    async fn get_pending_state(&self) -> Result<InMemoryStorage> {
+    async fn get_pending_state(&self) -> Result<RedbStorage> {
         let storage = self.inner.read().await.clone();
         let transactions = self.mempool.read().await.peek_transactions(100); // Take a reasonable amount for pending
         
@@ -597,7 +798,7 @@ impl StorageProvider {
         }
 
         let mut pending_storage = storage;
-        let latest_block = pending_storage.get_latest_block().cloned().unwrap();
+        let latest_block = pending_storage.get_latest_block().unwrap();
         let pending_block = Block {
             header: Header {
                 number: latest_block.header.number + 1,
@@ -708,13 +909,13 @@ impl StateProvider for StorageProvider {
         self.inner.read().await.transaction_receipt(hash).await
     }
 
-    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
+    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, u64)>> {
         self.inner.read().await.transaction_block_reference(hash).await
     }
 }
 
 #[async_trait]
-impl StateProvider for InMemoryStorage {
+impl StateProvider for RedbStorage {
     async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<GenesisAccount>> {
         let start = Instant::now();
         let h160 = H160::from_slice(address.as_slice());
@@ -769,7 +970,7 @@ impl StateProvider for InMemoryStorage {
     }
 
     async fn block(&self, block_id: BlockId) -> Result<Option<Block<Transaction>>> {
-        Ok(self.get_block_by_id(block_id).cloned())
+        Ok(self.get_block_by_id(block_id))
     }
 
     async fn block_hash(&self, number: u64) -> Result<Option<B256>> {
@@ -791,20 +992,25 @@ impl StateProvider for InMemoryStorage {
     }
 
     async fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
-        Ok(self.get_transaction_by_hash(hash).cloned())
+        Ok(self.get_transaction_by_hash(hash))
     }
 
     async fn transaction_receipt(&self, hash: B256) -> Result<Option<Receipt>> {
-        Ok(self.get_receipt_by_tx_hash(hash).cloned())
+        Ok(self.get_receipt_by_tx_hash(hash))
     }
 
-    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>> {
-        Ok(self.tx_location.get(&hash).cloned())
+    async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, u64)>> {
+        let read_txn = self.db.begin_read().unwrap();
+        let tx_location_table = read_txn.open_table(TX_LOCATION_TABLE).unwrap();
+        Ok(tx_location_table.get(hash.as_slice()).unwrap().map(|loc| {
+            let (num, h, i) = loc.value();
+            (num, B256::from_slice(h), i)
+        }))
     }
 }
 
 #[async_trait]
-impl ChainProvider for InMemoryStorage {
+impl ChainProvider for RedbStorage {
     fn add_block(&mut self, block: Block<Transaction>) {
         self.add_block(block)
     }
@@ -837,7 +1043,7 @@ impl ChainProvider for InMemoryStorage {
     fn get_payload(
         &self,
         payload_id: &PayloadId,
-    ) -> Option<&(Block<Transaction>, Vec<Receipt>)> {
+    ) -> Option<(Block<Transaction>, Vec<Receipt>)> {
         self.get_payload(payload_id)
     }
 
@@ -898,8 +1104,9 @@ impl ChainProvider for StorageProvider {
     fn get_payload(
         &self,
         payload_id: &PayloadId,
-    ) -> Option<&(Block<Transaction>, Vec<Receipt>)> {
-        todo!("get_payload for StorageProvider")
+    ) -> Option<(Block<Transaction>, Vec<Receipt>)> {
+        let inner = self.inner.blocking_read();
+        inner.get_payload(payload_id)
     }
 
     fn remove_payload(
@@ -923,20 +1130,20 @@ impl ChainProvider for StorageProvider {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use alloy_primitives::address;
     use alloy_consensus::SignableTransaction;
+    use alloy_primitives::address;
 
     #[tokio::test]
     async fn test_new_storage() {
         let chain_id = EvmU256::from(1);
-        let storage = InMemoryStorage::new(chain_id);
+        let storage = RedbStorage::new(chain_id);
         assert_eq!(storage.backend.environment.chain_id, chain_id);
         assert_eq!(storage.get_latest_block_number(), 0);
     }
 
     #[tokio::test]
     async fn test_balance_management() {
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1));
         let addr = address!("0000000000000000000000000000000000000001");
         let balance = U256::from(1000);
         
@@ -972,7 +1179,7 @@ mod tests {
             number: None,
         };
         
-        let (storage, _block) = InMemoryStorage::create_from_genesis_init(chain_id, genesis_init);
+        let (storage, _block) = RedbStorage::create_from_genesis_init(chain_id, genesis_init);
         assert_eq!(storage.get_balance(addr), U256::from(1000));
         let acc = storage.account(addr, BlockId::latest()).await.unwrap().unwrap();
         assert_eq!(acc.nonce, Some(1));
@@ -980,7 +1187,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_management() {
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1));
         let mut block: Block<Transaction> = Block::default();
         block.header.number = 1;
         let block_hash = block.header.hash_slow();
@@ -997,7 +1204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_and_receipt() {
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1));
         let tx = Transaction::Legacy(alloy_consensus::TxLegacy::default().into_signed(alloy_primitives::Signature::test_signature()));
         let tx_hash = *tx.hash();
         
@@ -1011,7 +1218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_forkchoice_update() {
-        let mut storage = InMemoryStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1));
         let h1 = B256::repeat_byte(1);
         let h2 = B256::repeat_byte(2);
         let h3 = B256::repeat_byte(3);

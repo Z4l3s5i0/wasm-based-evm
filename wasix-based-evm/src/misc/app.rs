@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use crate::cli::Args;
-use crate::storage::storage::{InMemoryStorage, StorageProvider, GenesisInit};
+use crate::storage::storage::{RedbStorage, StorageProvider, GenesisInit};
 use alloy_primitives::U256;
 use std::sync::Arc;
 use crate::mempool::Mempool;
@@ -37,7 +37,7 @@ pub struct App {
     swarm: Arc<PeerManager>,
     gossip_rx: Option<tokio::sync::mpsc::Receiver<Vec<u8>>>,
     mempool: Arc<RwLock<Mempool>>,
-    storage: Arc<RwLock<InMemoryStorage>>,
+    storage: Arc<RwLock<RedbStorage>>,
     executor: Arc<Executor>,
     data_dir: PathBuf,
     state_filename: String,
@@ -150,7 +150,7 @@ impl App {
                 debug!("[App] Periodic state dump...");
                 let storage_json = {
                     let storage_inner = storage.read().await;
-                    serde_json::to_vec_pretty(&*storage_inner)
+                    storage_inner.save_to_vec_pretty()
                 };
                 
                 match storage_json {
@@ -177,7 +177,7 @@ pub struct AppBuilder {
     args: Option<Args>,
     genesis: Option<GenesisInit>,
     genesis_configured: bool,
-    storage: Option<Arc<RwLock<InMemoryStorage>>>,
+    storage: Option<Arc<RwLock<RedbStorage>>>,
     mempool: Option<Arc<RwLock<Mempool>>>,
     storage_configured: bool,
     mempool_configured: bool,
@@ -199,7 +199,7 @@ impl AppBuilder {
         self
     }
 
-    pub fn with_storage(mut self, storage: Arc<RwLock<InMemoryStorage>>) -> Self {
+    pub fn with_storage(mut self, storage: Arc<RwLock<RedbStorage>>) -> Self {
         self.storage = Some(storage);
         self.storage_configured = true;
         self
@@ -281,7 +281,7 @@ impl AppBuilder {
         }
     }
 
-    async fn setup_storage(&self, args: &Args, data_dir: &PathBuf, peer_id: &str) -> Result<(Arc<RwLock<InMemoryStorage>>, String), Box<dyn std::error::Error>> {
+    async fn setup_storage(&self, args: &Args, data_dir: &PathBuf, peer_id: &str) -> Result<(Arc<RwLock<RedbStorage>>, String), Box<dyn std::error::Error>> {
         let storage_name = args.peer_name.clone().unwrap_or_else(|| peer_id.to_string());
         let state_filename = format!("state_{}.json", storage_name);
         let storage_path = data_dir.join(&state_filename);
@@ -290,13 +290,13 @@ impl AppBuilder {
             self.storage.clone().ok_or("Storage marked as configured but not provided")?
         } else if storage_path.exists() {
             info!("[App] Loading existing state from {:?}", storage_path);
-            let storage_inner = InMemoryStorage::load_from_file(storage_path)?;
+            let storage_inner = RedbStorage::load_from_file(storage_path)?;
             Arc::new(RwLock::new(storage_inner))
         } else {
             let genesis_init = self.setup_genesis(args, data_dir)?;
             let chain_id = alloy_u256_to_evm_u256(U256::from(genesis_init.config.chain_id));
             info!("[App] Initializing new storage with genesis block. ChainId: {}", chain_id.clone());
-            let storage_inner = InMemoryStorage::new_with_genesis_init(chain_id, genesis_init);
+            let storage_inner = RedbStorage::new_with_genesis_init(chain_id, genesis_init);
             Arc::new(RwLock::new(storage_inner))
         };
         Ok((storage, state_filename))
@@ -320,7 +320,7 @@ impl AppBuilder {
         Ok(Arc::new(executor))
     }
 
-    fn setup_p2p(&self, args: &Args, p2p_identity: Identity, storage: Arc<RwLock<InMemoryStorage>>, mempool: Arc<RwLock<Mempool>>, executor: Arc<Executor>) -> Result<(Arc<PeerManager>, Arc<SyncController>), Box<dyn std::error::Error>> {
+    fn setup_p2p(&self, args: &Args, p2p_identity: Identity, storage: Arc<RwLock<RedbStorage>>, mempool: Arc<RwLock<Mempool>>, executor: Arc<Executor>) -> Result<(Arc<PeerManager>, Arc<SyncController>), Box<dyn std::error::Error>> {
         let (peer_manager, gossip_rx) = PeerManager::new(
             p2p_identity,
             storage.clone(),
@@ -394,7 +394,7 @@ impl AppBuilder {
 
     fn setup_rpc_services(
         &self,
-        storage: Arc<RwLock<InMemoryStorage>>,
+        storage: Arc<RwLock<RedbStorage>>,
         mempool: Arc<RwLock<Mempool>>,
         executor: Arc<Executor>,
         peer_manager: Arc<PeerManager>,
