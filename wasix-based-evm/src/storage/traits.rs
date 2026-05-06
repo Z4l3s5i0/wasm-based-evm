@@ -27,15 +27,15 @@ pub trait StateProvider: Send + Sync {
 }
 
 pub trait ChainProvider: Send + Sync {
-    fn add_block(&mut self, block: Block<Transaction>, changeset: Option<&OverlayedChangeSet>);
-    fn revert_to_height(&mut self, height: u64) -> Vec<Transaction>;
-    fn add_transaction(&mut self, tx: Transaction);
-    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt);
+    fn add_block(&mut self, block: Block<Transaction>, changeset: Option<&OverlayedChangeSet>) -> Result<()>;
+    fn revert_to_height(&mut self, height: u64) -> Result<Vec<Transaction>>;
+    fn add_transaction(&mut self, tx: Transaction) -> Result<()>;
+    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) -> Result<()>;
     fn calculate_state_root(&self) -> B256;
-    fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>);
+    fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>) -> Result<()>;
     fn get_payload(&self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)>;
     fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)>;
-    fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>);
+    fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>) -> Result<()>;
 }
 
 

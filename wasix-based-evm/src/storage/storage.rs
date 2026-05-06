@@ -355,7 +355,7 @@ impl RedbStorage {
 
         info!("[Storage] Adding block #{} with hash {:?}", block_number, block_hash);
         
-        let write_txn = self.db.begin_write().unwrap();
+        let mut write_txn = self.db.begin_write().unwrap();
         {
             let mut blocks_table = write_txn.open_table(BLOCKS_TABLE).unwrap();
             let mut hash_to_number_table = write_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
@@ -475,10 +475,14 @@ impl RedbStorage {
                     }
                 }
             }
-
-            // Take savepoint after adding block
-            let savepoint_id = write_txn.persistent_savepoint().unwrap();
-            let mut savepoints_mapping_table = write_txn.open_table(SAVEPOINTS_MAPPING_TABLE).unwrap();
+        }
+        write_txn.commit().unwrap();
+        let new_write_txn = self.db.begin_write().unwrap();
+        // Take savepoint after adding block. Must be called when no tables are open (transaction not "dirty").
+        let savepoint_id = new_write_txn.persistent_savepoint().unwrap();
+        
+        {
+            let mut savepoints_mapping_table = new_write_txn.open_table(SAVEPOINTS_MAPPING_TABLE).unwrap();
             savepoints_mapping_table.insert(block_number, savepoint_id).unwrap();
             
             // Tiered retention policy:
@@ -493,8 +497,8 @@ impl RedbStorage {
                 }
             }
         }
-        write_txn.commit().unwrap();
-        
+        new_write_txn.commit().unwrap();
+
         self.head_block_hash = block_hash;
         STORAGE_WRITE_LATENCY.observe(start.elapsed().as_secs_f64());
     }
