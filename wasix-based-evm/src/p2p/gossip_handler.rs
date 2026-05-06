@@ -106,7 +106,7 @@ impl GossipHandler {
 mod tests {
     use super::*;
     use tokio::sync::mpsc;
-    use crate::storage::storage::InMemoryStorage;
+    use crate::storage::storage::RedbStorage;
     use crate::evm::ev::EvmU256;
     use crate::evm::executor::Executor;
     use crate::identity::identity::Identity;
@@ -115,7 +115,8 @@ mod tests {
     use alloy_consensus::SignableTransaction;
 
     async fn setup_gossip_handler() -> (GossipHandler, mpsc::Sender<Vec<u8>>) {
-        let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
+        use std::path::PathBuf;
+        let storage = Arc::new(RwLock::new(RedbStorage::new(EvmU256::from(1), None::<PathBuf>)));
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
         let identity = Identity::new(None, None).unwrap();
         let (peer_manager, _) = PeerManager::new(identity, storage.clone(), 0, 0, None, vec![]).unwrap();

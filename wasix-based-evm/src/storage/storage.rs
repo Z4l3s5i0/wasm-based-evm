@@ -83,10 +83,10 @@ pub struct RedbStorage {
 }
 
 impl RedbStorage {
-    fn create_db() -> Arc<Database> {
+    fn create_db<P: AsRef<Path>>(path: P) -> Arc<Database> {
         let db = Database::builder()
-            .create_with_backend(redb::backends::InMemoryBackend::new())
-            .expect("Failed to create in-memory database");
+                .create(path)
+                .expect("Failed to create file-backed database");
         
         // Initialize tables
         let write_txn = db.begin_write().unwrap();
@@ -105,14 +105,14 @@ impl RedbStorage {
         Arc::new(db)
     }
 
-    pub fn new(chain_id: EvmU256) -> Self {
+    pub fn new<P: AsRef<Path>>(chain_id: EvmU256, path: P) -> Self {
         let mut genesis = Genesis::default();
         genesis.config.chain_id = evm_u256_to_alloy_u256(chain_id).to::<u64>();
-        Self::new_with_genesis(chain_id, genesis)
+        Self::new_with_genesis(chain_id, genesis, path)
     }
 
-    pub fn new_with_genesis(chain_id: EvmU256, genesis: Genesis) -> Self {
-        let (mut storage, genesis_block) = Self::create_from_genesis(chain_id, genesis);
+    pub fn new_with_genesis<P: AsRef<Path>>(chain_id: EvmU256, genesis: Genesis, path: P) -> Self {
+        let (mut storage, genesis_block) = Self::create_from_genesis(chain_id, genesis, path);
         let genesis_hash = genesis_block.header.hash_slow();
         
         storage.add_block(genesis_block);
@@ -121,8 +121,8 @@ impl RedbStorage {
         storage
     }
 
-    pub fn new_with_genesis_init(chain_id: EvmU256, genesis: GenesisInit) -> Self {
-        let (mut storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis);
+    pub fn new_with_genesis_init<P: AsRef<Path>>(chain_id: EvmU256, genesis: GenesisInit, path: P) -> Self {
+        let (mut storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis, path);
         let genesis_hash = genesis_block.header.hash_slow();
         
         storage.add_block(genesis_block);
@@ -131,7 +131,7 @@ impl RedbStorage {
         storage
     }
 
-    pub fn create_from_genesis_init(chain_id: EvmU256, genesis: GenesisInit) -> (Self, Block<Transaction>) {
+    pub fn create_from_genesis_init<P: AsRef<Path>>(chain_id: EvmU256, genesis: GenesisInit, path: P) -> (Self, Block<Transaction>) {
         let is_london = genesis.config.london_block == Some(0);
         let base_fee_per_gas = if is_london { Some(1_000_000_000) } else { None };
         
@@ -150,7 +150,7 @@ impl RedbStorage {
         };
 
         let mut storage = Self {
-            db: Self::create_db(),
+            db: Self::create_db(path),
             backend: InMemoryBackend {
                 environment: env,
                 state: BTreeMap::new(),
@@ -215,7 +215,7 @@ impl RedbStorage {
         (storage, genesis_block)
     }
 
-    pub fn create_from_genesis(chain_id: EvmU256, genesis: Genesis) -> (Self, Block<Transaction>) {
+    pub fn create_from_genesis<P: AsRef<Path>>(chain_id: EvmU256, genesis: Genesis, path: P) -> (Self, Block<Transaction>) {
         let env = InMemoryEnvironment {
             block_hashes: BTreeMap::new(),
             block_number: EvmU256::zero(),
@@ -231,7 +231,7 @@ impl RedbStorage {
         };
 
         let mut storage = Self {
-            db: Self::create_db(),
+            db: Self::create_db(path),
             backend: InMemoryBackend {
                 environment: env,
                 state: BTreeMap::new(),
@@ -1136,14 +1136,14 @@ mod tests {
     #[tokio::test]
     async fn test_new_storage() {
         let chain_id = EvmU256::from(1);
-        let storage = RedbStorage::new(chain_id);
+        let storage = RedbStorage::new(chain_id, None::<PathBuf>);
         assert_eq!(storage.backend.environment.chain_id, chain_id);
         assert_eq!(storage.get_latest_block_number(), 0);
     }
 
     #[tokio::test]
     async fn test_balance_management() {
-        let mut storage = RedbStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1), None::<PathBuf>);
         let addr = address!("0000000000000000000000000000000000000001");
         let balance = U256::from(1000);
         
@@ -1179,7 +1179,7 @@ mod tests {
             number: None,
         };
         
-        let (storage, _block) = RedbStorage::create_from_genesis_init(chain_id, genesis_init);
+        let (storage, _block) = RedbStorage::create_from_genesis_init(chain_id, genesis_init, None::<PathBuf>);
         assert_eq!(storage.get_balance(addr), U256::from(1000));
         let acc = storage.account(addr, BlockId::latest()).await.unwrap().unwrap();
         assert_eq!(acc.nonce, Some(1));
@@ -1187,7 +1187,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_block_management() {
-        let mut storage = RedbStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1), None::<PathBuf>);
         let mut block: Block<Transaction> = Block::default();
         block.header.number = 1;
         let block_hash = block.header.hash_slow();
@@ -1204,7 +1204,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_transaction_and_receipt() {
-        let mut storage = RedbStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1), None::<PathBuf>);
         let tx = Transaction::Legacy(alloy_consensus::TxLegacy::default().into_signed(alloy_primitives::Signature::test_signature()));
         let tx_hash = *tx.hash();
         
@@ -1218,7 +1218,7 @@ mod tests {
 
     #[tokio::test]
     async fn test_forkchoice_update() {
-        let mut storage = RedbStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1), None::<PathBuf>);
         let h1 = B256::repeat_byte(1);
         let h2 = B256::repeat_byte(2);
         let h3 = B256::repeat_byte(3);

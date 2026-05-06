@@ -559,8 +559,9 @@ mod tests {
     async fn test_revalidate() {
         use crate::storage::storage::RedbStorage;
         use crate::evm::ev::EvmU256;
+        use std::path::PathBuf;
         let mut mempool = Mempool::new(U256::from(100));
-        let mut storage = RedbStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1), None::<PathBuf>);
         
         let tx = Transaction::Legacy(TxLegacy {
             nonce: 10,

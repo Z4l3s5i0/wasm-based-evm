@@ -9,7 +9,7 @@ use crate::rpc::account_manager::AccountManager;
 use crate::p2p::peer_manager::PeerManager;
 use alloy_consensus::{TxEnvelope as Transaction, TxLegacy, transaction::SignerRecoverable};
 use alloy_rlp::{Encodable, Decodable};
-use crate::storage::storage::InMemoryStorage;
+use crate::storage::storage::RedbStorage;
 use evm::standard::TransactValueCallCreate;
 use crate::{info, error, debug};
 use crate::evm::executor::Executor;
@@ -26,7 +26,7 @@ pub struct EthService {
     pub mempool: Arc<RwLock<Mempool>>,
     pub peer_manager: Arc<PeerManager>,
     pub executor: Executor,
-    pub storage: Arc<RwLock<InMemoryStorage>>,
+    pub storage: Arc<RwLock<RedbStorage>>,
     pub account_manager: Arc<AccountManager>,
     pub sync_engine: Arc<SyncController>,
 }
@@ -391,7 +391,8 @@ mod tests {
 
     async fn setup_eth_service() -> EthService {
         use crate::storage::storage::StorageProvider;
-        let storage = Arc::new(RwLock::new(InMemoryStorage::new(EvmU256::from(1))));
+        use std::path::PathBuf;
+        let storage = Arc::new(RwLock::new(RedbStorage::new(EvmU256::from(1), None::<PathBuf>)));
         
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
         let identity = Identity::new(None, None).unwrap();

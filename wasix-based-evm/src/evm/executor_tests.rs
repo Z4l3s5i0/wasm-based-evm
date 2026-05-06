@@ -1,7 +1,7 @@
 #[cfg(test)]
 mod tests {
     use crate::evm::executor::Executor;
-    use crate::storage::storage::InMemoryStorage;
+    use crate::storage::storage::RedbStorage;
     use crate::evm::ev::alloy_u256_to_evm_u256;
     use alloy_primitives::{Address, U256, B256, TxKind, Bytes, FixedBytes};
     use alloy_consensus::{TxLegacy, TxEnvelope, Block, Header, BlockBody, SignableTransaction};
@@ -9,7 +9,7 @@ mod tests {
     use alloy_network::TxSignerSync;
     use evm_interpreter::uint::H160;
 
-    fn setup_executor() -> (Executor, InMemoryStorage, PrivateKeySigner, Address) {
+    fn setup_executor() -> (Executor, RedbStorage, PrivateKeySigner, Address) {
         let chain_id = 1337u64;
         let signer = PrivateKeySigner::random();
         let addr = signer.address();
@@ -22,7 +22,8 @@ mod tests {
             ..Default::default()
         });
 
-        let storage = InMemoryStorage::new_with_genesis(alloy_u256_to_evm_u256(U256::from(chain_id)), genesis);
+        use std::path::PathBuf;
+        let storage = RedbStorage::new_with_genesis(alloy_u256_to_evm_u256(U256::from(chain_id)), genesis, None::<PathBuf>);
         let executor = Executor::new();
         (executor, storage, signer, addr)
     }

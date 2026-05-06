@@ -53,7 +53,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_process_block_empty() {
-        let storage = Arc::new(RwLock::new(RedbStorage::new(EvmU256::from(1))));
+        use std::path::PathBuf;
+        let storage = Arc::new(RwLock::new(RedbStorage::new(EvmU256::from(1), None::<PathBuf>)));
         let executor = Arc::new(Executor::new());
         let mempool = Arc::new(RwLock::new(Mempool::new(U256::from(0))));
         let processor = BlockProcessor::new(storage.clone(), executor, mempool);

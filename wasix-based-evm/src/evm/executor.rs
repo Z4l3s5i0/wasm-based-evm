@@ -489,10 +489,11 @@ mod tests {
         // Just verify it doesn't panic and uses Shanghai by default
     }
 
+    use std::path::PathBuf;
     #[test]
     fn test_run_execution_dry_run() {
         let executor = Executor::new();
-        let mut storage = RedbStorage::new(EvmU256::from(1));
+        let mut storage = RedbStorage::new(EvmU256::from(1), None::<PathBuf>);
         
         let tx = TxEnvelope::Legacy(TxLegacy {
             nonce: 0,

@@ -296,7 +296,7 @@ impl AppBuilder {
             let genesis_init = self.setup_genesis(args, data_dir)?;
             let chain_id = alloy_u256_to_evm_u256(U256::from(genesis_init.config.chain_id));
             info!("[App] Initializing new storage with genesis block. ChainId: {}", chain_id.clone());
-            let storage_inner = RedbStorage::new_with_genesis_init(chain_id, genesis_init);
+            let storage_inner = RedbStorage::new_with_genesis_init(chain_id, genesis_init, storage_path);
             Arc::new(RwLock::new(storage_inner))
         };
         Ok((storage, state_filename))
