@@ -8,7 +8,7 @@ use alloy_trie::TrieAccount;
 use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use std::collections::{BTreeMap, HashMap};
 use alloy_genesis::{Genesis, GenesisAccount, ChainConfig};
-use crate::storage::traits::{StateProvider};
+use crate::storage::traits::{ChainProvider, StateProvider};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_rpc_types::engine::PayloadId;
 use crate::mempool::Mempool;
@@ -803,6 +803,123 @@ impl StateProvider for InMemoryStorage {
     }
 }
 
+#[async_trait]
+impl ChainProvider for InMemoryStorage {
+    fn add_block(&mut self, block: Block<Transaction>) {
+        self.add_block(block)
+    }
+
+    fn revert_to_height(&mut self, height: u64) -> Vec<Transaction> {
+        self.revert_to_height(height)
+    }
+
+    fn add_transaction(&mut self, tx: Transaction) {
+        self.add_transaction(tx)
+    }
+
+    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
+        self.add_receipt(tx_hash, receipt)
+    }
+
+    fn calculate_state_root(&self) -> B256 {
+        self.calculate_state_root()
+    }
+
+    fn add_payload(
+        &mut self,
+        payload_id: PayloadId,
+        block: Block<Transaction>,
+        receipts: Vec<Receipt>,
+    ) {
+        self.add_payload(payload_id, block, receipts)
+    }
+
+    fn get_payload(
+        &self,
+        payload_id: &PayloadId,
+    ) -> Option<&(Block<Transaction>, Vec<Receipt>)> {
+        self.get_payload(payload_id)
+    }
+
+    fn remove_payload(
+        &mut self,
+        payload_id: &PayloadId,
+    ) -> Option<(Block<Transaction>, Vec<Receipt>)> {
+        self.remove_payload(payload_id)
+    }
+
+    fn update_forkchoice(
+        &mut self,
+        head: B256,
+        safe: Option<B256>,
+        finalized: Option<B256>,
+    ) {
+        self.update_forkchoice(head, safe, finalized)
+    }
+}
+
+#[async_trait]
+impl ChainProvider for StorageProvider {
+    fn add_block(&mut self, block: Block<Transaction>) {
+        let mut inner = self.inner.blocking_write();
+        inner.add_block(block);
+    }
+
+    fn revert_to_height(&mut self, height: u64) -> Vec<Transaction> {
+        let mut inner = self.inner.blocking_write();
+        inner.revert_to_height(height)
+    }
+
+    fn add_transaction(&mut self, tx: Transaction) {
+        let mut inner = self.inner.blocking_write();
+        inner.add_transaction(tx);
+    }
+
+    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt) {
+        let mut inner = self.inner.blocking_write();
+        inner.add_receipt(tx_hash, receipt);
+    }
+
+    fn calculate_state_root(&self) -> B256 {
+        let inner = self.inner.blocking_read();
+        inner.calculate_state_root()
+    }
+
+    fn add_payload(
+        &mut self,
+        payload_id: PayloadId,
+        block: Block<Transaction>,
+        receipts: Vec<Receipt>,
+    ) {
+        let mut inner = self.inner.blocking_write();
+        inner.add_payload(payload_id, block, receipts);
+    }
+
+    fn get_payload(
+        &self,
+        payload_id: &PayloadId,
+    ) -> Option<&(Block<Transaction>, Vec<Receipt>)> {
+        todo!("get_payload for StorageProvider")
+    }
+
+    fn remove_payload(
+        &mut self,
+        payload_id: &PayloadId,
+    ) -> Option<(Block<Transaction>, Vec<Receipt>)> {
+        let mut inner = self.inner.blocking_write();
+        inner.remove_payload(payload_id)
+    }
+
+    fn update_forkchoice(
+        &mut self,
+        head: B256,
+        safe: Option<B256>,
+        finalized: Option<B256>,
+    ) {
+        let mut inner = self.inner.blocking_write();
+        inner.update_forkchoice(head, safe, finalized);
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;

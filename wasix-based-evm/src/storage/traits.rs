@@ -2,6 +2,7 @@ use alloy_primitives::{Address, B256, U256, Bytes};
 use alloy_consensus::{Header, Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_eips::BlockId;
 use alloy_genesis::GenesisAccount;
+use alloy_rpc_types::engine::PayloadId;
 use anyhow::Result;
 use async_trait::async_trait;
 
@@ -24,3 +25,19 @@ pub trait StateProvider: Send + Sync {
     async fn transaction_block_reference(&self, hash: B256) -> Result<Option<(u64, B256, usize)>>; // (number, hash, index)
 }
 
+pub trait ChainProvider: Send + Sync {
+    fn add_block(&mut self, block: Block<Transaction>);
+    fn revert_to_height(&mut self, height: u64) -> Vec<Transaction>;
+    fn add_transaction(&mut self, tx: Transaction);
+    fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt);
+    fn calculate_state_root(&self) -> B256;
+    fn add_payload(&mut self, payload_id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>);
+    fn get_payload(&self, payload_id: &PayloadId) -> Option<&(Block<Transaction>, Vec<Receipt>)>;
+    fn remove_payload(&mut self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>)>;
+    fn update_forkchoice(&mut self, head: B256, safe: Option<B256>, finalized: Option<B256>);
+}
+
+
+pub trait FullProvider: StateProvider + ChainProvider {}
+
+impl<T> FullProvider for T where T: StateProvider + ChainProvider {}
