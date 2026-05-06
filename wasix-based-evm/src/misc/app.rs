@@ -283,7 +283,7 @@ impl AppBuilder {
 
     async fn setup_storage(&self, args: &Args, data_dir: &PathBuf, peer_id: &str) -> Result<(Arc<RwLock<RedbStorage>>, String), Box<dyn std::error::Error>> {
         let storage_name = args.peer_name.clone().unwrap_or_else(|| peer_id.to_string());
-        let state_filename = format!("state_{}.json", storage_name);
+        let state_filename = format!("state_{}.txt", storage_name);
         let storage_path = data_dir.join(&state_filename);
 
         let storage = if self.storage_configured {

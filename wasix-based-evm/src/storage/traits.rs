@@ -1,5 +1,6 @@
 use alloy_primitives::{Address, B256, U256, Bytes};
 use alloy_consensus::{Header, Block, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
+use evm::backend::OverlayedChangeSet;
 use alloy_eips::BlockId;
 use alloy_genesis::GenesisAccount;
 use alloy_rpc_types::engine::PayloadId;
@@ -26,7 +27,7 @@ pub trait StateProvider: Send + Sync {
 }
 
 pub trait ChainProvider: Send + Sync {
-    fn add_block(&mut self, block: Block<Transaction>);
+    fn add_block(&mut self, block: Block<Transaction>, changeset: Option<&OverlayedChangeSet>);
     fn revert_to_height(&mut self, height: u64) -> Vec<Transaction>;
     fn add_transaction(&mut self, tx: Transaction);
     fn add_receipt(&mut self, tx_hash: B256, receipt: Receipt);

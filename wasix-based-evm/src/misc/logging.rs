@@ -62,6 +62,19 @@ macro_rules! debug {
 }
 
 #[macro_export]
+macro_rules! warn {
+    ($($arg:tt)*) => {
+        {
+            let now = chrono::Local::now();
+            let timestamp = now.format("%b %d %H:%M:%S%.3f").to_string();
+            let log = format!($($arg)*);
+            println!("{} WARN  {}", timestamp, log);
+            $crate::misc::logging::add_log(format!("{} [WARN] {}", timestamp, log));
+        }
+    };
+}
+
+#[macro_export]
 macro_rules! error {
     ($($arg:tt)*) => {
         {

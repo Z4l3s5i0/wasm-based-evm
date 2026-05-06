@@ -98,11 +98,10 @@ impl DevMode {
         debug!("[DevMode] Producing block #{} with {} transactions", number, transactions.len());
 
         match self.executor.execute_block(&mut storage, transactions.clone(), block.clone()) {
-            Ok(_) => {
+            Ok((_, finalized_block, _)) => {
                 BLOCK_PRODUCTION_SUCCESS.inc();
-                let block_hash = block.header.hash_slow();
-                let new_base_fee = U256::from(block.header.base_fee_per_gas.unwrap_or_default());
-                storage.add_block(block);
+                let block_hash = finalized_block.header.hash_slow();
+                let new_base_fee = U256::from(finalized_block.header.base_fee_per_gas.unwrap_or_default());
                 storage.update_forkchoice(block_hash, Some(block_hash), Some(block_hash));
                 
                 debug!("[DevMode] Block #{} produced successfully: {:?}", number, block_hash);

@@ -3,7 +3,7 @@ use crate::evm::executor::Executor;
 use crate::mempool::Mempool;
 use crate::misc::metrics::{FORK_CHOICE_UPDATED_TOTAL, REORG_COUNT_TOTAL, STORAGE_READ_LATENCY, STORAGE_WRITE_LATENCY};
 use crate::storage::traits::{ChainProvider, StateProvider};
-use crate::{debug, error, info};
+use crate::{debug, info, warn};
 use alloy_consensus::{Block, Header, ReceiptWithBloom as Receipt, TxEnvelope as Transaction};
 use alloy_eips::BlockId;
 use alloy_genesis::{ChainConfig, Genesis, GenesisAccount};
@@ -13,7 +13,7 @@ use alloy_trie::root::{state_root_unhashed, storage_root_unsorted};
 use alloy_trie::TrieAccount;
 use anyhow::Result;
 use async_trait::async_trait;
-use evm::backend::{InMemoryAccount, InMemoryBackend, InMemoryEnvironment};
+use evm::backend::{InMemoryAccount, InMemoryBackend, InMemoryEnvironment, OverlayedChangeSet};
 use redb::{Database, ReadableDatabase, ReadableTable, TableDefinition};
 use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
@@ -22,15 +22,52 @@ use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::RwLock;
 
+use postcard;
+
 const BLOCKS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("blocks");
 const HASH_TO_NUMBER_TABLE: TableDefinition<&[u8], u64> = TableDefinition::new("hash_to_number");
 const TRANSACTIONS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("transactions");
 const RECEIPTS_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("receipts");
 const TX_LOCATION_TABLE: TableDefinition<&[u8], (u64, &[u8], u64)> = TableDefinition::new("tx_location");
-const STATE_TABLE: TableDefinition<&[u8], &[u8]> = TableDefinition::new("state");
+const STATE_TABLE: TableDefinition<[u8; 20], AccountState> = TableDefinition::new("state");
+const CONTRACT_STORAGE_TABLE: TableDefinition<([u8; 20], [u8; 32]), [u8; 32]> = TableDefinition::new("contract_storage");
+const CONTRACT_CODE_TABLE: TableDefinition<[u8; 32], &[u8]> = TableDefinition::new("contract_code");
 const SNAPSHOTS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("snapshots");
+const SAVEPOINTS_MAPPING_TABLE: TableDefinition<u64, u64> = TableDefinition::new("savepoints_mapping");
 const PAYLOADS_TABLE: TableDefinition<u64, &[u8]> = TableDefinition::new("payloads");
 const METADATA_TABLE: TableDefinition<&str, &[u8]> = TableDefinition::new("metadata");
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct AccountState {
+    pub nonce: u64,
+    pub balance: U256,
+    pub code_hash: B256,
+    pub storage_root: B256,
+}
+
+impl redb::Value for AccountState {
+    type SelfType<'a> = AccountState;
+    type AsBytes<'a> = Vec<u8>;
+
+    fn fixed_width() -> Option<usize> {
+        None
+    }
+
+    fn from_bytes<'a>(data: &'a [u8]) -> Self::SelfType<'a>
+    where
+        Self: 'a,
+    {
+        postcard::from_bytes(data).unwrap()
+    }
+
+    fn as_bytes<'a, 'b: 'a>(value: &'a Self::SelfType<'b>) -> Self::AsBytes<'a> {
+        postcard::to_stdvec(value).unwrap()
+    }
+
+    fn type_name() -> redb::TypeName {
+        redb::TypeName::new("AccountState")
+    }
+}
 
 #[derive(Clone, Serialize, Deserialize, Debug)]
 #[serde(rename_all = "camelCase")]
@@ -97,7 +134,10 @@ impl RedbStorage {
             write_txn.open_table(RECEIPTS_TABLE).unwrap();
             write_txn.open_table(TX_LOCATION_TABLE).unwrap();
             write_txn.open_table(STATE_TABLE).unwrap();
+            write_txn.open_table(CONTRACT_STORAGE_TABLE).unwrap();
+            write_txn.open_table(CONTRACT_CODE_TABLE).unwrap();
             write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            write_txn.open_table(SAVEPOINTS_MAPPING_TABLE).unwrap();
             write_txn.open_table(PAYLOADS_TABLE).unwrap();
             write_txn.open_table(METADATA_TABLE).unwrap();
         }
@@ -115,7 +155,7 @@ impl RedbStorage {
         let (mut storage, genesis_block) = Self::create_from_genesis(chain_id, genesis, path);
         let genesis_hash = genesis_block.header.hash_slow();
         
-        storage.add_block(genesis_block);
+        storage.add_block(genesis_block, None);
         storage.update_forkchoice(genesis_hash, Some(genesis_hash), Some(genesis_hash));
 
         storage
@@ -125,7 +165,7 @@ impl RedbStorage {
         let (mut storage, genesis_block) = Self::create_from_genesis_init(chain_id, genesis, path);
         let genesis_hash = genesis_block.header.hash_slow();
         
-        storage.add_block(genesis_block);
+        storage.add_block(genesis_block, None);
         storage.update_forkchoice(genesis_hash, Some(genesis_hash), Some(genesis_hash));
 
         storage
@@ -296,13 +336,13 @@ impl RedbStorage {
     pub fn new_with_genesis_block(_chain_id: EvmU256, mut storage: Self, genesis_block: Block<Transaction>) -> Self {
         let genesis_hash = genesis_block.header.hash_slow();
         
-        storage.add_block(genesis_block);
+        storage.add_block(genesis_block, None);
         storage.update_forkchoice(genesis_hash, Some(genesis_hash), Some(genesis_hash));
 
         storage
     }
 
-    pub fn add_block(&mut self, block: Block<Transaction>) {
+    pub fn add_block(&mut self, block: Block<Transaction>, changeset: Option<&OverlayedChangeSet>) {
         let start = Instant::now();
         let block_number = block.header.number;
         let block_hash = block.header.hash_slow();
@@ -321,7 +361,10 @@ impl RedbStorage {
             let mut hash_to_number_table = write_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
             let mut transactions_table = write_txn.open_table(TRANSACTIONS_TABLE).unwrap();
             let mut tx_location_table = write_txn.open_table(TX_LOCATION_TABLE).unwrap();
-            let mut snapshots_table = write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            let _snapshots_table = write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            let mut state_table = write_txn.open_table(STATE_TABLE).unwrap();
+            let mut contract_storage_table = write_txn.open_table(CONTRACT_STORAGE_TABLE).unwrap();
+            let mut contract_code_table = write_txn.open_table(CONTRACT_CODE_TABLE).unwrap();
 
             for (i, tx) in block.body.transactions.iter().enumerate() {
                 let tx_hash = tx.hash();
@@ -335,24 +378,118 @@ impl RedbStorage {
             blocks_table.insert(block_number, block_bytes.as_slice()).unwrap();
             hash_to_number_table.insert(block_hash.as_slice(), block_number).unwrap();
             
-            // Take snapshot after adding block
-            let snapshot_bytes = serde_json::to_vec(&self.backend).unwrap();
-            snapshots_table.insert(block_number, snapshot_bytes.as_slice()).unwrap();
-            
-            // Keep only last 100 snapshots
-            // This is a bit inefficient with redb, but let's stick to the logic for now
-            let mut count = 0;
-            let mut first_key = None;
-            for item in snapshots_table.iter().unwrap() {
-                let (key, _) = item.unwrap();
-                if count == 0 {
-                    first_key = Some(key.value());
+            // Persist state to normalized tables
+            if let Some(cs) = changeset {
+                let mut affected_addresses = std::collections::HashSet::new();
+                for addr in cs.balances.keys() { affected_addresses.insert(*addr); }
+                for addr in cs.codes.keys() { affected_addresses.insert(*addr); }
+                for addr in cs.nonces.keys() { affected_addresses.insert(*addr); }
+                for addr in cs.touched.iter() { affected_addresses.insert(*addr); }
+                for (addr, _) in cs.storages.keys() { affected_addresses.insert(*addr); }
+                
+                for addr in &cs.deletes {
+                    state_table.remove(addr.0).unwrap();
+                    // Optional: remove storage slots too, but it might be expensive to iterate all
+                    affected_addresses.remove(addr);
                 }
-                count += 1;
+
+                for addr in affected_addresses {
+                    if let Some(acc) = self.backend.state.get(&addr) {
+                        let address_bytes: [u8; 20] = addr.0;
+                        let code_hash = if acc.code.is_empty() {
+                            alloy_primitives::KECCAK256_EMPTY
+                        } else {
+                            alloy_primitives::keccak256(&acc.code)
+                        };
+
+                        let storage_root = if acc.storage.is_empty() {
+                            alloy_trie::EMPTY_ROOT_HASH
+                        } else {
+                            storage_root_unsorted(acc.storage.iter().map(|(k, v)| {
+                                (alloy_primitives::keccak256(k.0), U256::from_be_bytes(v.0))
+                            }))
+                        };
+
+                        let account_state = AccountState {
+                            nonce: acc.nonce.as_u64(),
+                            balance: {
+                                let mut b = [0u8; 32];
+                                acc.balance.to_big_endian(&mut b);
+                                U256::from_be_bytes(b)
+                            },
+                            code_hash,
+                            storage_root,
+                        };
+
+                        state_table.insert(address_bytes, account_state).unwrap();
+
+                        if cs.codes.contains_key(&addr) && !acc.code.is_empty() {
+                            contract_code_table.insert(code_hash.0, acc.code.as_slice()).unwrap();
+                        }
+
+                        // Update only changed storage slots for this address
+                        for ((s_addr, s_slot), s_val) in &cs.storages {
+                            if s_addr == &addr {
+                                contract_storage_table.insert((address_bytes, s_slot.0), s_val.0).unwrap();
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Fallback for genesis or full sync
+                for (addr, acc) in &self.backend.state {
+                    let address_bytes: [u8; 20] = addr.0;
+                    let code_hash = if acc.code.is_empty() {
+                        alloy_primitives::KECCAK256_EMPTY
+                    } else {
+                        alloy_primitives::keccak256(&acc.code)
+                    };
+
+                    let storage_root = if acc.storage.is_empty() {
+                        alloy_trie::EMPTY_ROOT_HASH
+                    } else {
+                        storage_root_unsorted(acc.storage.iter().map(|(k, v)| {
+                            (alloy_primitives::keccak256(k.0), U256::from_be_bytes(v.0))
+                        }))
+                    };
+
+                    let account_state = AccountState {
+                        nonce: acc.nonce.as_u64(),
+                        balance: {
+                            let mut b = [0u8; 32];
+                            acc.balance.to_big_endian(&mut b);
+                            U256::from_be_bytes(b)
+                        },
+                        code_hash,
+                        storage_root,
+                    };
+
+                    state_table.insert(address_bytes, account_state).unwrap();
+
+                    if !acc.code.is_empty() {
+                        contract_code_table.insert(code_hash.0, acc.code.as_slice()).unwrap();
+                    }
+
+                    for (slot, value) in &acc.storage {
+                        contract_storage_table.insert((address_bytes, slot.0), value.0).unwrap();
+                    }
+                }
             }
-            if count > 100 {
-                if let Some(key) = first_key {
-                    snapshots_table.remove(key).unwrap();
+
+            // Take savepoint after adding block
+            let savepoint_id = write_txn.persistent_savepoint().unwrap();
+            let mut savepoints_mapping_table = write_txn.open_table(SAVEPOINTS_MAPPING_TABLE).unwrap();
+            savepoints_mapping_table.insert(block_number, savepoint_id).unwrap();
+            
+            // Tiered retention policy:
+            // Latest 5 Blocks (Continuous): Maintain full state snapshots for the last 5 blocks.
+            // Every 100 Blocks (Archival): Capture a persistent snapshot every 100 blocks.
+            // Automatic Cleanup: Remove snapshot for block_number - 5 if not an archival block.
+            if block_number > 5 {
+                let to_remove = block_number - 5;
+                if to_remove % 100 != 0 {
+                    debug!("[Storage] Cleaning up savepoint for block #{}", to_remove);
+                    savepoints_mapping_table.remove(to_remove).unwrap();
                 }
             }
         }
@@ -366,13 +503,21 @@ impl RedbStorage {
         info!("[Storage] Reverting to height {}", height);
         let mut reverted_txs = Vec::new();
         
-        let write_txn = self.db.begin_write().unwrap();
+        let mut write_txn = self.db.begin_write().unwrap();
         {
             let mut blocks_table = write_txn.open_table(BLOCKS_TABLE).unwrap();
             let mut hash_to_number_table = write_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
             let mut tx_location_table = write_txn.open_table(TX_LOCATION_TABLE).unwrap();
             let snapshots_table = write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            let state_table = write_txn.open_table(STATE_TABLE).unwrap();
+            let contract_storage_table = write_txn.open_table(CONTRACT_STORAGE_TABLE).unwrap();
+            let contract_code_table = write_txn.open_table(CONTRACT_CODE_TABLE).unwrap();
 
+            let savepoint_id = {
+                let savepoints_mapping_table = write_txn.open_table(SAVEPOINTS_MAPPING_TABLE).unwrap();
+                savepoints_mapping_table.get(height).unwrap().map(|v| v.value())
+            };
+            
             let keys_to_remove: Vec<u64> = blocks_table.range((height + 1)..).unwrap()
                 .map(|item| item.unwrap().0.value()).collect();
 
@@ -389,20 +534,55 @@ impl RedbStorage {
                 }
             }
             
-            if let Some(snapshot_bytes) = snapshots_table.get(height).unwrap() {
-                self.backend = serde_json::from_slice(snapshot_bytes.value()).unwrap();
+            if let Some(id) = savepoint_id {
+                // Release borrows
+                drop(blocks_table);
+                drop(hash_to_number_table);
+                drop(tx_location_table);
+                drop(snapshots_table);
+                drop(state_table);
+                drop(contract_storage_table);
+                drop(contract_code_table);
+                
+                // Commit the current write transaction before restoring savepoint
+                write_txn.commit().unwrap();
+                
+                let mut write_txn = self.db.begin_write().unwrap();
+                let savepoint = write_txn.get_persistent_savepoint(id).expect("Savepoint not found");
+                write_txn.restore_savepoint(&savepoint).expect("Failed to restore savepoint");
+                write_txn.commit().unwrap();
+
+                // After restoring, we need to reload the backend from the restored tables
+                let read_txn = self.db.begin_read().unwrap();
+                let state_table = read_txn.open_table(STATE_TABLE).unwrap();
+                let storage_table = read_txn.open_table(CONTRACT_STORAGE_TABLE).unwrap();
+                let code_table = read_txn.open_table(CONTRACT_CODE_TABLE).unwrap();
+                self.load_backend_from_tables(&state_table, &storage_table, &code_table);
             } else {
-                error!("[Storage] No snapshot found for height {}, state might be inconsistent!", height);
+                warn!("[Storage] No savepoint found for height {}. Attempting to rebuild from nearest archival snapshot.", height);
+                // Fallback to reconstruction
+                drop(blocks_table);
+                drop(hash_to_number_table);
+                drop(tx_location_table);
+                drop(snapshots_table);
+                drop(state_table);
+                drop(contract_storage_table);
+                drop(contract_code_table);
+                write_txn.commit().unwrap();
+
+                self.reconstruct_state_at_height(height).expect("Failed to reconstruct state for reorg");
             }
             
-            if let Some(block_bytes) = blocks_table.get(height).unwrap() {
+            // Re-open txn to update head_block_hash and return
+            let read_txn = self.db.begin_read().unwrap();
+            let blocks_table = read_txn.open_table(BLOCKS_TABLE).unwrap();
+            if let Some(block_bytes) = blocks_table.get(height).ok().flatten() {
                 let block: Block<Transaction> = serde_json::from_slice(block_bytes.value()).unwrap();
                 self.head_block_hash = block.header.hash_slow();
             }
+            return reverted_txs;
         }
-        write_txn.commit().unwrap();
-        
-        reverted_txs
+        // This part is unreachable now due to the returns above, but kept for structure
     }
 
     pub fn add_transaction(&mut self, tx: Transaction) {
@@ -429,23 +609,23 @@ impl RedbStorage {
     }
 
     pub fn get_receipt_by_tx_hash(&self, tx_hash: B256) -> Option<Receipt> {
-        let read_txn = self.db.begin_read().unwrap();
-        let receipts_table = read_txn.open_table(RECEIPTS_TABLE).unwrap();
-        receipts_table.get(tx_hash.as_slice()).unwrap().map(|r| serde_json::from_slice(r.value()).unwrap())
+        let read_txn = self.db.begin_read().ok()?;
+        let receipts_table = read_txn.open_table(RECEIPTS_TABLE).ok()?;
+        receipts_table.get(tx_hash.as_slice()).ok()?.map(|r| serde_json::from_slice(r.value()).unwrap())
     }
 
     pub fn get_block_by_number(&self, number: u64) -> Option<Block<Transaction>> {
-        let read_txn = self.db.begin_read().unwrap();
-        let blocks_table = read_txn.open_table(BLOCKS_TABLE).unwrap();
-        blocks_table.get(number).unwrap().map(|b| serde_json::from_slice(b.value()).unwrap())
+        let read_txn = self.db.begin_read().ok()?;
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE).ok()?;
+        blocks_table.get(number).ok()?.map(|b| serde_json::from_slice(b.value()).unwrap())
     }
 
     pub fn get_block_by_hash(&self, hash: B256) -> Option<Block<Transaction>> {
-        let read_txn = self.db.begin_read().unwrap();
-        let hash_to_number_table = read_txn.open_table(HASH_TO_NUMBER_TABLE).unwrap();
-        let blocks_table = read_txn.open_table(BLOCKS_TABLE).unwrap();
-        hash_to_number_table.get(hash.as_slice()).unwrap()
-            .and_then(|num| blocks_table.get(num.value()).unwrap())
+        let read_txn = self.db.begin_read().ok()?;
+        let hash_to_number_table = read_txn.open_table(HASH_TO_NUMBER_TABLE).ok()?;
+        let blocks_table = read_txn.open_table(BLOCKS_TABLE).ok()?;
+        hash_to_number_table.get(hash.as_slice()).ok()?
+            .and_then(|num| blocks_table.get(num.value()).ok()?)
             .map(|b| serde_json::from_slice(b.value()).unwrap())
     }
 
@@ -498,18 +678,54 @@ impl RedbStorage {
             a.balance.to_big_endian(&mut bytes);
             U256::from_be_bytes(bytes)
         } else {
+            // Fallback to STATE_TABLE
+            let read_txn = self.db.begin_read().unwrap();
+            if let Ok(state_table) = read_txn.open_table(STATE_TABLE) {
+                if let Ok(Some(acc_state)) = state_table.get(address.0 .0) {
+                    return acc_state.value().balance;
+                }
+            }
             U256::ZERO
         }
     }
 
     pub fn get_accounts(&self) -> Vec<Address> {
-        self.backend.state.keys().map(|h| Address::from(h.0)).collect()
+        let mut accounts: std::collections::HashSet<Address> = self.backend.state.keys().map(|h| Address::from(h.0)).collect();
+        
+        // Add accounts from STATE_TABLE
+        let read_txn = self.db.begin_read().unwrap();
+        if let Ok(state_table) = read_txn.open_table(STATE_TABLE) {
+            if let Ok(iter) = state_table.iter() {
+                for item in iter {
+                    if let Ok((addr, _)) = item {
+                        accounts.insert(Address::from(addr.value()));
+                    }
+                }
+            }
+        }
+        accounts.into_iter().collect()
     }
 
     pub fn get_code(&self, address: Address) -> Vec<u8> {
-        self.backend.state.get(&H160::from_slice(address.as_slice()))
-            .map(|a| a.code.clone())
-            .unwrap_or_default()
+        if let Some(a) = self.backend.state.get(&H160::from_slice(address.as_slice())) {
+            return a.code.clone();
+        }
+        
+        // Fallback to CONTRACT_CODE_TABLE
+        let read_txn = self.db.begin_read().unwrap();
+        if let Ok(state_table) = read_txn.open_table(STATE_TABLE) {
+            if let Ok(Some(acc_state)) = state_table.get(address.0 .0) {
+                let code_hash = acc_state.value().code_hash;
+                if code_hash != alloy_primitives::KECCAK256_EMPTY {
+                    if let Ok(code_table) = read_txn.open_table(CONTRACT_CODE_TABLE) {
+                        if let Ok(Some(code)) = code_table.get(code_hash.0) {
+                            return code.value().to_vec();
+                        }
+                    }
+                }
+            }
+        }
+        Vec::new()
     }
 
     pub fn set_balance(&mut self, address: Address, balance: U256) {
@@ -527,30 +743,45 @@ impl RedbStorage {
     }
 
     pub fn calculate_state_root(&self) -> B256 {
-        state_root_unhashed(self.backend.state.iter().map(|(addr, acc)| {
-            let storage_root = if acc.storage.is_empty() {
-                alloy_trie::EMPTY_ROOT_HASH
-            } else {
-                storage_root_unsorted(acc.storage.iter().map(|(k, v)| {
-                    (alloy_primitives::keccak256(k.0), U256::from_be_bytes(v.0))
-                }))
-            };
-
-            let trie_acc = TrieAccount {
-                nonce: acc.nonce.as_u64(),
-                balance: {
-                    let mut b = [0u8; 32];
-                    acc.balance.to_big_endian(&mut b);
-                    U256::from_be_bytes(b)
-                },
-                storage_root,
-                code_hash: if acc.code.is_empty() { 
+        let accounts = self.get_accounts();
+        state_root_unhashed(accounts.into_iter().map(|addr| {
+            let h160 = H160::from_slice(addr.as_slice());
+            
+            let (nonce, balance, code_hash, storage_root) = if let Some(acc) = self.backend.state.get(&h160) {
+                let storage_root = if acc.storage.is_empty() {
+                    alloy_trie::EMPTY_ROOT_HASH
+                } else {
+                    storage_root_unsorted(acc.storage.iter().map(|(k, v)| {
+                        (alloy_primitives::keccak256(k.0), U256::from_be_bytes(v.0))
+                    }))
+                };
+                
+                let code_hash = if acc.code.is_empty() { 
                     alloy_primitives::KECCAK256_EMPTY 
                 } else { 
                     alloy_primitives::keccak256(&acc.code) 
-                },
+                };
+
+                let mut b = [0u8; 32];
+                acc.balance.to_big_endian(&mut b);
+                
+                (acc.nonce.as_u64(), U256::from_be_bytes(b), code_hash, storage_root)
+            } else {
+                // Fallback to redb
+                let read_txn = self.db.begin_read().unwrap();
+                let state_table = read_txn.open_table(STATE_TABLE).unwrap();
+                let acc_state = state_table.get(addr.0 .0).unwrap().unwrap();
+                let val = acc_state.value();
+                (val.nonce, val.balance, val.code_hash, val.storage_root)
             };
-            (Address::from(addr.0), trie_acc)
+
+            let trie_acc = TrieAccount {
+                nonce,
+                balance,
+                storage_root,
+                code_hash,
+            };
+            (addr, trie_acc)
         }))
     }
 
@@ -701,7 +932,163 @@ impl RedbStorage {
         serde_json::to_vec_pretty(&dump).map_err(|e| anyhow::anyhow!(e))
     }
 
+    fn load_backend_from_tables(
+        &mut self,
+        state_table: &impl ReadableTable<[u8; 20], AccountState>,
+        storage_table: &impl ReadableTable<([u8; 20], [u8; 32]), [u8; 32]>,
+        code_table: &impl ReadableTable<[u8; 32], &'static [u8]>
+    ) {
+        let mut state = BTreeMap::new();
+        for item in state_table.iter().unwrap() {
+            let (addr_bytes, acc_state) = item.unwrap();
+            let addr = H160(addr_bytes.value());
+            let acc_state = acc_state.value();
+
+            let code = if acc_state.code_hash != alloy_primitives::KECCAK256_EMPTY {
+                code_table.get(acc_state.code_hash.0).unwrap().map(|c| c.value().to_vec()).unwrap_or_default()
+            } else {
+                Vec::new()
+            };
+
+            let mut storage = BTreeMap::new();
+            for s_item in storage_table.iter().unwrap() {
+                let (key_guard, val_guard) = s_item.unwrap();
+                let (s_addr, s_slot) = key_guard.value();
+                let s_val = val_guard.value();
+                if s_addr == addr_bytes.value() {
+                    storage.insert(H256(s_slot), H256(s_val));
+                }
+            }
+
+            state.insert(addr, InMemoryAccount {
+                balance: EvmU256::from_big_endian(&acc_state.balance.to_be_bytes::<32>()),
+                nonce: EvmU256::from(acc_state.nonce),
+                code,
+                storage,
+                transient_storage: BTreeMap::new(),
+            });
+        }
+        self.backend.state = state;
+    }
+
+    pub fn reconstruct_state_at_height(&mut self, requested_height: u64) -> Result<()> {
+        // 1. Find the nearest savepoint <= requested_height
+        let savepoint_info = {
+            let read_txn = self.db.begin_read()?;
+            let savepoints_mapping_table = read_txn.open_table(SAVEPOINTS_MAPPING_TABLE)?;
+            
+            let mut nearest_savepoint_height = None;
+            for item in savepoints_mapping_table.iter()? {
+                let (h, _) = item?;
+                let h = h.value();
+                if h <= requested_height {
+                    if nearest_savepoint_height.is_none() || h > nearest_savepoint_height.unwrap() {
+                        nearest_savepoint_height = Some(h);
+                    }
+                }
+            }
+            
+            nearest_savepoint_height.and_then(|h| {
+                savepoints_mapping_table.get(h).ok().flatten().map(|v| (h, v.value()))
+            })
+        };
+
+        if let Some((savepoint_h, savepoint_id)) = savepoint_info {
+            info!("[Storage] Found nearest savepoint at height {}", savepoint_h);
+            {
+                let mut writetx = self.db.begin_write()?;
+                let savepoint = writetx.get_persistent_savepoint(savepoint_id).map_err(|e| anyhow::anyhow!("Savepoint {} not found: {:?}", savepoint_id, e))?;
+                writetx.restore_savepoint(&savepoint)?;
+                writetx.commit()?;
+            }
+            
+            // Reload backend from the restored tables
+            {
+                let read_txn = self.db.begin_read()?;
+                let state_table = read_txn.open_table(STATE_TABLE)?;
+                let storage_table = read_txn.open_table(CONTRACT_STORAGE_TABLE)?;
+                let code_table = read_txn.open_table(CONTRACT_CODE_TABLE)?;
+                self.load_backend_from_tables(&state_table, &storage_table, &code_table);
+            }
+            
+            // 2. Replay blocks forward from savepoint_h + 1 to requested_height
+            if savepoint_h < requested_height {
+                info!("[Storage] Replaying blocks from {} to {}", savepoint_h + 1, requested_height);
+                let executor = Executor::new();
+                let read_txn = self.db.begin_read()?;
+                let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
+                for h in (savepoint_h + 1)..=requested_height {
+                    if let Some(block_bytes) = blocks_table.get(h)? {
+                        let block: Block<Transaction> = serde_json::from_slice(block_bytes.value())?;
+                        executor.execute_block(self, block.body.transactions.clone(), block).map_err(|e| anyhow::anyhow!(e))?;
+                    } else {
+                        return Err(anyhow::anyhow!("Block {} not found during replay", h));
+                    }
+                }
+            }
+            
+            // Update head hash to the requested height's block hash
+            {
+                let read_txn = self.db.begin_read()?;
+                let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
+                if let Some(block_bytes) = blocks_table.get(requested_height)? {
+                    let block: Block<Transaction> = serde_json::from_slice(block_bytes.value())?;
+                    self.head_block_hash = block.header.hash_slow();
+                }
+            }
+            Ok(())
+        } else {
+            // Fallback to SNAPSHOTS_TABLE if no savepoint is found (for backward compatibility during migration)
+            let read_txn = self.db.begin_read()?;
+            let snapshots_table = read_txn.open_table(SNAPSHOTS_TABLE)?;
+            
+            let mut nearest_snapshot_height = None;
+            for item in snapshots_table.iter()? {
+                let (h, _) = item?;
+                let h = h.value();
+                if h <= requested_height {
+                    if nearest_snapshot_height.is_none() || h > nearest_snapshot_height.unwrap() {
+                        nearest_snapshot_height = Some(h);
+                    }
+                }
+            }
+
+            if let Some(snapshot_h) = nearest_snapshot_height {
+                info!("[Storage] Found nearest old snapshot at height {}", snapshot_h);
+                let snapshot_bytes = snapshots_table.get(snapshot_h)?.ok_or_else(|| anyhow::anyhow!("Snapshot not found"))?;
+                self.backend = serde_json::from_slice(snapshot_bytes.value())?;
+                
+                // Replay blocks forward
+                if snapshot_h < requested_height {
+                    info!("[Storage] Replaying blocks from {} to {}", snapshot_h + 1, requested_height);
+                    let executor = Executor::new();
+                    let blocks_table = read_txn.open_table(BLOCKS_TABLE)?;
+                    for h in (snapshot_h + 1)..=requested_height {
+                        if let Some(block_bytes) = blocks_table.get(h)? {
+                            let block: Block<Transaction> = serde_json::from_slice(block_bytes.value())?;
+                            executor.execute_block(self, block.body.transactions.clone(), block).map_err(|e| anyhow::anyhow!(e))?;
+                        } else {
+                            return Err(anyhow::anyhow!("Block {} not found during replay", h));
+                        }
+                    }
+                }
+                
+                if let Some(block_bytes) = read_txn.open_table(BLOCKS_TABLE)?.get(requested_height)? {
+                    let block: Block<Transaction> = serde_json::from_slice(block_bytes.value())?;
+                    self.head_block_hash = block.header.hash_slow();
+                }
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("No savepoint or snapshot found <= requested height {}", requested_height))
+            }
+        }
+    }
+
     pub fn load_from_file<P: AsRef<Path>>(path: P) -> Result<Self> {
+        Self::load_from_file_at_height(path, None)
+    }
+
+    pub fn load_from_file_at_height<P: AsRef<Path>>(path: P, height: Option<u64>) -> Result<Self> {
         let db = Database::builder()
             .create(path)
             .expect("Failed to open database");
@@ -715,7 +1102,10 @@ impl RedbStorage {
             write_txn.open_table(RECEIPTS_TABLE).unwrap();
             write_txn.open_table(TX_LOCATION_TABLE).unwrap();
             write_txn.open_table(STATE_TABLE).unwrap();
+            write_txn.open_table(CONTRACT_STORAGE_TABLE).unwrap();
+            write_txn.open_table(CONTRACT_CODE_TABLE).unwrap();
             write_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            write_txn.open_table(SAVEPOINTS_MAPPING_TABLE).unwrap();
             write_txn.open_table(PAYLOADS_TABLE).unwrap();
             write_txn.open_table(METADATA_TABLE).unwrap();
         }
@@ -748,25 +1138,45 @@ impl RedbStorage {
             });
 
         // Current redb implementation keeps state in the latest backend for compatibility
-        // In a real implementation, we should load it from STATE_TABLE
-        let snapshots_table = read_txn.open_table(SNAPSHOTS_TABLE).unwrap();
-        let latest_block_number = read_txn.open_table(BLOCKS_TABLE).unwrap().iter().unwrap().last()
-            .map(|item| item.unwrap().0.value()).unwrap_or(0);
-        
-        let backend = snapshots_table.get(latest_block_number).unwrap()
-            .map(|v| serde_json::from_slice(v.value()).unwrap())
-            .unwrap_or(InMemoryBackend {
-                environment: env,
-                state: BTreeMap::new(),
-            });
-
-        Ok(Self {
+        // Load state from normalized tables
+        let mut storage = Self {
             db: Arc::new(db),
             head_block_hash,
             safe_block_hash,
             finalized_block_hash,
-            backend,
-        })
+            backend: InMemoryBackend {
+                environment: env,
+                state: BTreeMap::new(),
+            },
+        };
+        
+        let state_table = read_txn.open_table(STATE_TABLE).unwrap();
+        let storage_table = read_txn.open_table(CONTRACT_STORAGE_TABLE).unwrap();
+        let code_table = read_txn.open_table(CONTRACT_CODE_TABLE).unwrap();
+
+        storage.load_backend_from_tables(&state_table, &storage_table, &code_table);
+
+        if storage.backend.state.is_empty() {
+            // Fallback to snapshots if normalized tables are empty (for backward compatibility)
+            let snapshots_table = read_txn.open_table(SNAPSHOTS_TABLE).unwrap();
+            let latest_block_number = read_txn.open_table(BLOCKS_TABLE).unwrap().iter().unwrap().last()
+                .map(|item| item.unwrap().0.value()).unwrap_or(0);
+            
+            if let Some(snapshot_bytes) = snapshots_table.get(latest_block_number).unwrap() {
+                storage.backend = serde_json::from_slice(snapshot_bytes.value()).unwrap();
+            }
+        }
+
+        // Handle historical state request
+        if let Some(requested_height) = height {
+            let current_height = storage.get_latest_block_number();
+            if requested_height < current_height {
+                info!("[Storage] Historical state requested for height {}. Current height is {}.", requested_height, current_height);
+                storage.reconstruct_state_at_height(requested_height)?;
+            }
+        }
+
+        Ok(storage)
     }
 }
 
@@ -919,32 +1329,79 @@ impl StateProvider for RedbStorage {
     async fn account(&self, address: Address, _block_id: BlockId) -> Result<Option<GenesisAccount>> {
         let start = Instant::now();
         let h160 = H160::from_slice(address.as_slice());
-        let res = Ok(self.backend.state.get(&h160).map(|acc| GenesisAccount {
-            balance: {
-                let mut b = [0u8; 32];
-                acc.balance.to_big_endian(&mut b);
-                U256::from_be_bytes(b)
-            },
-            nonce: Some(acc.nonce.as_u64()),
-            code: if acc.code.is_empty() { None } else { Some(acc.code.clone().into()) },
-            storage: if acc.storage.is_empty() { None } else {
-                Some(acc.storage.iter().map(|(k, v)| (B256::from(k.0), B256::from(v.0))).collect())
-            },
-            private_key: None,
-        }));
+        
+        let account = if let Some(acc) = self.backend.state.get(&h160) {
+            Some(GenesisAccount {
+                balance: {
+                    let mut b = [0u8; 32];
+                    acc.balance.to_big_endian(&mut b);
+                    U256::from_be_bytes(b)
+                },
+                nonce: Some(acc.nonce.as_u64()),
+                code: if acc.code.is_empty() { None } else { Some(acc.code.clone().into()) },
+                storage: if acc.storage.is_empty() { None } else {
+                    Some(acc.storage.iter().map(|(k, v)| (B256::from(k.0), B256::from(v.0))).collect())
+                },
+                private_key: None,
+            })
+        } else {
+            // Fallback to redb tables
+            let read_txn = self.db.begin_read()?;
+            let state_table = read_txn.open_table(STATE_TABLE)?;
+            if let Some(acc_state) = state_table.get(address.0 .0)? {
+                let acc_state = acc_state.value();
+                let code = if acc_state.code_hash != alloy_primitives::KECCAK256_EMPTY {
+                    let code_table = read_txn.open_table(CONTRACT_CODE_TABLE)?;
+                    code_table.get(acc_state.code_hash.0)?.map(|c| c.value().to_vec().into())
+                } else {
+                    None
+                };
+
+                let mut storage = BTreeMap::new();
+                let storage_table = read_txn.open_table(CONTRACT_STORAGE_TABLE)?;
+                // This is slightly inefficient as we don't have a way to prefix-scan easily with current redb table definition
+                // but let's stick to the plan of using the tables.
+                // In a real implementation we'd use a more optimized way to fetch all slots for an address.
+                for item in storage_table.iter()? {
+                    let (key_guard, val_guard) = item?;
+                    let (addr, slot) = key_guard.value();
+                    let val = val_guard.value();
+                    if addr == address.0 .0 {
+                        storage.insert(B256::from(slot), B256::from(val));
+                    }
+                }
+
+                Some(GenesisAccount {
+                    balance: acc_state.balance,
+                    nonce: Some(acc_state.nonce),
+                    code,
+                    storage: if storage.is_empty() { None } else { Some(storage) },
+                    private_key: None,
+                })
+            } else {
+                None
+            }
+        };
+
         STORAGE_READ_LATENCY.observe(start.elapsed().as_secs_f64());
-        res
+        Ok(account)
     }
 
     async fn storage(&self, address: Address, slot: B256, _block_id: BlockId) -> Result<Option<U256>> {
         let start = Instant::now();
         let h160 = H160::from_slice(address.as_slice());
         let h256 = H256(slot.0);
-        let res = Ok(self.backend.state.get(&h160)
-            .and_then(|acc| acc.storage.get(&h256))
-            .map(|v| U256::from_be_bytes(v.0)));
+        
+        let val = if let Some(acc) = self.backend.state.get(&h160) {
+            acc.storage.get(&h256).map(|v| U256::from_be_bytes(v.0))
+        } else {
+            let read_txn = self.db.begin_read()?;
+            let storage_table = read_txn.open_table(CONTRACT_STORAGE_TABLE)?;
+            storage_table.get((address.0 .0, slot.0))?.map(|v| U256::from_be_bytes(v.value()))
+        };
+
         STORAGE_READ_LATENCY.observe(start.elapsed().as_secs_f64());
-        res
+        Ok(val)
     }
 
     async fn code(&self, address: Address, _block_id: BlockId) -> Result<Option<Bytes>> {
@@ -1011,8 +1468,8 @@ impl StateProvider for RedbStorage {
 
 #[async_trait]
 impl ChainProvider for RedbStorage {
-    fn add_block(&mut self, block: Block<Transaction>) {
-        self.add_block(block)
+    fn add_block(&mut self, block: Block<Transaction>, changeset: Option<&OverlayedChangeSet>) {
+        self.add_block(block, changeset);
     }
 
     fn revert_to_height(&mut self, height: u64) -> Vec<Transaction> {
@@ -1066,9 +1523,9 @@ impl ChainProvider for RedbStorage {
 
 #[async_trait]
 impl ChainProvider for StorageProvider {
-    fn add_block(&mut self, block: Block<Transaction>) {
+    fn add_block(&mut self, block: Block<Transaction>, changeset: Option<&OverlayedChangeSet>) {
         let mut inner = self.inner.blocking_write();
-        inner.add_block(block);
+        inner.add_block(block, changeset);
     }
 
     fn revert_to_height(&mut self, height: u64) -> Vec<Transaction> {

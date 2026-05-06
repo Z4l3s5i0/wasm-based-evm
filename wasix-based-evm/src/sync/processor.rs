@@ -25,11 +25,11 @@ impl BlockProcessor {
         let mut storage_write = self.storage.write().await;
         
         match self.executor.execute_block(&mut storage_write, block.body.transactions.clone(), block.clone()) {
-            Ok(_) => {
+            Ok((_, finalized_block, _)) => {
                 CURRENT_HEAD_BLOCK.set(block_num as f64);
                 
                 info!("[Processor] Successfully executed and stored block {}", block_num);
-                let block_hash = block.header.hash_slow();
+                let block_hash = finalized_block.header.hash_slow();
                 storage_write.update_forkchoice(block_hash, Some(block_hash), Some(block_hash));
                 
                 // Update mempool after successful block processing

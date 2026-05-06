@@ -188,7 +188,7 @@ impl Executor {
         }
     }
 
-    pub fn execute_block(&self, storage: &mut RedbStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<Vec<TransactValue>, String> {
+    pub fn execute_block(&self, storage: &mut RedbStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>) -> Result<(Vec<TransactValue>, Block<TxEnvelope>, Vec<Receipt>), String> {
         let start = std::time::Instant::now();
         let (results, receipts, total_changeset) = self.execute_with_changeset(storage, transactions.clone(), block.clone())?;
         BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
@@ -206,9 +206,9 @@ impl Executor {
 
         let finalized_block = self.create_finalized_block(&block, &transactions, &withdrawals, &roots, cumulative_gas_used, bloom);
 
-        self.finalize_state(storage, &total_changeset, &transactions, &receipts, &withdrawals, finalized_block);
+        self.finalize_state(storage, &total_changeset, &transactions, &receipts, &withdrawals, finalized_block.clone());
 
-        Ok(results)
+        Ok((results, finalized_block, receipts))
     }
 
     fn calculate_roots(
@@ -358,7 +358,7 @@ impl Executor {
         }
 
         let block_number = finalized_block.header.number;
-        storage.add_block(finalized_block);
+        storage.add_block(finalized_block, Some(total_changeset));
         debug!("[Executor] Block finalized and saved to storage: number={:?}", block_number);
     }
 
@@ -435,8 +435,10 @@ impl Executor {
 
     pub fn run_execution(&self, storage: &mut RedbStorage, transactions: Vec<TxEnvelope>, block: Block<TxEnvelope>, apply_changes: bool) -> Result<Vec<TransactValue>, String> {
         let start = std::time::Instant::now();
-        let result = if apply_changes {
-            self.execute_block(storage, transactions, block)
+        if apply_changes {
+            let (results, _, _) = self.execute_block(storage, transactions, block)?;
+            BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
+            Ok(results)
         } else {
             // Just for call/dry-run, we don't need the complex block logic
             let precompiles = StandardPrecompileSet;
@@ -466,14 +468,9 @@ impl Executor {
                     Err(e) => return Err(format!("Transaction execution failed: {:?}", e)),
                 }
             }
-            Ok(results)
-        };
-
-        if result.is_ok() {
             BLOCK_EXECUTION_TIME.observe(start.elapsed().as_secs_f64());
+            Ok(results)
         }
-
-        result
     }
 }
 
