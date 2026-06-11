@@ -56,36 +56,19 @@ for the [Ethereum Netwrok-layer specification (p2p)](https://ethereum.org/develo
 for the [patched repos](https://wasix.org/docs/language-guide/rust/patched-repos)
 https://hackmd.io/@danielrachi/engine_api
 
-### smart contracts
-
-| Action          | `to`      | `data`        | EVM behavior                         |
-|-----------------| --------- | ------------- | ------------------------------------ |
-| ETH to user     | recipient | empty         | update balances only                 |
-| ETH to contract | contract  | empty         | execute `receive()` / fallback       |
-| Contract call   | contract  | function+args | run function logic, may change state |
-| Contract deploy | null      | bytecode      | run constructor, store code          |
-
-| Action                   | New block? | State updated? |
-| ------------------------ | ---------- | -------------- |
-| Deploy contract (tx)     | ✅ Yes      | ✅ Yes          |
-| Call contract (tx)       | ✅ Yes      | ✅ Yes          |
-| Call contract (eth_call) | ❌ No       | ❌ No           |
-
-### Test the execution client
-
-```shell
-cd tester
-cargo build
-cargo run
-```
-For example use cases to test, see the Readme [here](./tester/README.md).
-
-### Missing Todos
-- [ ] encryption for connections to execution client
-- [ ] initializing of the execution client with command line arguments
-- [ ] complete p2p
-- [ ] implementing persistent storage
-- [ ] complete engine_api specs
-- [ ] including features of forks after shanghai-capella
-
-For an AI analysis of missing components see [here](KI_Analysis_missing_pieces.md) 
+## Todos
+* [ ] adjust this README
+* [ ] do TODOS of README in [scripts](./scripts/README.md)
+* [ ] try diablo workloads on client
+* [ ] create contender script or workflow to spam diablo workloads
+* [ ] adjust experiment proposal
+* [ ] adjust METRICS exposed via prometheus and dashboards via grafana
+* [ ] create a storage system for prometheus metrics of different nodes for the experiments for analysis
+* [ ] adjust the client for passing last few HIVE tests
+  * [ ] 214/226 passed for engine-cancun
+  * [ ] 129/129 passed for engine-api
+  * [ ] 30/35 passed for engine-withdrawals
+  * [ ] 8/8 passed for engine-auth
+  * [ ] 13/16 passed for discv4
+  * [ ] 0/2 passed for sync
+  *  --> 394/416
