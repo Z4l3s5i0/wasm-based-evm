@@ -1,0 +1,30 @@
+[package]
+name = "wasix_eth_rpc"
+description = ""
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+
+[lints]
+workspace = true
+
+[dependencies]
+wasix_eth_types = {workspace = true}
+wasix_eth_utils = {workspace = true}
+wasix_eth_core = {workspace = true}
+wasix_eth_storage = {workspace = true}
+wasix_eth_execution = {workspace = true}
+wasix_eth_p2p = {workspace = true}
+
+tokio = {workspace = true}
+async-trait = {workspace = true}
+jsonrpsee = {workspace = true}
+serde_json = {workspace = true}
+
+alloy-rlp = {workspace = true}
+
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tempfile = "3.10"
+anyhow = {workspace = true}

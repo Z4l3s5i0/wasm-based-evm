@@ -1,0 +1,28 @@
+[package]
+name = "wasix_eth_types"
+description = ""
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+
+[lints]
+workspace = true
+
+[dependencies]
+evm = {workspace = true}
+alloy-primitives = {workspace = true}
+alloy-trie = {workspace = true}
+alloy-consensus = {workspace = true}
+alloy-eips = {workspace = true}
+alloy-genesis = {workspace = true}
+alloy-rpc-types = {workspace = true}
+alloy-rlp = {workspace = true}
+crc = { workspace = true }
+anyhow = {workspace = true}
+async-trait = {workspace = true}
+serde ={workspace = true}
+serde_json = {workspace = true}
+
+jsonrpsee = {workspace = true}
+thiserror = {workspace = true}

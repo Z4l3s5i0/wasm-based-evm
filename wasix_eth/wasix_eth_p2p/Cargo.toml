@@ -1,0 +1,32 @@
+[package]
+name = "wasix_eth_p2p"
+description = ""
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+
+[lints]
+workspace = true
+
+[dependencies]
+wasix_eth_types = { workspace = true }
+wasix_eth_utils = { workspace = true }
+wasix_eth_storage = { workspace = true }
+wasix_eth_core = { workspace = true }
+anyhow = {workspace = true}
+tokio = {workspace = true}
+alloy-rlp = {workspace = true}
+async-trait = {workspace = true}
+k256 = {workspace = true}
+getrandom = {workspace = true}
+aes = { workspace = true }
+ctr = { workspace = true }
+sha3 = {workspace = true}
+sha2 = { workspace = true }
+snap = { workspace = true }
+hmac = {workspace = true}
+rand = { workspace = true }
+hex = { workspace = true }
+alloy-primitives = {workspace = true}
+base64 = { workspace = true }

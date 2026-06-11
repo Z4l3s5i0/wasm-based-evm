@@ -1,0 +1,27 @@
+[package]
+name = "wasix_eth_sync"
+description = ""
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+
+[lints]
+workspace = true
+
+[dependencies]
+wasix_eth_types = { workspace = true }
+wasix_eth_utils = { workspace = true }
+wasix_eth_core = { workspace = true }
+wasix_eth_storage = { workspace = true }
+wasix_eth_execution = { workspace = true }
+alloy-consensus = { workspace = true }
+alloy-primitives = { workspace = true }
+alloy-rpc-types = { workspace = true }
+alloy-rlp = { workspace = true }
+anyhow = { workspace = true }
+tokio = { workspace = true }
+rand = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+tempfile = "3.10"

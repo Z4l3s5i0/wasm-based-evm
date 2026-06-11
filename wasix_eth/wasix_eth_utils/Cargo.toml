@@ -1,0 +1,26 @@
+[package]
+name = "wasix_eth_utils"
+description = ""
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+
+[lints]
+workspace = true
+
+[dependencies]
+wasix_eth_types = {workspace = true}
+
+once_cell = {workspace = true}
+chrono = {workspace = true}
+lazy_static = {workspace = true}
+prometheus = {workspace = true}
+
+ecies = {workspace = true}
+alloy-rpc-types = {workspace = true}
+alloy-rlp = {workspace = true}
+k256 = {workspace = true}
+anyhow = {workspace = true}
+serde_json = {workspace = true}
+

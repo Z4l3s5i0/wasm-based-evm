@@ -1,0 +1,31 @@
+[package]
+name = "wasix_eth_execution"
+description = ""
+version.workspace = true
+authors.workspace = true
+edition.workspace = true
+
+
+[lints]
+workspace = true
+
+[dependencies]
+wasix_eth_types = { workspace = true }
+wasix_eth_storage = {workspace = true}
+wasix_eth_utils = { workspace = true }
+anyhow = { workspace = true }
+
+evm = {workspace = true}
+evm-precompile = {workspace = true}
+
+alloy-rlp = { workspace = true }
+alloy-primitives = {workspace = true }
+alloy-trie = {workspace = true}
+alloy-eips = { workspace = true }
+sha2 = { workspace = true }
+
+[target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
+serde_json = { workspace = true }
+tempfile = "3.10"
+evm-interpreter = { workspace = true}
+tokio = { workspace = true, features = ["macros", "rt"] }
