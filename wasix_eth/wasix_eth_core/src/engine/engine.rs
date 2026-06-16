@@ -457,7 +457,7 @@ impl Engine {
         // 1. We already determined head_status above
         let status = head_status.clone();
 
-        if status.status != PayloadStatusEnum::Valid && status.status != PayloadStatusEnum::Syncing && status.status != PayloadStatusEnum::Accepted {
+        if status.status != PayloadStatusEnum::Valid && status.status != PayloadStatusEnum::Syncing {
              // Rollback forkchoice in storage if the new head is explicitly invalid
              let _ = self.write_storage.update_forkchoice(old_head, old_safe, old_finalized);
              return Ok(ForkchoiceUpdated {
@@ -466,8 +466,8 @@ impl Engine {
             });
         }
 
-        // Update metrics and handle canonical chain events if VALID, SYNCING or ACCEPTED
-        if status.status == PayloadStatusEnum::Valid || status.status == PayloadStatusEnum::Syncing || status.status == PayloadStatusEnum::Accepted {
+        // Update metrics and handle canonical chain events if VALID or SYNCING
+        if status.status == PayloadStatusEnum::Valid || status.status == PayloadStatusEnum::Syncing {
             if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))) {
                 if status.status == PayloadStatusEnum::Valid {
                     // 1. Identify newly canonical blocks and handle reorgs
@@ -540,8 +540,8 @@ impl Engine {
             }
         }
 
-        // 2. Build payload if requested and status is VALID, SYNCING or ACCEPTED
-        let (status, payload_id) = if status.status == PayloadStatusEnum::Valid || ( (status.status == PayloadStatusEnum::Syncing || status.status == PayloadStatusEnum::Accepted) && payload_attributes.is_some()) {
+        // 2. Build payload if requested and status is VALID (or SYNCING)
+        let (status, payload_id) = if status.status == PayloadStatusEnum::Valid || (status.status == PayloadStatusEnum::Syncing && payload_attributes.is_some()) {
             if let Some(attr) = payload_attributes {
                 match self.build_new_payload(forkchoice_state.head_block_hash, attr, &status).await {
                     Ok(id) => (status, id),

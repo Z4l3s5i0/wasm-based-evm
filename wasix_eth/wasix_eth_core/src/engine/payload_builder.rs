@@ -55,8 +55,8 @@ impl PayloadBuilder {
         attr: PayloadAttributes,
         status: &PayloadStatus,
     ) -> RpcResult<Option<PayloadId>> {
-        if status.status == PayloadStatusEnum::Syncing || status.status == PayloadStatusEnum::Accepted {
-            debug!("[PayloadBuilder] Cannot build payload: head block missing (status is Syncing or Accepted)");
+        if status.status == PayloadStatusEnum::Syncing {
+            debug!("[PayloadBuilder] Cannot build payload: head block missing (status is Syncing)");
             return Ok(None);
         }
 
