@@ -95,12 +95,8 @@ impl PayloadProcessor {
 
 
     pub async fn validate_parent_block(&self, parent_hash: B256) -> Option<PayloadStatus> {
-        let genesis_hash = self.read_storage.block_hash(0).ok().flatten();
-        let is_genesis = if let Some(gen_hash) = genesis_hash {
-            parent_hash == gen_hash
-        } else {
-            false
-        };
+        let is_genesis = self.read_storage.is_canonical(parent_hash).unwrap_or(false) &&
+            self.read_storage.block_number(parent_hash).ok().flatten() == Some(0);
 
         // 1. Check if parent is known to be invalid
         if self.chain.is_invalid(parent_hash).await {
@@ -163,7 +159,7 @@ impl PayloadProcessor {
 
         if self.read_storage.header(BlockId::Hash(RpcBlockHash::from(parent_hash))).ok().flatten().is_none() {
             if !is_genesis {
-                debug!("[PayloadProcessor] Parent block not found: requested_parent={:?}", parent_hash);
+                debug!("[PayloadProcessor] Parent block not found in storage: requested_parent={:?}", parent_hash);
                 
                 self.chain.add_sync_target(parent_hash, None).await;
                 if let Err(e) = self.chain.trigger_sync().await {
@@ -194,25 +190,30 @@ impl PayloadProcessor {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
             ..Default::default()
         });
-
-        // 1. Cancun validation
+        // 2. Cancun validation
         if let Err(e) = self.consensus.validate_cancun(&block, expected_blob_versioned_hashes.as_deref()) {
             error!("[PayloadProcessor] Cancun validation failed: {}", e);
-            // EIP-4844: "Client software SHOULD NOT permanently blacklist the block hash if it is rejected due to a mismatch between 
+            // EIP-4844: "Client software SHOULD NOT permanently blacklist the block hash if it is rejected due to a mismatch between
             // expected_blob_versioned_hashes and the actual hashes in the block."
-            
+
             // If the block is already known to be valid in storage, we MUST NOT mark it as invalid or remove it.
             // We just return INVALID for THIS call.
             if let Ok(Some(existing_header)) = self.read_storage.header(BlockId::Hash(actual_hash.into())) {
-                 if existing_header.hash_slow() == actual_hash {
-                     return Ok(PayloadStatus {
-                         status: PayloadStatusEnum::Invalid { validation_error: e },
-                         latest_valid_hash: Some(actual_hash),
-                     });
-                 }
+                if existing_header.hash_slow() == actual_hash {
+                    return Ok(PayloadStatus {
+                        status: PayloadStatusEnum::Invalid { validation_error: e },
+                        latest_valid_hash: Some(actual_hash),
+                    });
+                }
             }
 
-            self.chain.add_invalid_block(actual_hash, parent_hash).await;
+            // Only blacklist if we are sure about the parent.
+            let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
+            let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+            if parent_is_canonical || parent_is_finalized {
+                self.chain.add_invalid_block(actual_hash, parent_hash).await;
+            }
+
             let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
             let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
             return Ok(PayloadStatus {
@@ -220,8 +221,58 @@ impl PayloadProcessor {
                 latest_valid_hash: latest_valid,
             });
         }
+        // 1. Validate parent block
+        if let Some(status) = self.validate_parent_block(parent_hash).await {
+            if status.status != PayloadStatusEnum::Syncing && status.status != PayloadStatusEnum::Accepted {
+                // If the parent is marked INVALID, we should only blacklist this block if the parent is canonical OR if it was already marked invalid by a canonical chain reorg.
+                let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
+                let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+                
+                //if parent_is_canonical || parent_is_finalized {
+                    self.chain.add_invalid_block(actual_hash, parent_hash).await;
 
-        // 2. Beacon root validation
+                    // Recursive invalidation
+                    let self_clone = self.clone();
+                    tokio::spawn(async move {
+                        self_clone.invalidate_descendants(actual_hash).await;
+                    });
+                //}
+
+                let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
+                return Ok(PayloadStatus {
+                    status: status.status,
+                    latest_valid_hash: latest_valid,
+                });
+            }
+
+            if status.status == PayloadStatusEnum::Accepted || status.status == PayloadStatusEnum::Syncing {
+                debug!("[PayloadProcessor] Parent unknown for block {:?}, buffering in orphan pool", actual_hash);
+                {
+                    let mut pool = self.orphan_pool.write().unwrap();
+
+                    let children = pool.entry(parent_hash).or_default();
+                    if !children.iter().any(|b| b.header.hash_slow() == actual_hash) {
+                        children.push(block);
+                        self.orphan_child_to_parent.write().unwrap().insert(actual_hash, parent_hash);
+                    }
+
+                    if pool.len() > 64 {
+                        if let Some(key) = pool.keys().next().cloned() {
+                            if let Some(removed_children) = pool.remove(&key) {
+                                for child in removed_children {
+                                    self.orphan_child_to_parent.write().unwrap().remove(&child.header.hash_slow());
+                                }
+                            }
+                        }
+                    }
+                }
+                return Ok(status);
+            }
+        }
+
+
+
+        // 3. Beacon root validation
         if let Err(e) = self.consensus.validate_parent_beacon_block_root(&block.header, parent_beacon_block_root) {
              error!("[PayloadProcessor] Beacon root validation failed: {}", e);
              
@@ -235,56 +286,19 @@ impl PayloadProcessor {
                   }
              }
 
-             self.chain.add_invalid_block(actual_hash, parent_hash).await;
+             // Only blacklist if we are sure about the parent.
+             let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
+             let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+             if parent_is_canonical || parent_is_finalized {
+                 self.chain.add_invalid_block(actual_hash, parent_hash).await;
+             }
+             
              let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
              let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
              return Ok(PayloadStatus {
                 status: PayloadStatusEnum::Invalid { validation_error: e },
                 latest_valid_hash: latest_valid,
             });
-        }
-
-        // 3. Validate parent block
-        if let Some(status) = self.validate_parent_block(parent_hash).await {
-            if status.status != PayloadStatusEnum::Syncing {
-                self.chain.add_invalid_block(actual_hash, parent_hash).await;
-                
-                // Recursive invalidation
-                let self_clone = self.clone();
-                tokio::spawn(async move {
-                    self_clone.invalidate_descendants(actual_hash).await;
-                });
-
-                let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
-                return Ok(PayloadStatus {
-                    status: status.status,
-                    latest_valid_hash: latest_valid,
-                });
-            }
-            
-            if status.status == PayloadStatusEnum::Syncing {
-                debug!("[PayloadProcessor] Parent unknown for block {:?}, buffering in orphan pool", actual_hash);
-                {
-                    let mut pool = self.orphan_pool.write().unwrap();
-                    
-                    let children = pool.entry(parent_hash).or_default();
-                    if !children.iter().any(|b| b.header.hash_slow() == actual_hash) {
-                        children.push(block);
-                        self.orphan_child_to_parent.write().unwrap().insert(actual_hash, parent_hash);
-                    }
-                    
-                    if pool.len() > 64 {
-                        if let Some(key) = pool.keys().next().cloned() {
-                            if let Some(removed_children) = pool.remove(&key) {
-                                for child in removed_children {
-                                    self.orphan_child_to_parent.write().unwrap().remove(&child.header.hash_slow());
-                                }
-                            }
-                        }
-                    }
-                }
-                return Ok(status);
-            }
         }
 
         // 5. Check if block is already known and validated
@@ -300,11 +314,42 @@ impl PayloadProcessor {
              }
         }
 
-        let parent_header = self.read_storage.header(BlockId::Hash(parent_hash.into())).ok().flatten();
+        // Before executing, check if parent header is available.
+        // We don't need it to be canonical to execute, we just need the header/state.
+        let parent_header = self.get_header_from_anywhere(parent_hash).await;
+        
+        // If header not in DB or map, check if it's currently being processed
+        let parent_header = if parent_header.is_none() {
+             let processing = self.processing_payloads.read().unwrap();
+             if processing.contains(&parent_hash) {
+                  // If it's being processed, we can't get its header yet but we know it's coming.
+                  // We return SYNCING and the CL will retry.
+                  debug!("[PayloadProcessor] Parent block {:?} is currently being processed. Returning SYNCING.", parent_hash);
+                  return Ok(PayloadStatus {
+                      status: PayloadStatusEnum::Syncing,
+                      latest_valid_hash: None,
+                  });
+             }
+             None
+        } else {
+             parent_header
+        };
+
+        if parent_header.is_none() {
+            debug!("[PayloadProcessor] Parent block {:?} header not found anywhere. Returning SYNCING to trigger discovery.", parent_hash);
+            return Ok(PayloadStatus {
+                status: PayloadStatusEnum::Syncing,
+                latest_valid_hash: None,
+            });
+        }
+
         if let Some(parent) = &parent_header {
             if let Err(e) = self.consensus.validate_header(&block.header, parent, &chain_config) {
                 error!("[PayloadProcessor] Header validation failed: {}", e);
+                // Header validation is structural/independent of state.
+                // We SHOULD blacklist if header validation fails, as it's inherent to the block.
                 self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                
                 let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
                 let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
                 return Ok(PayloadStatus {
@@ -326,7 +371,17 @@ impl PayloadProcessor {
             Ok(res) => res,
             Err(e) => {
                 error!("[PayloadProcessor] Execution failed for block {}: {}", block.header.number, e);
-                self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                
+                // For execution errors (state dependent), we should be careful about blacklisting 
+                // if we might be on a side-branch or syncing.
+                // We blacklist if the parent is canonical OR if it's finalized.
+                let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
+                let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+                
+                if parent_is_canonical || parent_is_finalized {
+                    self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                }
+                
                 let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
                 let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
                 return Ok(PayloadStatus {
@@ -345,7 +400,7 @@ impl PayloadProcessor {
             }
             bloom
         };
-        if let Err(e) = self.consensus.validate_block_post_execution(
+            if let Err(e) = self.consensus.validate_block_post_execution(
             &final_block,
             cumulative_gas_used,
             proofs::calculate_receipt_root(&receipts),
@@ -353,7 +408,13 @@ impl PayloadProcessor {
             final_block.header.state_root
         ) {
             error!("[PayloadProcessor] Post-execution validation failed for block {}: {}", block_number, e);
-            self.chain.add_invalid_block(actual_hash, parent_hash).await;
+            
+            let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
+            let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+            if parent_is_canonical || parent_is_finalized {
+                self.chain.add_invalid_block(actual_hash, parent_hash).await;
+            }
+            
             let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
             let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
             return Ok(PayloadStatus {
