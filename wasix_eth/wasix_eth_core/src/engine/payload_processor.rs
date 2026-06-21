@@ -17,7 +17,7 @@ use crate::engine::engine::EngineEvent;
 
 #[derive(Clone)]
 pub struct PayloadProcessor {
-    pub orphan_pool: Arc<std::sync::RwLock<HashMap<B256, Vec<Block<Transaction>>>>>,
+    pub orphan_pool: Arc<std::sync::RwLock<HashMap<B256, Vec<(Block<Transaction>, Option<Vec<B256>>, Option<B256>)>>>>,
     pub orphan_child_to_parent: Arc<std::sync::RwLock<HashMap<B256, B256>>>,
     pub processing_payloads: Arc<std::sync::RwLock<HashSet<B256>>>,
     pub consensus: Arc<dyn Consensus>,
@@ -39,7 +39,7 @@ impl PayloadProcessor {
         let actual_hash = block.header.hash_slow();
         if actual_hash != expected_block_hash {
             return Ok(PayloadStatus {
-                status: PayloadStatusEnum::Invalid { validation_error: format!("Block hash mismatch: expected {:?}, got {:?}", expected_block_hash, actual_hash) },
+                status: PayloadStatusEnum::Invalid { validation_error: "INVALID_BLOCK_HASH".to_string() },
                 latest_valid_hash: None,
             });
         }
@@ -58,6 +58,12 @@ impl PayloadProcessor {
         }
 
         let result = self.new_payload_internal_inner(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
+
+        if let Ok(ref status) = result {
+            if status.status == PayloadStatusEnum::Valid {
+                self.revalidate_dependent_payloads(actual_hash).await;
+            }
+        }
 
         {
             let mut processing = self.processing_payloads.write().unwrap();
@@ -82,7 +88,7 @@ impl PayloadProcessor {
         {
             let pool = self.orphan_pool.read().unwrap();
             for children in pool.values() {
-                for block in children {
+                for (block, _, _) in children {
                     if block.header.hash_slow() == hash {
                         return Some(block.header.clone());
                     }
@@ -200,9 +206,10 @@ impl PayloadProcessor {
             // We just return INVALID for THIS call.
             if let Ok(Some(existing_header)) = self.read_storage.header(BlockId::Hash(actual_hash.into())) {
                 if existing_header.hash_slow() == actual_hash {
+                    let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
                     return Ok(PayloadStatus {
                         status: PayloadStatusEnum::Invalid { validation_error: e },
-                        latest_valid_hash: Some(actual_hash),
+                        latest_valid_hash: latest_valid,
                     });
                 }
             }
@@ -251,15 +258,15 @@ impl PayloadProcessor {
                     let mut pool = self.orphan_pool.write().unwrap();
 
                     let children = pool.entry(parent_hash).or_default();
-                    if !children.iter().any(|b| b.header.hash_slow() == actual_hash) {
-                        children.push(block);
+                    if !children.iter().any(|(b, _, _)| b.header.hash_slow() == actual_hash) {
+                        children.push((block, expected_blob_versioned_hashes, parent_beacon_block_root));
                         self.orphan_child_to_parent.write().unwrap().insert(actual_hash, parent_hash);
                     }
 
                     if pool.len() > 64 {
                         if let Some(key) = pool.keys().next().cloned() {
                             if let Some(removed_children) = pool.remove(&key) {
-                                for child in removed_children {
+                                for (child, _, _) in removed_children {
                                     self.orphan_child_to_parent.write().unwrap().remove(&child.header.hash_slow());
                                 }
                             }
@@ -279,9 +286,10 @@ impl PayloadProcessor {
              // Same logic as Cancun validation: do not blacklist if already known.
              if let Ok(Some(existing_header)) = self.read_storage.header(BlockId::Hash(actual_hash.into())) {
                   if existing_header.hash_slow() == actual_hash {
+                      let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
                       return Ok(PayloadStatus {
                           status: PayloadStatusEnum::Invalid { validation_error: e },
-                          latest_valid_hash: Some(actual_hash),
+                          latest_valid_hash: latest_valid,
                       });
                   }
              }
@@ -302,26 +310,23 @@ impl PayloadProcessor {
         }
 
         // 5. Check if block is already known and validated
-        if let Ok(Some(existing_header)) = self.read_storage.header(BlockId::Hash(actual_hash.into())) {
-             let existing_hash = existing_header.hash_slow();
-             if existing_hash == actual_hash {
-                 // Even if known, we MUST ensure it passes Cancun and beacon root validation for THIS call.
-                 // We already did that above.
-                 return Ok(PayloadStatus {
-                     status: PayloadStatusEnum::Valid,
-                     latest_valid_hash: Some(actual_hash),
-                 });
-             }
+        if let Ok(Some(_)) = self.read_storage.block_body_by_hash(actual_hash) {
+             // Even if known, we MUST ensure it passes Cancun and beacon root validation for THIS call.
+             // We already did that above.
+             return Ok(PayloadStatus {
+                 status: PayloadStatusEnum::Valid,
+                 latest_valid_hash: Some(actual_hash),
+             });
         }
 
-        // Before executing, check if parent header is available.
-        // We don't need it to be canonical to execute, we just need the header/state.
-        let parent_header = self.get_header_from_anywhere(parent_hash).await;
+        // Before executing, check if parent header is available in storage.
+        // We MUST NOT proceed to execution if the parent is only in the orphan pool or payload map,
+        // because its state root hasn't been fully processed and committed to the database yet.
+        let parent_header_in_storage = self.read_storage.header(BlockId::Hash(parent_hash.into())).ok().flatten();
         
-        // If header not in DB or map, check if it's currently being processed
-        let parent_header = if parent_header.is_none() {
-             let processing = self.processing_payloads.read().unwrap();
-             if processing.contains(&parent_hash) {
+        // If header not in storage, check if it's currently being processed or available elsewhere.
+        let parent_header = if parent_header_in_storage.is_none() {
+             if self.processing_payloads.read().unwrap().contains(&parent_hash) {
                   // If it's being processed, we can't get its header yet but we know it's coming.
                   // We return SYNCING and the CL will retry.
                   debug!("[PayloadProcessor] Parent block {:?} is currently being processed. Returning SYNCING.", parent_hash);
@@ -330,9 +335,38 @@ impl PayloadProcessor {
                       latest_valid_hash: None,
                   });
              }
+
+             // If parent is found in the orphan pool or as a pending payload, we must buffer this child and return ACCEPTED.
+             if let Some(anywhere_header) = self.get_header_from_anywhere(parent_hash).await {
+                  debug!("[PayloadProcessor] Parent block {:?} found in orphan pool or payload map. Buffering block {:?} and returning ACCEPTED.", parent_hash, actual_hash);
+                  
+                  // Even if we don't execute, we should validate the header if we have the parent header to return INVALID early if possible.
+                  if let Err(e) = self.consensus.validate_header(&block.header, &anywhere_header, &chain_config) {
+                      error!("[PayloadProcessor] Header validation failed for buffered block: {}", e);
+                      self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                      let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
+                      return Ok(PayloadStatus {
+                          status: PayloadStatusEnum::Invalid { validation_error: e.to_string() },
+                          latest_valid_hash: latest_valid,
+                      });
+                  }
+
+                  {
+                      let mut pool = self.orphan_pool.write().unwrap();
+                      let children = pool.entry(parent_hash).or_default();
+                      if !children.iter().any(|(b, _, _)| b.header.hash_slow() == actual_hash) {
+                          children.push((block, expected_blob_versioned_hashes, parent_beacon_block_root));
+                          self.orphan_child_to_parent.write().unwrap().insert(actual_hash, parent_hash);
+                      }
+                  }
+                  return Ok(PayloadStatus {
+                      status: PayloadStatusEnum::Accepted,
+                      latest_valid_hash: None,
+                  });
+             }
              None
         } else {
-             parent_header
+             parent_header_in_storage
         };
 
         if parent_header.is_none() {
@@ -461,9 +495,6 @@ impl PayloadProcessor {
         // we should remove it from the invalid blocks list now that we've successfully validated and imported it.
         self.chain.remove_invalid_block(actual_hash).await;
 
-        // 8. Revalidate dependent payloads
-        self.revalidate_dependent_payloads(actual_hash).await;
-
         Ok(PayloadStatus {
             status: PayloadStatusEnum::Valid,
             latest_valid_hash: Some(actual_hash),
@@ -482,14 +513,31 @@ impl PayloadProcessor {
                 
                 if let Some(children_blocks) = children {
                     info!("[PayloadProcessor] Found {} dependent payloads for parent {:?}", children_blocks.len(), parent_hash);
-                    for block in children_blocks {
+                    for (block, expected_blobs, parent_beacon_root) in children_blocks {
                         let child_hash = block.header.hash_slow();
                         {
                             let mut child_to_parent = self.orphan_child_to_parent.write().unwrap();
                             child_to_parent.remove(&child_hash);
                         }
                         
-                        match self.new_payload_internal_inner(block, child_hash, None, None).await {
+                        // Mark as processing to avoid concurrent imports of the same block
+                        {
+                            let mut processing = self.processing_payloads.write().unwrap();
+                            if processing.contains(&child_hash) {
+                                debug!("[PayloadProcessor] Child block {:?} is already being processed, skipping revalidation", child_hash);
+                                continue;
+                            }
+                            processing.insert(child_hash);
+                        }
+
+                        let result = self.new_payload_internal_inner(block, child_hash, expected_blobs, parent_beacon_root).await;
+
+                        {
+                            let mut processing = self.processing_payloads.write().unwrap();
+                            processing.remove(&child_hash);
+                        }
+
+                        match result {
                             Ok(status) => {
                                 if status.status == PayloadStatusEnum::Valid {
                                     parents_to_process.push(child_hash);
@@ -517,7 +565,7 @@ impl PayloadProcessor {
                 
                 if let Some(children_blocks) = children {
                     debug!("[PayloadProcessor] Invalidating {} dependent payloads for invalid parent {:?}", children_blocks.len(), parent_hash);
-                    for block in children_blocks {
+                    for (block, _, _) in children_blocks {
                         let child_hash = block.header.hash_slow();
                         {
                             let mut child_to_parent = self.orphan_child_to_parent.write().unwrap();
