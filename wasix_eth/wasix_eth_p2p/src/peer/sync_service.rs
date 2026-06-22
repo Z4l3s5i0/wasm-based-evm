@@ -64,7 +64,10 @@ impl SyncService {
         tokio::spawn(async move {
             let mut rx = service.peer_gossip_rx.lock().await.take().expect("Gossip already started");
             while let Some(msg) = rx.recv().await {
-                service.handle_peer_gossip(msg).await;
+                let service = service.clone();
+                tokio::spawn(async move {
+                    service.handle_peer_gossip(msg).await;
+                });
             }
         });
     }

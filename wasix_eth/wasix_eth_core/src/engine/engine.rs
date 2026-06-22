@@ -173,23 +173,15 @@ impl Engine {
             while let Ok(event) = event_rx.recv().await {
                 if let EngineEvent::NewTransaction(tx) = event {
                     if tx.is_eip4844() {
-                        let is_sidecar_available = if let Transaction::Eip4844(signed_tx) = &tx {
-                            signed_tx.tx().sidecar().as_ref().map(|s| s.is_eip4844()).unwrap_or(false)
-                        } else {
-                            false
-                        };
-                        
-                        if is_sidecar_available {
-                            let head_hash = engine_clone.read_storage.forkchoice("head").ok().flatten().unwrap_or_default();
-                            let active_ids = engine_clone.read_storage.all_payload_ids();
-                            for payload_id in active_ids {
-                                if let Some((payload_block, _, _bundle)) = engine_clone.read_storage.get_payload(&payload_id) {
-                                    if payload_block.header.parent_hash == head_hash {
-                                        let builder = engine_clone.payload_builder.clone();
-                                        tokio::spawn(async move {
-                                            let _ = builder.maybe_rebuild_payload(payload_id).await;
-                                        });
-                                    }
+                        let head_hash = engine_clone.read_storage.forkchoice("head").ok().flatten().unwrap_or_default();
+                        let active_ids = engine_clone.read_storage.all_payload_ids();
+                        for payload_id in active_ids {
+                            if let Some((payload_block, _, _bundle)) = engine_clone.read_storage.get_payload(&payload_id) {
+                                if payload_block.header.parent_hash == head_hash {
+                                    let builder = engine_clone.payload_builder.clone();
+                                    tokio::spawn(async move {
+                                        let _ = builder.maybe_rebuild_payload(payload_id).await;
+                                    });
                                 }
                             }
                         }

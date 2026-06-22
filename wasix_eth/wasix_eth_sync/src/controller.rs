@@ -5,8 +5,9 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types::SyncInfo;
 use alloy_rpc_types::engine::ForkchoiceState;
 use wasix_eth_storage::read::DatabaseReadProvider;
-use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider};
+use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
 use wasix_eth_core::{ChainManager, InvalidationReason};
+use wasix_eth_core::mempool::mempool_provider::MempoolProvider;
 use wasix_eth_types::sync::{SyncProvider, PeerProvider};
 use wasix_eth_types::{async_trait, SyncStatus, Transaction, Block, Hardfork, ChainConfig};
 use wasix_eth_utils::metrics::SYNC_STATUS;
@@ -14,6 +15,7 @@ use wasix_eth_utils::{debug, error, info};
 
 pub struct SyncController {
     read_storage: DatabaseReadProvider,
+    mempool: Arc<dyn MempoolProvider>,
     downloader: Downloader,
     processor: BlockProcessor,
     chain_manager: Arc<dyn ChainManager>,
@@ -26,9 +28,11 @@ impl SyncController {
         peer_provider: Arc<dyn PeerProvider>,
         processor: BlockProcessor,
         chain_manager: Arc<dyn ChainManager>,
+        mempool: Arc<dyn MempoolProvider>,
     ) -> Self {
         Self {
             read_storage: read_storage.clone(),
+            mempool,
             downloader: Downloader::new(peer_provider),
             processor,
             chain_manager,
@@ -389,7 +393,24 @@ impl SyncProvider for SyncController {
     }
 
     async fn handle_announced_pooled_transactions(&self, peer_id: String, hashes: Vec<B256>) -> wasix_eth_types::Result<()> {
-        let txs = self.downloader.download_pooled_transactions(&peer_id, hashes).await
+        let mut hashes_to_download = Vec::with_capacity(hashes.len());
+        for hash in hashes {
+            // Skip if already in mempool
+            if self.mempool.get_transaction(hash).await.is_some() {
+                continue;
+            }
+            // Skip if already on-chain
+            if self.read_storage.transaction(hash).unwrap_or_default().is_some() {
+                continue;
+            }
+            hashes_to_download.push(hash);
+        }
+
+        if hashes_to_download.is_empty() {
+            return Ok(());
+        }
+
+        let txs = self.downloader.download_pooled_transactions(&peer_id, hashes_to_download).await
             .map_err(|e| wasix_eth_types::error::RpcError::Internal(format!("Failed to download pooled transactions: {}", e)))?;
         
         info!("[Sync] Downloaded {} pooled transactions from {}", txs.len(), peer_id);

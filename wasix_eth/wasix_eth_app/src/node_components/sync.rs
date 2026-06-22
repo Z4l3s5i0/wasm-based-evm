@@ -28,6 +28,7 @@ impl SyncPayload {
             peer_manager.registry.clone(),
             processor,
             chain_manager.clone(),
+            engine.mempool.clone(),
         ));
 
         sync_service.set_provider(sync_controller.clone()).await;
