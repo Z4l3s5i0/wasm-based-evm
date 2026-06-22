@@ -88,17 +88,6 @@ impl<'a> StateApplier<'a> {
             
             let previous = self.batch.storage(addr, slot_b256, state_root).unwrap_or_default();
 
-            debug!(
-                "[Execution] STORAGE DIFF:
-                    addr={:?}
-                    slot={:?}
-                    old={:?}
-                    new={:?}",
-                addr,
-                slot_b256,
-                previous,
-                val_u256,
-            );
             self.batch.update_storage(addr, slot_b256, val_u256)?;
         }
 

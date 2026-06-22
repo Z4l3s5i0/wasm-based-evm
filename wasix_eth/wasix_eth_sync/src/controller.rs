@@ -6,7 +6,7 @@ use alloy_rpc_types::SyncInfo;
 use alloy_rpc_types::engine::ForkchoiceState;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider};
-use wasix_eth_core::ChainManager;
+use wasix_eth_core::{ChainManager, InvalidationReason};
 use wasix_eth_types::sync::{SyncProvider, PeerProvider};
 use wasix_eth_types::{async_trait, SyncStatus, Transaction, Block, Hardfork, ChainConfig};
 use wasix_eth_utils::metrics::SYNC_STATUS;
@@ -193,7 +193,7 @@ impl SyncController {
                 self.chain_manager.add_sync_target(parent_hash, Some(peer_id.to_string())).await;
                 if let Err(e) = self.fetch_ancestors(peer_id, parent_hash, block_hash).await {
                     error!("[Sync] Failed to fetch ancestors: {}", e);
-                    self.chain_manager.add_invalid_block(block_hash, parent_hash).await;
+                    self.chain_manager.add_invalid_block(block_hash, parent_hash, InvalidationReason::Hard).await;
                     self.chain_manager.set_sync_status(SyncStatus::None).await;
                     return Err(e);
                 }
@@ -202,7 +202,7 @@ impl SyncController {
             if let Err(e) = self.processor.process_block(block.clone()).await {
                 error!("[Sync] Failed to process block {}: {}", block_num, e);
                 // Mark the block as invalid in ChainManager
-                self.chain_manager.add_invalid_block(block_hash, block.header.parent_hash).await;
+                self.chain_manager.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
                 
                 // Trigger recursive invalidation of orphans for this invalid block
                 self.processor.invalidate_descendants(block_hash).await;
@@ -251,9 +251,14 @@ impl SyncController {
             }
 
             // Check if it's known to be invalid
-            if self.chain_manager.is_invalid(current_hash).await {
-                self.chain_manager.add_invalid_block(requested_head, current_hash).await;
-                return Err(anyhow::anyhow!("Ancestor block {:?} is known to be invalid", current_hash));
+            if let Some(reason) = self.chain_manager.get_invalidation_reason(current_hash).await {
+                if reason == InvalidationReason::Hard {
+                    self.chain_manager.add_invalid_block(requested_head, current_hash, InvalidationReason::Hard).await;
+                    return Err(anyhow::anyhow!("Ancestor block {:?} is known to be invalid (Hard)", current_hash));
+                } else {
+                    debug!("[Sync] Ancestor block {:?} was marked as Soft invalid, attempting retry", current_hash);
+                    self.chain_manager.remove_invalid_block(current_hash).await;
+                }
             }
 
             debug!("[Sync] Fetching ancestor block {:?}", current_hash);
@@ -282,11 +287,11 @@ impl SyncController {
             if let Err(e) = self.processor.process_block(block).await {
                 error!("[Sync] Failed to process ancestor block {}: {}", block_num, e);
                 // Mark block as invalid
-                self.chain_manager.add_invalid_block(block_hash, parent_hash).await;
+                self.chain_manager.add_invalid_block(block_hash, parent_hash, InvalidationReason::Hard).await;
                 
                 // Immediately mark the requested head as invalid too
                 if requested_head != block_hash {
-                    self.chain_manager.add_invalid_block(requested_head, block_hash).await;
+                    self.chain_manager.add_invalid_block(requested_head, block_hash, InvalidationReason::Hard).await;
                 }
 
                 // Trigger recursive invalidation of orphans for this invalid ancestor

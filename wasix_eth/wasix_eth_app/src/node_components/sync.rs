@@ -30,6 +30,8 @@ impl SyncPayload {
             chain_manager.clone(),
         ));
 
+        sync_service.set_provider(sync_controller.clone()).await;
+
         let sync_ctrl = sync_controller.clone();
         chain_manager.set_sync_trigger(Box::new(move || {
             let ctrl = sync_ctrl.clone();

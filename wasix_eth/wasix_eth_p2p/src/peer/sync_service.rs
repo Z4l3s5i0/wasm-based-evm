@@ -1,7 +1,7 @@
 use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, RwLock};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_types::{ConsensusTransaction, Typed2718};
 use alloy_rlp::Encodable;
@@ -22,7 +22,7 @@ pub const MAX_PEERS: usize = 50;
 
 #[derive(Clone)]
 pub struct SyncService {
-    sync: Arc<dyn SyncProvider>,
+    sync: Arc<RwLock<Arc<dyn SyncProvider>>>,
     read_provider: DatabaseReadProvider,
     mempool: Arc<dyn MempoolProvider>,
     peer_manager: Arc<PeerManager>,
@@ -41,7 +41,7 @@ impl SyncService {
         let (peer_gossip_tx, peer_gossip_rx) = mpsc::channel(100);
         
         let service = Self {
-            sync,
+            sync: Arc::new(RwLock::new(sync)),
             read_provider,
             mempool,
             peer_manager,
@@ -50,6 +50,10 @@ impl SyncService {
         };
 
         service
+    }
+
+    pub async fn set_provider(&self, sync: Arc<dyn SyncProvider>) {
+        *self.sync.write().await = sync;
     }
 
     pub async fn start(&self) {
@@ -69,15 +73,18 @@ impl SyncService {
         match msg {
             GossipMessage::NewBlock(peer_id, m) => {
                 info!("[Sync Service] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), peer_id);
-                let _ = self.sync.process_gossip_block(m.block, m.total_difficulty).await;
+                let sync = self.sync.read().await;
+                let _ = sync.process_gossip_block(m.block, m.total_difficulty).await;
             }
             GossipMessage::Transactions(peer_id, m) => {
                 info!("[Sync Service] Received {} Transactions from {}", m.0.len(), peer_id);
-                let _ = self.sync.process_gossip_transactions(m.0).await;
+                let sync = self.sync.read().await;
+                let _ = sync.process_gossip_transactions(m.0).await;
             }
             GossipMessage::NewPooledTransactionHashes(peer_id, m) => {
                 info!("[Sync Service] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), peer_id);
-                if let Err(e) = self.sync.handle_announced_pooled_transactions(peer_id, m.hashes).await {
+                let sync = self.sync.read().await;
+                if let Err(e) = sync.handle_announced_pooled_transactions(peer_id, m.hashes).await {
                     error!("[Sync Service] Failed to handle announced pooled transactions: {}", e);
                 }
             }
@@ -174,7 +181,7 @@ impl SyncService {
                     if let TxPooledEnvelope::Eip4844(s) = &pooled {
                          let inner_tx = s.tx();
                          let sidecar = &inner_tx.sidecar;
-                         info!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
+                         info!("[Sync] Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
                     }
                 }
                 txs.push(pooled);
@@ -230,7 +237,7 @@ impl SyncService {
                                 if let TxPooledEnvelope::Eip4844(s) = &pooled {
                                      let inner_tx = s.tx();
                                      let sidecar = &inner_tx.sidecar;
-                                     info!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
+                                     info!("[Sync] Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
                                 }
                             }
                             
@@ -309,7 +316,10 @@ impl SyncService {
     pub fn dial_peer(&self, addr: SocketAddr) {
         self.peer_manager.dialer.dial_peer(addr);
     }
-    pub async fn trigger_sync(&self) -> Result<()> { self.sync.trigger_sync().await }
+    pub async fn trigger_sync(&self) -> Result<()> {
+        let sync = self.sync.read().await;
+        sync.trigger_sync().await
+    }
 
     pub async fn get_block(&self, id: BlockId) -> Result<Option<Block<Transaction>>> {
         self.read_provider.block(id)

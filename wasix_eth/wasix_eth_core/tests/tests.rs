@@ -206,7 +206,8 @@ mod tests {
         let parent_hash = B256::repeat_byte(0xCC);
         
         // Mark the block as invalid
-        engine.chain.add_invalid_block(invalid_hash, parent_hash).await;
+        use wasix_eth_core::InvalidationReason;
+        engine.chain.add_invalid_block(invalid_hash, parent_hash, InvalidationReason::Hard).await;
         
         let state = ForkchoiceState {
             head_block_hash: invalid_hash,

@@ -7,6 +7,14 @@ use wasix_eth_utils::{debug, info, warn};
 use alloy_rlp::Decodable;
 use std::collections::{HashMap, HashSet};
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum InvalidationReason {
+    /// Protocol violation, should never be retried.
+    Hard,
+    /// Transient error (e.g. missing blobs), can be retried.
+    Soft,
+}
+
 #[async_trait]
 pub trait ChainManager: Send + Sync {
     /// Returns the current synchronization status.
@@ -36,8 +44,11 @@ pub trait ChainManager: Send + Sync {
     /// Checks if the given block hash is known to be invalid.
     async fn is_invalid(&self, hash: B256) -> bool;
 
+    /// Gets the invalidation reason for a block.
+    async fn get_invalidation_reason(&self, hash: B256) -> Option<InvalidationReason>;
+
     /// Marks a block as invalid and stores its parent hash.
-    async fn add_invalid_block(&self, hash: B256, parent_hash: B256);
+    async fn add_invalid_block(&self, hash: B256, parent_hash: B256, reason: InvalidationReason);
 
     /// Removes a block from the invalid blocks list.
     async fn remove_invalid_block(&self, hash: B256);
@@ -95,7 +106,8 @@ impl ChainManager for NoopChainManager {
     }
     async fn set_sync_trigger(&self, _trigger: Box<dyn Fn() + Send + Sync>) {}
     async fn is_invalid(&self, _hash: B256) -> bool { false }
-    async fn add_invalid_block(&self, _hash: B256, _parent_hash: B256) {}
+    async fn get_invalidation_reason(&self, _hash: B256) -> Option<InvalidationReason> { None }
+    async fn add_invalid_block(&self, _hash: B256, _parent_hash: B256, _reason: InvalidationReason) {}
     async fn remove_invalid_block(&self, _hash: B256) {}
     async fn get_latest_valid_ancestor(&self, _hash: B256) -> Option<B256> { None }
     async fn add_sync_target(&self, _hash: B256, _peer_id: Option<String>) {}
@@ -132,7 +144,7 @@ pub struct ChainManagerImpl {
     sync_status: tokio::sync::RwLock<SyncStatus>,
     head_block: tokio::sync::RwLock<(B256, u64)>,
     sync_trigger: tokio::sync::RwLock<Option<Box<dyn Fn() + Send + Sync>>>,
-    invalid_blocks: tokio::sync::RwLock<HashMap<B256, B256>>,
+    invalid_blocks: tokio::sync::RwLock<HashMap<B256, (B256, InvalidationReason)>>,
     sync_targets: tokio::sync::RwLock<Vec<(B256, Option<String>)>>,
 }
 
@@ -270,9 +282,13 @@ impl ChainManager for ChainManagerImpl {
         self.invalid_blocks.read().await.contains_key(&hash)
     }
 
-    async fn add_invalid_block(&self, hash: B256, parent_hash: B256) {
+    async fn get_invalidation_reason(&self, hash: B256) -> Option<InvalidationReason> {
+        self.invalid_blocks.read().await.get(&hash).map(|(_, reason)| *reason)
+    }
+
+    async fn add_invalid_block(&self, hash: B256, parent_hash: B256, reason: InvalidationReason) {
         let mut invalid_blocks = self.invalid_blocks.write().await;
-        invalid_blocks.insert(hash, parent_hash);
+        invalid_blocks.insert(hash, (parent_hash, reason));
     }
 
     async fn remove_invalid_block(&self, hash: B256) {
@@ -326,7 +342,7 @@ impl ChainManager for ChainManagerImpl {
                 warn!("Cycle detected in invalid_blocks at hash {:?}", current);
                 return None;
             }
-            if let Some(parent) = invalid_blocks.get(&current) {
+            if let Some((parent, _)) = invalid_blocks.get(&current) {
                 current = *parent;
             } else {
                 break;

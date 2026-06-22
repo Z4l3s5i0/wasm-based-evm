@@ -1,5 +1,5 @@
 use futures_util::{future::BoxFuture, FutureExt};
-use crate::ChainManager;
+use crate::{ChainManager, InvalidationReason};
 use crate::Consensus;
 use alloy_rpc_types::RpcBlockHash;
 use std::collections::{HashMap, HashSet};
@@ -105,13 +105,21 @@ impl PayloadProcessor {
             self.read_storage.block_number(parent_hash).ok().flatten() == Some(0);
 
         // 1. Check if parent is known to be invalid
-        if self.chain.is_invalid(parent_hash).await {
-            let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
-            debug!("[PayloadProcessor] Parent block {:?} is known to be invalid. Latest valid ancestor: {:?}", parent_hash, latest_valid);
-            return Some(PayloadStatus {
-                status: PayloadStatusEnum::Invalid { validation_error: "Parent block is known to be invalid".to_string() },
-                latest_valid_hash: latest_valid,
-            });
+        if let Some(reason) = self.chain.get_invalidation_reason(parent_hash).await {
+            if reason == InvalidationReason::Hard {
+                let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
+                debug!("[PayloadProcessor] Parent block {:?} is known to be invalid (Hard). Latest valid ancestor: {:?}", parent_hash, latest_valid);
+                return Some(PayloadStatus {
+                    status: PayloadStatusEnum::Invalid { validation_error: "Parent block is known to be invalid".to_string() },
+                    latest_valid_hash: latest_valid,
+                });
+            } else {
+                debug!("[PayloadProcessor] Parent block {:?} was Soft invalid, returning SYNCING", parent_hash);
+                return Some(PayloadStatus {
+                    status: PayloadStatusEnum::Syncing,
+                    latest_valid_hash: self.chain.get_latest_valid_ancestor(parent_hash).await,
+                });
+            }
         }
 
         // 2. Check if ANY ancestor is invalid by walking back
@@ -126,28 +134,36 @@ impl PayloadProcessor {
                 let p_hash = current_header.parent_hash;
 
                 // Check if parent is marked as invalid
-                if self.chain.is_invalid(p_hash).await {
-                    let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
-                    debug!("[PayloadProcessor] Ancestor block {:?} at depth {} is known to be invalid. Latest valid ancestor: {:?}", p_hash, i, latest_valid);
-                    self.chain.add_invalid_block(current_hash, p_hash).await;
-                    
-                    // Trigger recursive invalidation of orphans
-                    let self_clone = self.clone();
-                    tokio::spawn(async move {
-                        self_clone.invalidate_descendants(current_hash).await;
-                    });
+                if let Some(reason) = self.chain.get_invalidation_reason(p_hash).await {
+                    if reason == InvalidationReason::Hard {
+                        let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
+                        debug!("[PayloadProcessor] Ancestor block {:?} at depth {} is known to be invalid (Hard). Latest valid ancestor: {:?}", p_hash, i, latest_valid);
+                        self.chain.add_invalid_block(current_hash, p_hash, InvalidationReason::Hard).await;
+                        
+                        // Trigger recursive invalidation of orphans
+                        let self_clone = self.clone();
+                        tokio::spawn(async move {
+                            self_clone.invalidate_descendants(current_hash).await;
+                        });
 
-                    return Some(PayloadStatus {
-                        status: PayloadStatusEnum::Invalid { validation_error: "Ancestor block is known to be invalid".to_string() },
-                        latest_valid_hash: latest_valid,
-                    });
+                        return Some(PayloadStatus {
+                            status: PayloadStatusEnum::Invalid { validation_error: "Ancestor block is known to be invalid".to_string() },
+                            latest_valid_hash: latest_valid,
+                        });
+                    } else {
+                        debug!("[PayloadProcessor] Ancestor block {:?} at depth {} was Soft invalid, returning SYNCING", p_hash, i);
+                        return Some(PayloadStatus {
+                            status: PayloadStatusEnum::Syncing,
+                            latest_valid_hash: self.chain.get_latest_valid_ancestor(p_hash).await,
+                        });
+                    }
                 }
 
                 // Check if this block is invalid relative to its parent header if we can find it
                 if let Some(p_header) = self.get_header_from_anywhere(p_hash).await {
                     if let Err(e) = self.consensus.validate_header(&current_header, &p_header, &chain_config) {
                         debug!("[PayloadProcessor] Ancestor block {:?} at depth {} failed header validation: {}. Latest valid ancestor: {:?}", current_hash, i, e, p_hash);
-                        self.chain.add_invalid_block(current_hash, p_hash).await;
+                        self.chain.add_invalid_block(current_hash, p_hash, InvalidationReason::Hard).await;
                         let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
                         return Some(PayloadStatus {
                             status: PayloadStatusEnum::Invalid { validation_error: format!("Ancestor header validation failed: {}", e) },
@@ -218,7 +234,7 @@ impl PayloadProcessor {
             let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
             let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
             if parent_is_canonical || parent_is_finalized {
-                self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Soft).await;
             }
 
             let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
@@ -236,7 +252,7 @@ impl PayloadProcessor {
                 let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
                 
                 //if parent_is_canonical || parent_is_finalized {
-                    self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                    self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
 
                     // Recursive invalidation
                     let self_clone = self.clone();
@@ -298,15 +314,15 @@ impl PayloadProcessor {
              let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
              let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
              if parent_is_canonical || parent_is_finalized {
-                 self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                 self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Soft).await;
              }
              
              let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
              let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
              return Ok(PayloadStatus {
-                status: PayloadStatusEnum::Invalid { validation_error: e },
-                latest_valid_hash: latest_valid,
-            });
+                 status: PayloadStatusEnum::Invalid { validation_error: e },
+                 latest_valid_hash: latest_valid,
+             });
         }
 
         // 5. Check if block is already known and validated
@@ -343,7 +359,7 @@ impl PayloadProcessor {
                   // Even if we don't execute, we should validate the header if we have the parent header to return INVALID early if possible.
                   if let Err(e) = self.consensus.validate_header(&block.header, &anywhere_header, &chain_config) {
                       error!("[PayloadProcessor] Header validation failed for buffered block: {}", e);
-                      self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                      self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
                       let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
                       return Ok(PayloadStatus {
                           status: PayloadStatusEnum::Invalid { validation_error: e.to_string() },
@@ -382,7 +398,7 @@ impl PayloadProcessor {
                 error!("[PayloadProcessor] Header validation failed: {}", e);
                 // Header validation is structural/independent of state.
                 // We SHOULD blacklist if header validation fails, as it's inherent to the block.
-                self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
                 
                 let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
                 let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
@@ -413,7 +429,7 @@ impl PayloadProcessor {
                 let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
                 
                 if parent_is_canonical || parent_is_finalized {
-                    self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                    self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
                 }
                 
                 let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
@@ -446,7 +462,7 @@ impl PayloadProcessor {
             let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
             let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
             if parent_is_canonical || parent_is_finalized {
-                self.chain.add_invalid_block(actual_hash, parent_hash).await;
+                self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
             }
             
             let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
@@ -573,7 +589,7 @@ impl PayloadProcessor {
                         }
                         
                         // Mark as invalid in chain manager
-                        self.chain.add_invalid_block(child_hash, parent_hash).await;
+                        self.chain.add_invalid_block(child_hash, parent_hash, InvalidationReason::Hard).await;
                         
                         // Recurse
                         parents_to_invalidate.push(child_hash);

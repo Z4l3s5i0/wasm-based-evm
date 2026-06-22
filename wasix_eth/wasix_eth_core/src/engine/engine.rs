@@ -1,5 +1,5 @@
 use crate::account_manager::AccountManager;
-use crate::chain_manager::ChainManager;
+use crate::{ChainManager, InvalidationReason};
 use crate::engine::payload_builder::PayloadBuilder;
 use crate::engine::payload_processor::PayloadProcessor;
 use crate::mempool::mempool_provider::MempoolProvider;
@@ -39,6 +39,7 @@ use wasix_eth_types::PayloadStatus;
 use wasix_eth_types::PayloadStatusEnum;
 use wasix_eth_types::Receipt;
 use wasix_eth_types::Transaction;
+use wasix_eth_types::ConsensusTransaction;
 use wasix_eth_types::B256;
 use wasix_eth_types::U256;
 use wasix_eth_types::{async_trait};
@@ -625,7 +626,26 @@ impl Engine {
             if let Ok(Some(block)) = self.read_storage.block_by_hash(discarded_hash) {
                 info!("[Engine] Re-adding {} transactions from discarded block #{} hash {:?}",
                                     block.body.transactions.len(), block.header.number, discarded_hash);
+                
+                let blobs_bundle = self.read_storage.get_payload_by_block_hash(discarded_hash).map(|(_, _, b)| b);
+                let mut blob_idx = 0;
+
                 for tx in block.body.transactions {
+                    if let Some(hashes) = tx.blob_versioned_hashes() {
+                        if let Some(bundle) = &blobs_bundle {
+                            for hash in hashes {
+                                if blob_idx < bundle.blobs.len() {
+                                    self.mempool.add_blob(
+                                        *hash,
+                                        bundle.blobs[blob_idx].clone(),
+                                        bundle.commitments[blob_idx],
+                                        bundle.proofs[blob_idx]
+                                    ).await;
+                                    blob_idx += 1;
+                                }
+                            }
+                        }
+                    }
                     all_discarded_txs.push(tx);
                 }
                 discarded_hash = block.header.parent_hash;
@@ -680,7 +700,7 @@ impl Engine {
         // 1. Validate body roots
         if let Err(e) = self.consensus.validate_body(&block, &chain_config) {
             error!("[Engine] Body validation failed for block {}: {}", block_num, e);
-            self.chain.add_invalid_block(block_hash, block.header.parent_hash).await;
+            self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
             self.payload_processor.revalidate_dependent_payloads(block_hash).await;
             return Err(anyhow::anyhow!("Body validation failed: {}", e));
         }
@@ -690,7 +710,7 @@ impl Engine {
             match status.status {
                 PayloadStatusEnum::Valid => {},
                 PayloadStatusEnum::Invalid { .. } => {
-                    self.chain.add_invalid_block(block_hash, block.header.parent_hash).await;
+                    self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
                     self.revalidate_dependent_payloads(block_hash).await;
                     return Err(anyhow::anyhow!("Parent block validation failed: {:?}", status.status));
                 }
@@ -701,7 +721,7 @@ impl Engine {
         // 2.5 Cancun validation (internal consistency only as we are in sync mode)
         if let Err(e) = self.consensus.validate_cancun(&block, None) {
             error!("[Engine] Cancun validation failed for block {}: {}", block_num, e);
-            self.chain.add_invalid_block(block_hash, block.header.parent_hash).await;
+            self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
             self.revalidate_dependent_payloads(block_hash).await;
             return Err(anyhow::anyhow!("Cancun validation failed: {}", e));
         }
@@ -709,7 +729,7 @@ impl Engine {
         // 2.6 Beacon root validation
         if let Err(e) = self.consensus.validate_parent_beacon_block_root(&block.header, block.header.parent_beacon_block_root) {
             error!("[Engine] Beacon root validation failed for block {}: {}", block_num, e);
-            self.chain.add_invalid_block(block_hash, block.header.parent_hash).await;
+            self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
             self.revalidate_dependent_payloads(block_hash).await;
             return Err(anyhow::anyhow!("Beacon root validation failed: {}", e));
         }
@@ -718,7 +738,7 @@ impl Engine {
         if let Some(parent) = &parent_header {
             if let Err(e) = self.consensus.validate_header(&block.header, parent, &chain_config) {
                 error!("[Engine] Header validation failed for block {}: {}", block_num, e);
-                self.chain.add_invalid_block(block_hash, block.header.parent_hash).await;
+                self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
                 self.revalidate_dependent_payloads(block_hash).await;
                 return Err(anyhow::anyhow!("Header validation failed: {}", e));
             }
@@ -740,7 +760,7 @@ impl Engine {
                     final_block.header.state_root
                 ) {
                     error!("[Engine] Post-execution validation failed for block {}: {}", block_num, e);
-                    self.chain.add_invalid_block(block_hash, block.header.parent_hash).await;
+                    self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
                     self.revalidate_dependent_payloads(block_hash).await;
                     return Err(anyhow::anyhow!("Post-execution validation failed: {}", e));
                 }
@@ -791,7 +811,7 @@ impl Engine {
                 Ok(())
             }
             Err(e) => {
-                self.chain.add_invalid_block(block_hash, block.header.parent_hash).await;
+                self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
                 // Trigger revalidation for descendants (they will become INVALID)
                 self.revalidate_dependent_payloads(block_hash).await;
                 Err(anyhow::anyhow!("Execution failed for block {}: {}", block_num, e))

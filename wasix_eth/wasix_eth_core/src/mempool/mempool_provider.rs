@@ -52,9 +52,9 @@ impl MempoolProvider for Mempool {
     /// Revalidate the mempool against the latest state.
     /// Removes transactions that are no longer valid (e.g. nonce too low, insufficient balance).
     async fn revalidate(&self, state: &DatabaseReadProvider) {
-        let (pending, queued, base_fee) = {
+        let (pending, queued, base_fee, blobs) = {
             let inner = self.inner.read().await;
-            (inner.pending_transactions.clone(), inner.queued_transactions.clone(), inner.base_fee)
+            (inner.pending_transactions.clone(), inner.queued_transactions.clone(), inner.base_fee, inner.blobs.clone())
         };
 
         let mut to_remove = Vec::new();
@@ -87,6 +87,20 @@ impl MempoolProvider for Mempool {
 
                 if tx_nonce < current_nonce || current_balance < required_balance {
                     to_remove.push(*tx.hash());
+                    continue;
+                }
+
+                // Check blobs for EIP-4844 transactions
+                if tx.is_eip4844() {
+                    if let Some(hashes) = tx.blob_versioned_hashes() {
+                        for hash in hashes {
+                            if !blobs.contains_key(hash) {
+                                info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
+                                to_remove.push(*tx.hash());
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -118,6 +132,20 @@ impl MempoolProvider for Mempool {
 
                 if tx_nonce < current_nonce || current_balance < required_balance {
                     to_remove.push(*tx.hash());
+                    continue;
+                }
+
+                // Check blobs for EIP-4844 transactions
+                if tx.is_eip4844() {
+                    if let Some(hashes) = tx.blob_versioned_hashes() {
+                        for hash in hashes {
+                            if !blobs.contains_key(hash) {
+                                info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
+                                to_remove.push(*tx.hash());
+                                break;
+                            }
+                        }
+                    }
                 }
             }
         }
