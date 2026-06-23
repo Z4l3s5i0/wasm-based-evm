@@ -4,6 +4,9 @@ use wasix_eth_core::engine::api::RPCEngine;
 use wasix_eth_core::engine::forkchoice_validator::ForkchoiceValidator;
 use wasix_eth_core::mempool::listener::MempoolListener;
 use wasix_eth_core::mempool::mempool::Mempool;
+use wasix_eth_core::engine::canonicality_tracker::CanonicalState;
+use wasix_eth_core::engine::sidechain_tracker::BlockTree;
+use wasix_eth_core::engine::reorg_manager::ReorgHandler;
 use wasix_eth_core::{ChainManager, ChainManagerImpl, Engine, EthConsensus};
 use wasix_eth_execution::execution_provider::EthExecutionProvider;
 use wasix_eth_storage::{read::DatabaseReadProvider, write::DatabaseWriteProvider};
@@ -27,7 +30,18 @@ impl ExecutionPayload {
 
         let execution_provider = Arc::new(EthExecutionProvider::new((*read_provider).clone(), (*write_provider).clone()));
         let account_manager = Arc::new(AccountManager::new_with_dev_keys());
-        let chain_manager = Arc::new(ChainManagerImpl::new((*read_provider).clone(), (*write_provider).clone()));
+
+        let canonical = Arc::new(CanonicalState::new((*read_provider).clone(), (*write_provider).clone()));
+        let block_tree = Arc::new(BlockTree::new());
+        let reorg_handler = Arc::new(ReorgHandler::new((*read_provider).clone(), (*write_provider).clone(), canonical.clone()));
+
+        let chain_manager = Arc::new(ChainManagerImpl::new(
+            (*read_provider).clone(),
+            (*write_provider).clone(),
+            canonical.clone(),
+            block_tree.clone(),
+            reorg_handler.clone(),
+        ));
         let mempool_listener = Arc::new(MempoolListener::new(
             mempool.clone(),
             (*read_provider).clone(),
@@ -52,11 +66,14 @@ impl ExecutionPayload {
             (*write_provider).clone(),
             execution_provider,
             account_manager,
-            chain_manager.clone(),
             mempool.clone(),
             engine_event_tx,
             consensus,
             rpc_engine.clone(),
+            chain_manager.clone(),
+            canonical.clone(),
+            block_tree.clone(),
+            reorg_handler.clone(),
             forkchoice_validator.clone(),
             mempool_listener
         ));

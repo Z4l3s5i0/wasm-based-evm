@@ -3,7 +3,6 @@ use alloy_primitives::B256;
 use wasix_eth_core::Engine;
 use wasix_eth_types::{Block, Transaction, SignerRecoverable, BlockId, BlockNumberOrTag};
 use wasix_eth_utils::info;
-use alloy_rlp::Encodable;
 
 #[derive(Clone)]
 pub struct BlockProcessor {

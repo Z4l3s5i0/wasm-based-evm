@@ -1,19 +1,14 @@
 use wasix_eth_storage::read::DatabaseReadProvider;
-use wasix_eth_storage::read_traits::{BlockProvider, ChangeSetProvider, HeaderProvider};
+use wasix_eth_storage::read_traits::{BlockProvider, HeaderProvider};
 use wasix_eth_storage::write::DatabaseWriteProvider;
-use wasix_eth_storage::write_traits::{AccountWriter, BlockWriter, ChangeSetWriter, HeaderWriter, StateWriter, StorageWriter, TransactionWriter};
-use wasix_eth_types::{async_trait, Block, BlockId, SyncStatus, Transaction, TrieAccount, B256, U256};
-use wasix_eth_utils::{debug, info, warn};
-use alloy_rlp::Decodable;
-use std::collections::{HashMap, HashSet};
+use wasix_eth_types::{async_trait, Block, BlockId, SyncStatus, Transaction, B256, U256};
+use wasix_eth_utils::warn;
+use crate::engine::canonicality_tracker::CanonicalState;
+pub(crate) use crate::engine::sidechain_tracker::{BlockTree, InvalidationReason};
+use crate::engine::reorg_manager::ReorgHandler;
+use std::sync::Arc;
+use std::collections::HashSet;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvalidationReason {
-    /// Protocol violation, should never be retried.
-    Hard,
-    /// Transient error (e.g. missing blobs), can be retried.
-    Soft,
-}
 
 #[async_trait]
 pub trait ChainManager: Send + Sync {
@@ -83,92 +78,33 @@ pub struct ReorgContext {
 }
 
 
-pub struct NoopChainManager;
-
-#[async_trait]
-impl ChainManager for NoopChainManager {
-    async fn sync_status(&self) -> SyncStatus {
-        SyncStatus::None
-    }
-    async fn set_sync_status(&self, _status: SyncStatus) {}
-    async fn head_block(&self) -> (B256, u64) {
-        (B256::ZERO, 0)
-    }
-    async fn set_head_block(&self, _hash: B256, _number: u64) {}
-    async fn has_block(&self, _hash: B256) -> bool {
-        false
-    }
-    async fn trigger_sync(&self) -> wasix_eth_types::Result<()> {
-        Ok(())
-    }
-    async fn revert_to_height(&self, _height: u64) -> wasix_eth_types::Result<()> {
-        Ok(())
-    }
-    async fn set_sync_trigger(&self, _trigger: Box<dyn Fn() + Send + Sync>) {}
-    async fn is_invalid(&self, _hash: B256) -> bool { false }
-    async fn get_invalidation_reason(&self, _hash: B256) -> Option<InvalidationReason> { None }
-    async fn add_invalid_block(&self, _hash: B256, _parent_hash: B256, _reason: InvalidationReason) {}
-    async fn remove_invalid_block(&self, _hash: B256) {}
-    async fn get_latest_valid_ancestor(&self, _hash: B256) -> Option<B256> { None }
-    async fn add_sync_target(&self, _hash: B256, _peer_id: Option<String>) {}
-    async fn pop_sync_target(&self) -> Option<(B256, Option<String>)> { None }
-    async fn total_difficulty(&self) -> U256 { U256::ZERO }
-
-    async fn determine_payload_status(&self, _head_block_hash: B256) -> wasix_eth_types::PayloadStatus {
-        wasix_eth_types::PayloadStatus {
-            status: wasix_eth_types::PayloadStatusEnum::Syncing,
-            latest_valid_hash: None,
-        }
-    }
-
-    async fn is_ancestor(&self, _head: B256, _target: B256) -> bool {
-        false
-    }
-
-    async fn resolve_reorg(&self, _old_head: B256, _new_head: B256) -> wasix_eth_types::Result<ReorgContext> {
-        Ok(ReorgContext {
-            common_ancestor_hash: B256::ZERO,
-            new_canonical_blocks: Vec::new(),
-            is_reorg: false,
-        })
-    }
-
-    async fn mark_branch_canonical(&self, _blocks: &Vec<Block<Transaction>>) -> wasix_eth_types::Result<()> {
-        Ok(())
-    }
-}
-
 pub struct ChainManagerImpl {
     read_storage: DatabaseReadProvider,
-    write_storage: DatabaseWriteProvider,
+    _write_storage: DatabaseWriteProvider,
     sync_status: tokio::sync::RwLock<SyncStatus>,
-    head_block: tokio::sync::RwLock<(B256, u64)>,
+    pub canonical: Arc<CanonicalState>,
+    pub block_tree: Arc<BlockTree>,
+    pub reorg_handler: Arc<ReorgHandler>,
     sync_trigger: tokio::sync::RwLock<Option<Box<dyn Fn() + Send + Sync>>>,
-    invalid_blocks: tokio::sync::RwLock<HashMap<B256, (B256, InvalidationReason)>>,
     sync_targets: tokio::sync::RwLock<Vec<(B256, Option<String>)>>,
 }
 
 impl ChainManagerImpl {
-    pub fn new(read_storage: DatabaseReadProvider, write_storage: DatabaseWriteProvider) -> Self {
-        let (head_hash, head_number) = {
-            let head = read_storage.forkchoice("head").unwrap_or(None).unwrap_or_default();
-            let number = if head != B256::ZERO {
-                read_storage.block_number(head).unwrap_or(None).unwrap_or_else(|| {
-                    read_storage.latest_block_number().unwrap_or(None).unwrap_or_default()
-                })
-            } else {
-                read_storage.latest_block_number().unwrap_or(None).unwrap_or_default()
-            };
-            (head, number)
-        };
-
+    pub fn new(
+        read_storage: DatabaseReadProvider,
+        write_storage: DatabaseWriteProvider,
+        canonical: Arc<CanonicalState>,
+        block_tree: Arc<BlockTree>,
+        reorg_handler: Arc<ReorgHandler>,
+    ) -> Self {
         Self {
             read_storage,
-            write_storage: write_storage,
+            _write_storage: write_storage,
             sync_status: tokio::sync::RwLock::new(SyncStatus::None),
-            head_block: tokio::sync::RwLock::new((head_hash, head_number)),
+            canonical,
+            block_tree,
+            reorg_handler,
             sync_trigger: tokio::sync::RwLock::new(None),
-            invalid_blocks: tokio::sync::RwLock::new(HashMap::new()),
             sync_targets: tokio::sync::RwLock::new(Vec::new()),
         }
     }
@@ -186,12 +122,11 @@ impl ChainManager for ChainManagerImpl {
     }
 
     async fn head_block(&self) -> (B256, u64) {
-        *self.head_block.read().await
+        self.canonical.get_head().await
     }
 
     async fn set_head_block(&self, hash: B256, number: u64) {
-        let mut current = self.head_block.write().await;
-        *current = (hash, number);
+        let _ = self.canonical.update_head(hash, number).await;
     }
 
     async fn has_block(&self, hash: B256) -> bool {
@@ -199,72 +134,6 @@ impl ChainManager for ChainManagerImpl {
         matches!(self.read_storage.header(BlockId::Hash(hash.into())), Ok(Some(_)))
     }
 
-    async fn revert_to_height(&self, height: u64) -> wasix_eth_types::Result<()> {
-        let (_head_hash, head_number) = self.head_block().await;
-        if height >= head_number {
-            return Ok(());
-        }
-
-        info!("Reverting chain from {} to {}", head_number, height);
-
-        // Revert state changes from head_number down to height + 1
-        for h in (height + 1..=head_number).rev() {
-            if let Some(account_changes) = self.read_storage.account_change_set(h)? {
-                for (address, old_state) in account_changes {
-                    if let Some(state) = old_state {
-                        self.write_storage.update_plain_state(address, state.clone())?;
-
-                        // Also update the Accounts table for consistency
-                        let mut buf = &state[..];
-                        let trie_acc = TrieAccount::decode(&mut buf)
-                            .map_err(|e| anyhow::anyhow!("Failed to decode TrieAccount for {}: {}", address, e))?;
-                        self.write_storage.update_account(address, trie_acc)?;
-                    } else {
-                        // Account was created in this block, so it didn't exist before.
-                        // We must remove it from the state.
-                        self.write_storage.remove_plain_state(address)?;
-                        self.write_storage.remove_account(address)?;
-                    }
-                }
-            }
-
-            if let Some(storage_changes) = self.read_storage.storage_change_set(h)? {
-                for (address, slot, old_value) in storage_changes {
-                    self.write_storage.update_storage(address, slot, old_value)?;
-                }
-            }
-
-            // Clean up the change sets themselves
-            self.write_storage.remove_change_set(h)?;
-
-            // Clean up HeaderNumbers mapping as well to prevent stale entries
-            // although they might be correct for that hash, removing them ensures
-            // a cleaner state during reorg transitions.
-            if let Ok(Some(hash)) = self.read_storage.block_hash(h) {
-                // There is no explicit remove_header_number, but we can potentially
-                // just let mark_branch_canonical overwrite it.
-                // For now, removing the canonical mapping is the most important part.
-                let _ = hash; // avoid unused warning
-            }
-
-            // Remove from canonical heads
-            self.write_storage.remove_canonical(h)?;
-        }
-
-        // Update canonical head
-        let new_head_hash = self.read_storage.block_hash(height)?
-            .ok_or_else(|| anyhow::anyhow!("Block hash not found for height {}", height))?;
-
-        self.write_storage.set_canonical(height, new_head_hash)?;
-
-        // Update cache
-        self.set_head_block(new_head_hash, height).await;
-
-        // Clear tracking maps to avoid polluting subsequent forward execution
-        self.write_storage.clear_tracking();
-
-        Ok(())
-    }
 
     async fn trigger_sync(&self) -> wasix_eth_types::Result<()> {
         if let Some(trigger) = self.sync_trigger.read().await.as_ref() {
@@ -279,21 +148,19 @@ impl ChainManager for ChainManagerImpl {
     }
 
     async fn is_invalid(&self, hash: B256) -> bool {
-        self.invalid_blocks.read().await.contains_key(&hash)
+        self.block_tree.get_invalidation_reason(hash).await.is_some()
     }
 
     async fn get_invalidation_reason(&self, hash: B256) -> Option<InvalidationReason> {
-        self.invalid_blocks.read().await.get(&hash).map(|(_, reason)| *reason)
+        self.block_tree.get_invalidation_reason(hash).await
     }
 
     async fn add_invalid_block(&self, hash: B256, parent_hash: B256, reason: InvalidationReason) {
-        let mut invalid_blocks = self.invalid_blocks.write().await;
-        invalid_blocks.insert(hash, (parent_hash, reason));
+        self.block_tree.mark_invalid(hash, parent_hash, reason).await;
     }
 
     async fn remove_invalid_block(&self, hash: B256) {
-        let mut invalid_blocks = self.invalid_blocks.write().await;
-        invalid_blocks.remove(&hash);
+        self.block_tree.remove_invalid(hash).await;
     }
 
     async fn add_sync_target(&self, hash: B256, peer_id: Option<String>) {
@@ -309,11 +176,10 @@ impl ChainManager for ChainManagerImpl {
     }
 
     async fn get_latest_valid_ancestor(&self, hash: B256) -> Option<B256> {
-        let invalid_blocks = self.invalid_blocks.read().await;
         let mut current = hash;
 
         // If the starting hash is not in invalid_blocks, check if it's valid itself.
-        if !invalid_blocks.contains_key(&current) {
+        if self.get_invalidation_reason(current).await.is_none() {
             if self.has_block(current).await {
                 return Some(current);
             }
@@ -327,23 +193,20 @@ impl ChainManager for ChainManagerImpl {
             if current == B256::ZERO {
                 return Some(B256::ZERO);
             }
-            // It's unknown, so we can't say it's valid. Continue walk back if possible?
-            // Actually, if it's unknown and not invalid, we might want to return None per spec
-            // unless we find a valid ancestor.
         }
 
         // Walk back through invalid blocks
         // Add a safety limit and cycle detection
         let mut visited = HashSet::new();
 
-        while invalid_blocks.contains_key(&current) {
+        while let Some(_reason) = self.get_invalidation_reason(current).await {
             if !visited.insert(current) {
                 // Cycle detected!
                 warn!("Cycle detected in invalid_blocks at hash {:?}", current);
                 return None;
             }
-            if let Some((parent, _)) = invalid_blocks.get(&current) {
-                current = *parent;
+            if let Some(parent) = self.block_tree.get_invalid_parent(current).await {
+                current = parent;
             } else {
                 break;
             }
@@ -453,97 +316,15 @@ impl ChainManager for ChainManagerImpl {
         false
     }
 
+    async fn revert_to_height(&self, height: u64) -> wasix_eth_types::Result<()> {
+        self.reorg_handler.revert_to_height(height).await
+    }
+
     async fn resolve_reorg(&self, old_head: B256, new_head: B256) -> wasix_eth_types::Result<ReorgContext> {
-        let mut new_canonical_blocks = Vec::new();
-        let mut current_hash = new_head;
-        let mut common_ancestor_hash = B256::ZERO;
-        let mut common_ancestor_found = false;
-
-        debug!("[ChainManager] Resolving reorg from {:?} to {:?}", old_head, new_head);
-
-        while current_hash != B256::ZERO {
-            if current_hash == old_head {
-                debug!("[ChainManager] Found old head {:?} as common ancestor", current_hash);
-                common_ancestor_hash = old_head;
-                common_ancestor_found = true;
-                break;
-            }
-
-            // Check if this block is already marked canonical
-            if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current_hash.into())) {
-                if let Ok(Some(canonical_hash)) = self.read_storage.block_hash(header.number) {
-                    if canonical_hash == current_hash {
-                        debug!("[ChainManager] Found canonical block #{} hash {:?} as common ancestor", header.number, current_hash);
-                        common_ancestor_hash = current_hash;
-                        common_ancestor_found = true;
-                        break;
-                    }
-                }
-
-                if let Ok(Some(block)) = self.read_storage.block_by_hash(current_hash) {
-                    new_canonical_blocks.push(block);
-                } else if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(current_hash) {
-                    new_canonical_blocks.push(block.clone());
-                } else {
-                    return Err(anyhow::anyhow!("Block data missing for hash {:?} during reorg walk-back", current_hash).into());
-                }
-
-                current_hash = header.parent_hash;
-            } else if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(current_hash) {
-                new_canonical_blocks.push(block.clone());
-                current_hash = block.header.parent_hash;
-            } else {
-                debug!("[ChainManager] Walk-back reached unknown block {:?}", current_hash);
-                break;
-            }
-        }
-
-        let is_reorg = common_ancestor_found && old_head != common_ancestor_hash;
-        if is_reorg {
-             info!("[ChainManager] Reorg detected! Common ancestor: {:?} at height {}", 
-                common_ancestor_hash, 
-                self.read_storage.header(BlockId::Hash(common_ancestor_hash.into())).ok().flatten().map(|h| h.number).unwrap_or(0)
-             );
-        }
-
-        Ok(ReorgContext {
-            common_ancestor_hash,
-            new_canonical_blocks,
-            is_reorg,
-        })
+        self.reorg_handler.resolve_reorg(old_head, new_head).await
     }
 
     async fn mark_branch_canonical(&self, blocks: &Vec<Block<Transaction>>) -> wasix_eth_types::Result<()> {
-        for block in blocks.iter().rev() {
-            let hash = block.header.hash_slow();
-            let number = block.header.number;
-
-            info!("[ChainManager] Marking block {} (hash {}) as canonical", number, hash);
-
-            // 1. Mark as canonical (Number -> Hash)
-            self.write_storage.set_canonical(number, hash)?;
-
-            // 2. Ensure Hash -> Number mapping is correct
-            self.write_storage.insert_header_number(hash, number)?;
-            self.write_storage.insert_block_hash(hash, number)?;
-
-            // 3. Ensure TD is correct
-            if let Ok(parent_td) = self.read_storage.header_td(block.header.parent_hash) {
-                if let Some(ptd) = parent_td {
-                    let expected_td = ptd + block.header.difficulty;
-                    let current_td = self.read_storage.header_td(hash).ok().flatten();
-                    if current_td != Some(expected_td) {
-                        self.write_storage.insert_header_td(hash, expected_td)?;
-                    }
-                }
-            }
-
-            // 4. Update transaction lookups
-            for (i, tx) in block.body.transactions.iter().enumerate() {
-                let tx_hash = *tx.hash();
-                self.write_storage.insert_transaction_lookup(tx_hash, hash, i as u64)?;
-            }
-        }
-        Ok(())
+        self.reorg_handler.mark_branch_canonical(blocks).await
     }
 }

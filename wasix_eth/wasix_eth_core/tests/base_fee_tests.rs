@@ -28,7 +28,36 @@ async fn setup_engine() -> (Engine, Arc<EthDatabase>, tempfile::TempDir) {
     let chain = Arc::new(ChainManagerImpl::new(read_storage.clone(), write_storage.clone()));
 
     let consensus = Arc::new(EthConsensus::new(Arc::new(read_storage.clone())));
-    (Engine::new(read_storage, write_storage, execution, account_manager, chain, mempool, event_tx, consensus), db_arc, dir)
+    let canonical = Arc::new(wasix_eth_core::engine::canonicality_tracker::CanonicalState::new(read_storage.clone(), write_storage.clone()));
+    let block_tree = Arc::new(wasix_eth_core::engine::sidechain_tracker::BlockTree::new());
+    let reorg_handler = Arc::new(wasix_eth_core::engine::reorg_manager::ReorgHandler::new(read_storage.clone(), write_storage.clone(), canonical.clone()));
+    let rpc_engine = Arc::new(wasix_eth_core::engine::api::RPCEngine::new(
+        read_storage.clone(),
+        write_storage.clone(),
+        account_manager.clone(),
+        chain.clone(),
+        mempool.clone(),
+        event_tx.clone(),
+        consensus.clone(),
+        execution.clone(),
+    ));
+
+    (Engine::new(
+        read_storage.clone(),
+        write_storage.clone(),
+        execution,
+        account_manager,
+        mempool.clone(),
+        event_tx,
+        consensus,
+        rpc_engine,
+        chain,
+        canonical,
+        block_tree,
+        reorg_handler,
+        wasix_eth_core::engine::forkchoice_validator::ForkchoiceValidator::new(read_storage.clone(), chain_manager_mock.clone()), // Use a dummy validator or fixed one
+        Arc::new(wasix_eth_core::mempool::listener::MempoolListener::new(mempool, read_storage)),
+    ), db_arc, dir)
 }
 
 #[tokio::test]

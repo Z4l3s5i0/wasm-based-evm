@@ -1,5 +1,10 @@
+use crate::engine::canonicality_tracker::CanonicalState;
+use crate::engine::sidechain_tracker::BlockTree;
+use crate::engine::reorg_manager::ReorgHandler;
 use crate::account_manager::AccountManager;
-use crate::{ChainManager, InvalidationReason};
+use crate::ChainManager;
+use crate::ChainManagerImpl;
+use crate::engine::sidechain_tracker::InvalidationReason;
 use crate::engine::payload_builder::PayloadBuilder;
 use crate::engine::payload_processor::PayloadProcessor;
 use crate::mempool::mempool_provider::MempoolProvider;
@@ -7,7 +12,7 @@ use crate::Consensus;
 use std::sync::Arc;
 use alloy_rlp::Encodable;
 use alloy_rpc_types::RpcBlockHash;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use tokio::sync::broadcast;
 use wasix_eth_execution::execution_provider::ExecutionProvider;
 use wasix_eth_storage::read::DatabaseReadProvider;
@@ -63,6 +68,7 @@ pub enum EngineEvent {
 pub struct Engine {
     pub read_storage: DatabaseReadProvider,
     pub write_storage: DatabaseWriteProvider,
+    pub canonical: Arc<CanonicalState>,
     pub execution: Arc<dyn ExecutionProvider>,
     pub account_manager: Arc<AccountManager>,
     pub chain: Arc<dyn ChainManager>,
@@ -122,21 +128,23 @@ impl Engine {
         write_storage: DatabaseWriteProvider,
         execution: Arc<dyn ExecutionProvider>,
         account_manager: Arc<AccountManager>,
-        chain: Arc<dyn ChainManager>,
         mempool: Arc<dyn MempoolProvider>,
         event_tx: broadcast::Sender<EngineEvent>,
         consensus: Arc<dyn Consensus>,
         rpc_engine: Arc<RPCEngine>,
+        chain: Arc<dyn ChainManager>,
+        canonical: Arc<CanonicalState>,
+        block_tree: Arc<BlockTree>,
+        reorg_handler: Arc<ReorgHandler>,
         forkchoice_validator: ForkchoiceValidator,
         mempool_listener: Arc<MempoolListener>,
     ) -> Self {
-        let orphan_pool = Arc::new(std::sync::RwLock::new(HashMap::new()));
-        let orphan_child_to_parent = Arc::new(std::sync::RwLock::new(HashMap::new()));
         let processing_payloads = Arc::new(std::sync::RwLock::new(HashSet::new()));
         
         let engine = Self {
             read_storage: read_storage.clone(),
             write_storage: write_storage.clone(),
+            canonical: canonical.clone(),
             execution: execution.clone(),
             account_manager,
             chain: chain.clone(),
@@ -151,9 +159,9 @@ impl Engine {
                 mempool: mempool.clone(),
             },
             payload_processor: PayloadProcessor { 
-                orphan_pool: orphan_pool.clone(), 
-                orphan_child_to_parent: orphan_child_to_parent.clone(), 
                 processing_payloads: processing_payloads.clone(), 
+                block_tree: block_tree.clone(),
+                canonical: canonical.clone(),
                 consensus: consensus.clone(),
                 read_storage: read_storage.clone(),
                 write_storage: write_storage.clone(),
@@ -173,7 +181,7 @@ impl Engine {
             while let Ok(event) = event_rx.recv().await {
                 if let EngineEvent::NewTransaction(tx) = event {
                     if tx.is_eip4844() {
-                        let head_hash = engine_clone.read_storage.forkchoice("head").ok().flatten().unwrap_or_default();
+                        let (head_hash, _) = engine_clone.canonical.get_head().await;
                         let active_ids = engine_clone.read_storage.all_payload_ids();
                         for payload_id in active_ids {
                             if let Some((payload_block, _, _bundle)) = engine_clone.read_storage.get_payload(&payload_id) {
@@ -411,6 +419,7 @@ impl Engine {
         }
 
         // Now that head is known (and valid/syncing is handled by status below), validate safe and finalized
+        let mut head_number = 0;
         if forkchoice_state.head_block_hash != B256::ZERO {
             // Check if head block actually exists in our storage or payload map before checking ancestry.
             let head_header = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))).ok().flatten()
@@ -426,6 +435,7 @@ impl Engine {
                 });
             
             if let Some(header) = head_header {
+                head_number = header.number;
                 debug!("[Engine] Validating ancestry for head block #{}", header.number);
                 if let Some(value) = self.forkchoice_validator.check_safe_block(forkchoice_state, &header).await {
                     return value;
@@ -441,18 +451,31 @@ impl Engine {
         }
 
         // Save current forkchoice state for potential rollback
-        let (old_head, old_safe, old_finalized) = self.get_current_forkchoice_state()?;
+        let (old_head, old_safe, old_finalized) = self.get_current_forkchoice_state().await?;
 
         // Update forkchoice in storage
-        self.write_storage.update_forkchoice(forkchoice_state.head_block_hash, Some(forkchoice_state.safe_block_hash), Some(forkchoice_state.finalized_block_hash))
-            .map_err(|e| RpcError::Internal(e.to_string()))?;
+        if head_number == 0 && forkchoice_state.head_block_hash != B256::ZERO {
+             head_number = self.read_storage.block_number(forkchoice_state.head_block_hash).ok().flatten().unwrap_or(0);
+        }
+        let _ = self.canonical.update_head(forkchoice_state.head_block_hash, head_number).await;
+        let _ = self.canonical.update_safe(forkchoice_state.safe_block_hash).await;
+        let _ = self.canonical.update_finalized(forkchoice_state.finalized_block_hash).await;
 
         // 1. We already determined head_status above
         let status = head_status.clone();
 
         if status.status != PayloadStatusEnum::Valid && status.status != PayloadStatusEnum::Syncing {
              // Rollback forkchoice in storage if the new head is explicitly invalid
-             let _ = self.write_storage.update_forkchoice(old_head, old_safe, old_finalized);
+             if let Some(oh) = old_head.into() {
+                 let oh_num = self.read_storage.block_number(oh).ok().flatten().unwrap_or(0);
+                 let _ = self.canonical.update_head(oh, oh_num).await;
+             }
+             if let Some(os) = old_safe {
+                 let _ = self.canonical.update_safe(os).await;
+             }
+             if let Some(of) = old_finalized {
+                 let _ = self.canonical.update_finalized(of).await;
+             }
              return Ok(ForkchoiceUpdated {
                 payload_status: status,
                 payload_id: None,
@@ -478,10 +501,21 @@ impl Engine {
                                 info!("[Engine] Reorg detected! Reverting chain to height {} (common ancestor: {:?})", common_ancestor_height, context.common_ancestor_hash);
                                 
                                 // Physically roll back state to common ancestor
-                                if let Err(e) = self.revert_to_height(common_ancestor_height).await {
-                                    error!("[Engine] Failed to revert to height {}: {}", common_ancestor_height, e);
-                                    return Err(RpcError::Internal(format!("Revert failed: {}", e)));
-                                }
+                        if let Err(e) = self.revert_to_height(common_ancestor_height).await {
+                            error!("[Engine] Failed to revert to height {}: {}", common_ancestor_height, e);
+                            // Rollback forkchoice if reorg fails
+                            if let Some(oh) = old_head.into() {
+                                let oh_num = self.read_storage.block_number(oh).ok().flatten().unwrap_or(0);
+                                let _ = self.canonical.update_head(oh, oh_num).await;
+                            }
+                            if let Some(os) = old_safe {
+                                let _ = self.canonical.update_safe(os).await;
+                            }
+                            if let Some(of) = old_finalized {
+                                let _ = self.canonical.update_finalized(of).await;
+                            }
+                            return Err(RpcError::Internal(format!("Revert failed: {}", e)));
+                        }
 
                                 self.handle_reorgs_for_mempool(forkchoice_state, old_head, context.common_ancestor_hash).await;
                             }
@@ -653,31 +687,29 @@ impl Engine {
     }
 
     async fn update_head_block(&self, forkchoice_state: ForkchoiceState, header: &Header) {
-        self.chain.set_head_block(forkchoice_state.head_block_hash, header.number).await;
-        let _ = self.write_storage.update_forkchoice(forkchoice_state.head_block_hash, Some(forkchoice_state.safe_block_hash), Some(forkchoice_state.finalized_block_hash));
+        let _ = self.canonical.update_head(forkchoice_state.head_block_hash, header.number).await;
+        let _ = self.canonical.update_safe(forkchoice_state.safe_block_hash).await;
+        let _ = self.canonical.update_finalized(forkchoice_state.finalized_block_hash).await;
         CURRENT_HEAD_BLOCK.set(header.number as f64);
     }
 
-    fn get_current_forkchoice_state(&self) -> Result<(B256, Option<B256>, Option<B256>), RpcError> {
-        let (old_head, old_safe, old_finalized) = {
-            let head = self.read_storage.forkchoice("head").unwrap_or(None).unwrap_or_default();
-            let safe = self.read_storage.forkchoice("safe").unwrap_or(None);
-            let finalized = self.read_storage.forkchoice("finalized").unwrap_or(None);
+    async fn get_current_forkchoice_state(&self) -> Result<(B256, Option<B256>, Option<B256>), RpcError> {
+        let (head, _) = self.canonical.get_head().await;
+        let safe = self.canonical.get_safe().await;
+        let finalized = self.canonical.get_finalized().await;
 
-            if head == B256::ZERO {
-                // Fallback to latest canonical block if forkchoice table is empty
-                let latest = self.read_storage.latest_block_number().map_err(|e| RpcError::Internal(e.to_string()))?;
-                let head = if let Some(n) = latest {
-                    self.read_storage.block_hash(n).map_err(|e| RpcError::Internal(e.to_string()))?.unwrap_or_default()
-                } else {
-                    B256::ZERO
-                };
-                (head, Some(head), Some(head))
+        if head == B256::ZERO {
+            // Fallback to latest canonical block if forkchoice table is empty
+            let latest = self.read_storage.latest_block_number().map_err(|e| RpcError::Internal(e.to_string()))?;
+            let head = if let Some(n) = latest {
+                self.read_storage.block_hash(n).map_err(|e| RpcError::Internal(e.to_string()))?.unwrap_or_default()
             } else {
-                (head, safe, finalized)
-            }
-        };
-        Ok((old_head, old_safe, old_finalized))
+                B256::ZERO
+            };
+            Ok((head, Some(head), Some(head)))
+        } else {
+            Ok((head, Some(safe), Some(finalized)))
+        }
     }
 
     pub async fn import_block(&self, block: Block<Transaction>) -> wasix_eth_types::Result<()> {

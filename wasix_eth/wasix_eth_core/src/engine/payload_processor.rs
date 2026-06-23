@@ -1,8 +1,10 @@
 use futures_util::{future::BoxFuture, FutureExt};
-use crate::{ChainManager, InvalidationReason};
+use crate::engine::canonicality_tracker::CanonicalState;
+use crate::engine::sidechain_tracker::{BlockTree, InvalidationReason};
+use crate::ChainManager;
 use crate::Consensus;
 use alloy_rpc_types::RpcBlockHash;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 use std::sync::Arc;
 use tokio::sync::broadcast;
 use wasix_eth_execution::execution_provider::ExecutionProvider;
@@ -17,9 +19,9 @@ use crate::engine::engine::EngineEvent;
 
 #[derive(Clone)]
 pub struct PayloadProcessor {
-    pub orphan_pool: Arc<std::sync::RwLock<HashMap<B256, Vec<(Block<Transaction>, Option<Vec<B256>>, Option<B256>)>>>>,
-    pub orphan_child_to_parent: Arc<std::sync::RwLock<HashMap<B256, B256>>>,
     pub processing_payloads: Arc<std::sync::RwLock<HashSet<B256>>>,
+    pub block_tree: Arc<BlockTree>,
+    pub canonical: Arc<CanonicalState>,
     pub consensus: Arc<dyn Consensus>,
     pub read_storage: DatabaseReadProvider,
     pub write_storage: DatabaseWriteProvider,
@@ -84,16 +86,9 @@ impl PayloadProcessor {
             return Some(payload.header.clone());
         }
         
-        // 3. Check orphan pool
-        {
-            let pool = self.orphan_pool.read().unwrap();
-            for children in pool.values() {
-                for (block, _, _) in children {
-                    if block.header.hash_slow() == hash {
-                        return Some(block.header.clone());
-                    }
-                }
-            }
+        // 3. Check block tree
+        if let Some(block) = self.block_tree.get_block(hash).await {
+            return Some(block.header.clone());
         }
         
         None
@@ -232,7 +227,7 @@ impl PayloadProcessor {
 
             // Only blacklist if we are sure about the parent.
             let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
-            let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+            let parent_is_finalized = self.canonical.get_finalized().await == parent_hash;
             if parent_is_canonical || parent_is_finalized {
                 self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Soft).await;
             }
@@ -248,10 +243,10 @@ impl PayloadProcessor {
         if let Some(status) = self.validate_parent_block(parent_hash).await {
             if status.status != PayloadStatusEnum::Syncing && status.status != PayloadStatusEnum::Accepted {
                 // If the parent is marked INVALID, we should only blacklist this block if the parent is canonical OR if it was already marked invalid by a canonical chain reorg.
-                let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
-                let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+                let _parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
+                let _parent_is_finalized = self.canonical.get_finalized().await == parent_hash;
                 
-                //if parent_is_canonical || parent_is_finalized {
+                //if _parent_is_canonical || _parent_is_finalized {
                     self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
 
                     // Recursive invalidation
@@ -269,26 +264,8 @@ impl PayloadProcessor {
             }
 
             if status.status == PayloadStatusEnum::Accepted || status.status == PayloadStatusEnum::Syncing {
-                debug!("[PayloadProcessor] Parent unknown for block {:?}, buffering in orphan pool", actual_hash);
-                {
-                    let mut pool = self.orphan_pool.write().unwrap();
-
-                    let children = pool.entry(parent_hash).or_default();
-                    if !children.iter().any(|(b, _, _)| b.header.hash_slow() == actual_hash) {
-                        children.push((block, expected_blob_versioned_hashes, parent_beacon_block_root));
-                        self.orphan_child_to_parent.write().unwrap().insert(actual_hash, parent_hash);
-                    }
-
-                    if pool.len() > 64 {
-                        if let Some(key) = pool.keys().next().cloned() {
-                            if let Some(removed_children) = pool.remove(&key) {
-                                for (child, _, _) in removed_children {
-                                    self.orphan_child_to_parent.write().unwrap().remove(&child.header.hash_slow());
-                                }
-                            }
-                        }
-                    }
-                }
+                debug!("[PayloadProcessor] Parent unknown for block {:?}, buffering in block tree", actual_hash);
+                self.block_tree.add_orphan(parent_hash, block, expected_blob_versioned_hashes, parent_beacon_block_root).await;
                 return Ok(status);
             }
         }
@@ -312,7 +289,7 @@ impl PayloadProcessor {
 
              // Only blacklist if we are sure about the parent.
              let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
-             let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+             let parent_is_finalized = self.canonical.get_finalized().await == parent_hash;
              if parent_is_canonical || parent_is_finalized {
                  self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Soft).await;
              }
@@ -368,12 +345,7 @@ impl PayloadProcessor {
                   }
 
                   {
-                      let mut pool = self.orphan_pool.write().unwrap();
-                      let children = pool.entry(parent_hash).or_default();
-                      if !children.iter().any(|(b, _, _)| b.header.hash_slow() == actual_hash) {
-                          children.push((block, expected_blob_versioned_hashes, parent_beacon_block_root));
-                          self.orphan_child_to_parent.write().unwrap().insert(actual_hash, parent_hash);
-                      }
+                      self.block_tree.add_orphan(parent_hash, block, expected_blob_versioned_hashes, parent_beacon_block_root).await;
                   }
                   return Ok(PayloadStatus {
                       status: PayloadStatusEnum::Accepted,
@@ -426,7 +398,7 @@ impl PayloadProcessor {
                 // if we might be on a side-branch or syncing.
                 // We blacklist if the parent is canonical OR if it's finalized.
                 let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
-                let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+                let parent_is_finalized = self.canonical.get_finalized().await == parent_hash;
                 
                 if parent_is_canonical || parent_is_finalized {
                     self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
@@ -460,7 +432,7 @@ impl PayloadProcessor {
             error!("[PayloadProcessor] Post-execution validation failed for block {}: {}", block_number, e);
             
             let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
-            let parent_is_finalized = self.read_storage.forkchoice("finalized").ok().flatten() == Some(parent_hash);
+            let parent_is_finalized = self.canonical.get_finalized().await == parent_hash;
             if parent_is_canonical || parent_is_finalized {
                 self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
             }
@@ -522,45 +494,40 @@ impl PayloadProcessor {
             let mut parents_to_process = vec![initial_parent_hash];
             
             while let Some(parent_hash) = parents_to_process.pop() {
-                let children = {
-                    let mut pool = self.orphan_pool.write().unwrap();
-                    pool.remove(&parent_hash)
-                };
+                let children_hashes = self.block_tree.remove_children(parent_hash).await;
                 
-                if let Some(children_blocks) = children {
-                    info!("[PayloadProcessor] Found {} dependent payloads for parent {:?}", children_blocks.len(), parent_hash);
-                    for (block, expected_blobs, parent_beacon_root) in children_blocks {
-                        let child_hash = block.header.hash_slow();
-                        {
-                            let mut child_to_parent = self.orphan_child_to_parent.write().unwrap();
-                            child_to_parent.remove(&child_hash);
-                        }
+                if !children_hashes.is_empty() {
+                    info!("[PayloadProcessor] Found {} dependent payloads for parent {:?}", children_hashes.len(), parent_hash);
+                    for child_hash in children_hashes {
+                        let block = self.block_tree.remove_block(child_hash).await;
                         
-                        // Mark as processing to avoid concurrent imports of the same block
-                        {
-                            let mut processing = self.processing_payloads.write().unwrap();
-                            if processing.contains(&child_hash) {
-                                debug!("[PayloadProcessor] Child block {:?} is already being processed, skipping revalidation", child_hash);
-                                continue;
-                            }
-                            processing.insert(child_hash);
-                        }
-
-                        let result = self.new_payload_internal_inner(block, child_hash, expected_blobs, parent_beacon_root).await;
-
-                        {
-                            let mut processing = self.processing_payloads.write().unwrap();
-                            processing.remove(&child_hash);
-                        }
-
-                        match result {
-                            Ok(status) => {
-                                if status.status == PayloadStatusEnum::Valid {
-                                    parents_to_process.push(child_hash);
+                        if let Some(block) = block {
+                            // Mark as processing to avoid concurrent imports of the same block
+                            {
+                                let mut processing = self.processing_payloads.write().unwrap();
+                                if processing.contains(&child_hash) {
+                                    debug!("[PayloadProcessor] Child block {:?} is already being processed, skipping revalidation", child_hash);
+                                    continue;
                                 }
+                                processing.insert(child_hash);
                             }
-                            Err(e) => {
-                                error!("[PayloadProcessor] Failed to revalidate dependent payload {:?}: {}", child_hash, e);
+
+                            let result = self.new_payload_internal_inner(block, child_hash, None, None).await;
+
+                            {
+                                let mut processing = self.processing_payloads.write().unwrap();
+                                processing.remove(&child_hash);
+                            }
+
+                            match result {
+                                Ok(status) => {
+                                    if status.status == PayloadStatusEnum::Valid {
+                                        parents_to_process.push(child_hash);
+                                    }
+                                }
+                                Err(e) => {
+                                    error!("[PayloadProcessor] Failed to revalidate dependent payload {:?}: {}", child_hash, e);
+                                }
                             }
                         }
                     }
@@ -574,19 +541,12 @@ impl PayloadProcessor {
             let mut parents_to_invalidate = vec![initial_invalid_hash];
             
             while let Some(parent_hash) = parents_to_invalidate.pop() {
-                let children = {
-                    let mut pool = self.orphan_pool.write().unwrap();
-                    pool.remove(&parent_hash)
-                };
+                let children_hashes = self.block_tree.remove_children(parent_hash).await;
                 
-                if let Some(children_blocks) = children {
-                    debug!("[PayloadProcessor] Invalidating {} dependent payloads for invalid parent {:?}", children_blocks.len(), parent_hash);
-                    for (block, _, _) in children_blocks {
-                        let child_hash = block.header.hash_slow();
-                        {
-                            let mut child_to_parent = self.orphan_child_to_parent.write().unwrap();
-                            child_to_parent.remove(&child_hash);
-                        }
+                if !children_hashes.is_empty() {
+                    debug!("[PayloadProcessor] Invalidating {} dependent payloads for invalid parent {:?}", children_hashes.len(), parent_hash);
+                    for child_hash in children_hashes {
+                        self.block_tree.remove_block(child_hash).await;
                         
                         // Mark as invalid in chain manager
                         self.chain.add_invalid_block(child_hash, parent_hash, InvalidationReason::Hard).await;

@@ -28,20 +28,50 @@ mod tests {
         let write_storage = DatabaseWriteProvider::new(db.inner());
         let execution = Arc::new(EthExecutionProvider::new(read_storage.clone(), write_storage.clone()));
         let account_manager = Arc::new(AccountManager::new());
-        let chain = Arc::new(ChainManagerImpl::new(read_storage.clone(), write_storage.clone()));
+        
+        let canonical = Arc::new(wasix_eth_core::engine::canonicality_tracker::CanonicalState::new(read_storage.clone(), write_storage.clone()));
+        let block_tree = Arc::new(wasix_eth_core::engine::sidechain_tracker::BlockTree::new());
+        let reorg_handler = Arc::new(wasix_eth_core::engine::reorg_manager::ReorgHandler::new(read_storage.clone(), write_storage.clone(), canonical.clone()));
+
+        let chain = Arc::new(ChainManagerImpl::new(
+            read_storage.clone(),
+            write_storage.clone(),
+            canonical.clone(),
+            block_tree.clone(),
+            reorg_handler.clone(),
+        ));
         let mempool = Arc::new(Mempool::new(wasix_eth_types::U256::ZERO));
         let (event_tx, _event_rx) = channel(100);
 
         let consensus = Arc::new(EthConsensus::new(Arc::new(read_storage.clone())));
+        
+        // Mock RPCEngine for Engine constructor
+        let rpc_engine = Arc::new(wasix_eth_core::engine::api::RPCEngine::new(
+            read_storage.clone(),
+            write_storage.clone(),
+            account_manager.clone(),
+            chain.clone(),
+            mempool.clone(),
+            event_tx.clone(),
+            consensus.clone(),
+            execution.clone(),
+        ));
+
         let engine = Engine::new(
-            read_storage,
-            write_storage,
+            read_storage.clone(),
+            write_storage.clone(),
             execution,
             account_manager,
-            chain,
-            mempool,
+            mempool.clone(),
             event_tx,
             consensus,
+            rpc_engine,
+            chain.clone(),
+            canonical,
+            block_tree,
+            reorg_handler,
+            wasix_eth_core::engine::forkchoice_validator::ForkchoiceValidator::new(read_storage.clone(), chain.clone()),
+            Arc::new(wasix_eth_core::mempool::listener::MempoolListener::new(mempool, read_storage)),
         );
 
         (Arc::new(engine), db, temp_dir)
@@ -108,20 +138,50 @@ mod tests {
         let write_storage = DatabaseWriteProvider::new(db.inner());
         let execution = Arc::new(FailingExecutionProvider);
         let account_manager = Arc::new(AccountManager::new());
-        let chain = Arc::new(ChainManagerImpl::new(read_storage.clone(), write_storage.clone()));
+        
+        let canonical = Arc::new(wasix_eth_core::engine::canonicality_tracker::CanonicalState::new(read_storage.clone(), write_storage.clone()));
+        let block_tree = Arc::new(wasix_eth_core::engine::sidechain_tracker::BlockTree::new());
+        let reorg_handler = Arc::new(wasix_eth_core::engine::reorg_manager::ReorgHandler::new(read_storage.clone(), write_storage.clone(), canonical.clone()));
+
+        let chain = Arc::new(ChainManagerImpl::new(
+            read_storage.clone(),
+            write_storage.clone(),
+            canonical.clone(),
+            block_tree.clone(),
+            reorg_handler.clone(),
+        ));
         let mempool = Arc::new(Mempool::new(wasix_eth_types::U256::ZERO));
         let (event_tx, _event_rx) = channel(100);
 
         let consensus = Arc::new(EthConsensus::new(Arc::new(read_storage.clone())));
+        
+        // Mock RPCEngine for Engine constructor
+        let rpc_engine = Arc::new(wasix_eth_core::engine::api::RPCEngine::new(
+            read_storage.clone(),
+            write_storage.clone(),
+            account_manager.clone(),
+            chain.clone(),
+            mempool.clone(),
+            event_tx.clone(),
+            consensus.clone(),
+            execution.clone(),
+        ));
+
         let engine = Engine::new(
-            read_storage,
-            write_storage,
+            read_storage.clone(),
+            write_storage.clone(),
             execution,
             account_manager,
-            chain,
-            mempool,
+            mempool.clone(),
             event_tx,
             consensus,
+            rpc_engine,
+            chain.clone(),
+            canonical,
+            block_tree,
+            reorg_handler,
+            wasix_eth_core::engine::forkchoice_validator::ForkchoiceValidator::new(read_storage.clone(), chain.clone()),
+            Arc::new(wasix_eth_core::mempool::listener::MempoolListener::new(mempool, read_storage)),
         );
         let engine = Arc::new(engine);
         let processor = BlockProcessor::new(engine);
