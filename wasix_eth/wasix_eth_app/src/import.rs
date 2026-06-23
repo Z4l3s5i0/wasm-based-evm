@@ -2,13 +2,14 @@ use std::error::Error;
 use std::path::PathBuf;
 use alloy_rlp::Decodable;
 use wasix_eth_core::sync::processor::BlockProcessor;
-use wasix_eth_types::{Block, Transaction};
+use wasix_eth_types::{Block, Transaction, ForkchoiceState, B256};
 use wasix_eth_utils::{error, info, warn};
 use crate::node_components::execution::ExecutionPayload;
 
 pub async fn import_blocks(execution: ExecutionPayload, chain_rlp: Option<PathBuf>, blocks_dir: Option<PathBuf>) -> Result<(), Box<dyn Error>> {
     info!("[Node] Starting block import process. chain_rlp: {:?}, blocks_dir: {:?}", chain_rlp, blocks_dir);
     let processor = BlockProcessor::new(execution.engine.clone());
+    let mut last_imported_hash: Option<B256> = None;
 
     // 1. Import from chain.rlp if present
     if let Some(path) = chain_rlp {
@@ -29,13 +30,15 @@ pub async fn import_blocks(execution: ExecutionPayload, chain_rlp: Option<PathBu
                 match Block::<Transaction>::decode(&mut buf) {
                     Ok(block) => {
                         let block_num = block.header.number;
-                        info!("[Node] Importing block {} (hash: {}) from chain.rlp", block_num, block.header.hash_slow());
+                        let block_hash = block.header.hash_slow();
+                        info!("[Node] Importing block {} (hash: {}) from chain.rlp", block_num, block_hash);
                         if let Err(e) = processor.process_block(block).await {
                             error!("[Node] Failed to import block {} from chain.rlp: {}", block_num, e);
                             continue;
                             // return Err(format!("Import failed for block {}: {}", block_num, e).into());
                         } else {
                             count += 1;
+                            last_imported_hash = Some(block_hash);
                         }
                     }
                     Err(e) => {
@@ -86,13 +89,15 @@ pub async fn import_blocks(execution: ExecutionPayload, chain_rlp: Option<PathBu
                 match Block::<Transaction>::decode(&mut buf) {
                     Ok(block) => {
                         let block_num = block.header.number;
-                        info!("[Node] Importing block {} (hash: {}) from {:?}", block_num, block.header.hash_slow(), path);
+                        let block_hash = block.header.hash_slow();
+                        info!("[Node] Importing block {} (hash: {}) from {:?}", block_num, block_hash, path);
                         if let Err(e) = processor.process_block(block).await {
                             error!("[Node] Failed to import block {} from {:?}: {}", block_num, path, e);
                             // return Err(format!("Import failed for block {} from {:?}: {}", block_num, path, e).into());
                             continue;
                         } else {
                             count += 1;
+                            last_imported_hash = Some(block_hash);
                         }
                     }
                     Err(e) => {
@@ -104,6 +109,18 @@ pub async fn import_blocks(execution: ExecutionPayload, chain_rlp: Option<PathBu
             info!("[Node] Imported {} blocks from directory", count);
         } else if !dir_path.exists() {
             warn!("[Node] blocks directory does not exist: {:?}", dir_path);
+        }
+    }
+
+    if let Some(hash) = last_imported_hash {
+        info!("[Node] Calling forkchoice updated for latest imported block hash: {}", hash);
+        let forkchoice_state = ForkchoiceState {
+            head_block_hash: hash,
+            safe_block_hash: hash,
+            finalized_block_hash: hash,
+        };
+        if let Err(e) = execution.engine.forkchoice_updated(forkchoice_state, None, 1).await {
+            error!("[Node] Failed to call forkchoice updated: {}", e);
         }
     }
 

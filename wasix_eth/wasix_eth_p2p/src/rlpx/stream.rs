@@ -62,14 +62,9 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         let mut payload = Vec::new();
         msg.encode(&mut payload);
         
-        let should_compress = self.snappy_enabled() && id > 1;
-        let final_payload = if should_compress {
-            snap::raw::Encoder::new().compress_vec(&payload)?
-        } else {
-            payload
-        };
-        
-        self.send_raw_payload(id, &final_payload).await
+        // EIP-706: Only subprotocols are snappy compressed.
+        // P2P control messages (0x00-0x0f) are NEVER compressed.
+        self.send_raw_payload(id, &payload).await
     }
 
     pub fn snappy_enabled(&self) -> bool {
@@ -175,10 +170,10 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         wasix_eth_utils::debug!("[P2P Stream] Read message ID: {}, payload size: {}", msg_id, cursor.len());
 
         let payload = if msg_id >= 0x10 {
-            // All subprotocol messages (like eth) are ALWAYS snappy compressed.
+            // All subprotocol messages (like eth) are ALWAYS snappy compressed if version >= 65.
             if cursor.is_empty() {
                 Vec::new()
-            } else {
+            } else if self.snappy_enabled() {
                 // EIP-706: Decompressed size must be <= MAX_PAYLOAD_SIZE
                 match snap::raw::decompress_len(cursor) {
                     Ok(decompressed_size) => {
@@ -188,33 +183,21 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
                         match snap::raw::Decoder::new().decompress_vec(cursor) {
                             Ok(decompressed) => decompressed,
                             Err(e) => {
-                                wasix_eth_utils::debug!("[P2P Stream] Snappy decompression failed for msg_id {}, falling back to uncompressed: {}", msg_id, e);
+                                wasix_eth_utils::debug!("[P2P Stream] Snappy decompression failed for msg_id {}: {}", msg_id, e);
                                 cursor.to_vec()
                             }
                         }
                     }
                     Err(e) => {
-                        wasix_eth_utils::debug!("[P2P Stream] Snappy decompress_len failed for msg_id {}, falling back to uncompressed: {}", msg_id, e);
+                        wasix_eth_utils::debug!("[P2P Stream] Snappy decompress_len failed for msg_id {}: {}", msg_id, e);
                         cursor.to_vec()
                     }
-                }
-            }
-        } else if msg_id >= 0x02 && msg_id <= 0x0f {
-            // P2P control messages (Ping, Pong, etc.) can be snappy compressed or not.
-            // Usually they are compressed if they are NOT the Hello or Disconnect message.
-            if let Ok(decompressed_size) = snap::raw::decompress_len(cursor) {
-                if decompressed_size > MAX_PAYLOAD_SIZE {
-                    return Err(anyhow!("Snappy decompressed size {} exceeds limit {}", decompressed_size, MAX_PAYLOAD_SIZE));
-                }
-                match snap::raw::Decoder::new().decompress_vec(cursor) {
-                    Ok(decompressed) => decompressed,
-                    Err(_) => cursor.to_vec(),
                 }
             } else {
                 cursor.to_vec()
             }
         } else {
-            // Hello (0x00) and Disconnect (0x01) are NEVER snappy compressed.
+            // P2P control messages (0x00-0x0f) are NEVER snappy compressed.
             cursor.to_vec()
         };
         
