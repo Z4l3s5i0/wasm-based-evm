@@ -55,4 +55,9 @@ impl SyncRegistry {
     pub async fn has_targets(&self) -> bool {
         !self.targets.read().await.is_empty()
     }
+
+    pub async fn clear_targets(&self) {
+        let mut targets = self.targets.write().await;
+        targets.clear();
+    }
 }

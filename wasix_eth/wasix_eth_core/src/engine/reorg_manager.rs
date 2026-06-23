@@ -41,17 +41,20 @@ impl ReorgHandler {
                 break;
             }
 
-            // Check if this block is already marked canonical
-            if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current_hash.into())) {
-                if let Ok(Some(canonical_hash)) = self.read_storage.block_hash(header.number) {
+            // Check if this block is already marked canonical in O(1) if possible
+            if let Ok(Some(number)) = self.read_storage.block_number(current_hash) {
+                if let Ok(Some(canonical_hash)) = self.read_storage.block_hash(number) {
                     if canonical_hash == current_hash {
-                        debug!("[ChainManager] Found canonical block #{} hash {:?} as common ancestor", header.number, current_hash);
+                        debug!("[ChainManager] Found canonical block #{} hash {:?} as common ancestor", number, current_hash);
                         common_ancestor_hash = current_hash;
                         common_ancestor_found = true;
                         break;
                     }
                 }
+            }
 
+            // If not canonical, we need to walk back
+            if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current_hash.into())) {
                 if let Ok(Some(block)) = self.read_storage.block_by_hash(current_hash) {
                     new_canonical_blocks.push(block);
                 } else if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(current_hash) {

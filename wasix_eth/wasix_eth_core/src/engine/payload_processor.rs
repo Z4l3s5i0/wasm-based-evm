@@ -105,25 +105,41 @@ impl PayloadProcessor {
         let is_genesis = self.read_storage.is_canonical(parent_hash).unwrap_or(false) &&
             self.read_storage.block_number(parent_hash).ok().flatten() == Some(0);
 
-        // 1. Check if parent is known to be invalid
-        if let Some(reason) = self.chain.get_invalidation_reason(parent_hash).await {
-            if reason == InvalidationReason::Hard {
-                let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
-                debug!("[PayloadProcessor] Parent block {:?} is known to be invalid (Hard). Latest valid ancestor: {:?}", parent_hash, latest_valid);
-                return Some(PayloadStatus {
-                    status: PayloadStatusEnum::Invalid { validation_error: "Parent block is known to be invalid".to_string() },
-                    latest_valid_hash: latest_valid,
-                });
+        // 1. Check if parent or ANY ancestor is known to be invalid
+        let mut current_invalid_check = parent_hash;
+        for _ in 0..64 {
+            if let Some(reason) = self.chain.get_invalidation_reason(current_invalid_check).await {
+                if reason == InvalidationReason::Hard {
+                    let latest_valid = self.chain.get_latest_valid_ancestor(current_invalid_check).await;
+                    debug!("[PayloadProcessor] Ancestor block {:?} is known to be invalid (Hard). Latest valid ancestor: {:?}", current_invalid_check, latest_valid);
+                    return Some(PayloadStatus {
+                        status: PayloadStatusEnum::Invalid { validation_error: "Ancestor block is known to be invalid".to_string() },
+                        latest_valid_hash: latest_valid,
+                    });
+                } else {
+                    debug!("[PayloadProcessor] Ancestor block {:?} was Soft invalid, returning SYNCING", current_invalid_check);
+                    return Some(PayloadStatus {
+                        status: PayloadStatusEnum::Syncing,
+                        latest_valid_hash: self.chain.get_latest_valid_ancestor(current_invalid_check).await,
+                    });
+                }
+            }
+            
+            // Try to find parent to continue walking back
+            if let Some(header) = self.get_header_from_anywhere(current_invalid_check).await {
+                if header.parent_hash == B256::ZERO { break; }
+                current_invalid_check = header.parent_hash;
             } else {
-                debug!("[PayloadProcessor] Parent block {:?} was Soft invalid, returning SYNCING", parent_hash);
-                return Some(PayloadStatus {
-                    status: PayloadStatusEnum::Syncing,
-                    latest_valid_hash: self.chain.get_latest_valid_ancestor(parent_hash).await,
-                });
+                // Check if it's an invalid parent we know about
+                if let Some(p) = self.block_tree.get_invalid_parent(current_invalid_check).await {
+                    current_invalid_check = p;
+                } else {
+                    break;
+                }
             }
         }
 
-        // 2. Check if ANY ancestor is invalid by walking back
+        // 2. Check if ANY ancestor is invalid by walking back and validating headers
         let mut current_hash = parent_hash;
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),

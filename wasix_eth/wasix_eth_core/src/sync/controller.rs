@@ -269,6 +269,10 @@ impl SyncController {
             if let Some(reason) = self.chain_manager.get_invalidation_reason(current_hash).await {
                 if reason == InvalidationReason::Hard {
                     self.chain_manager.add_invalid_block(requested_head, current_hash, InvalidationReason::Hard).await;
+                    
+                    // Clear sync targets since we've reached a known invalid chain
+                    self.sync_registry.clear_targets().await;
+
                     return Err(anyhow::anyhow!("Ancestor block {:?} is known to be invalid (Hard)", current_hash));
                 } else {
                     debug!("[Sync] Ancestor block {:?} was marked as Soft invalid, attempting retry", current_hash);
@@ -322,6 +326,9 @@ impl SyncController {
                 if requested_head != block_hash {
                     self.chain_manager.add_invalid_block(requested_head, block_hash, InvalidationReason::Hard).await;
                 }
+
+                // Clear all current sync targets as we've hit an invalid chain segment
+                self.sync_registry.clear_targets().await;
 
                 // Trigger recursive invalidation of orphans for this invalid ancestor
                 self.processor.invalidate_descendants(block_hash).await;
