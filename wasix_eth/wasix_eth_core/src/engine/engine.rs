@@ -1,9 +1,9 @@
 use crate::engine::canonicality_tracker::CanonicalState;
 use crate::engine::sidechain_tracker::BlockTree;
 use crate::engine::reorg_manager::ReorgHandler;
+use crate::sync::registry::SyncRegistry;
 use crate::account_manager::AccountManager;
 use crate::ChainManager;
-use crate::ChainManagerImpl;
 use crate::engine::sidechain_tracker::InvalidationReason;
 use crate::engine::payload_builder::PayloadBuilder;
 use crate::engine::payload_processor::PayloadProcessor;
@@ -80,6 +80,7 @@ pub struct Engine {
     pub rpc_engine: Arc<RPCEngine>,
     pub forkchoice_validator: ForkchoiceValidator,
     pub mempool_listener: Arc<MempoolListener>,
+    pub sync_registry: Arc<SyncRegistry>,
 }
 
 
@@ -91,7 +92,8 @@ impl SyncProvider for Engine {
         self.chain.sync_status().await
     }
     async fn trigger_sync(&self) -> wasix_eth_types::Result<()> {
-        self.chain.trigger_sync().await
+        self.sync_registry.add_target(B256::ZERO, None).await;
+        Ok(())
     }
     async fn has_block(&self, hash: B256) -> bool {
         self.chain.has_block(hash).await
@@ -135,9 +137,10 @@ impl Engine {
         chain: Arc<dyn ChainManager>,
         canonical: Arc<CanonicalState>,
         block_tree: Arc<BlockTree>,
-        reorg_handler: Arc<ReorgHandler>,
+        _reorg_handler: Arc<ReorgHandler>,
         forkchoice_validator: ForkchoiceValidator,
         mempool_listener: Arc<MempoolListener>,
+        sync_registry: Arc<SyncRegistry>,
     ) -> Self {
         let processing_payloads = Arc::new(std::sync::RwLock::new(HashSet::new()));
         
@@ -151,7 +154,7 @@ impl Engine {
             mempool: mempool.clone(),
             event_tx: event_tx.clone(),
             consensus: consensus.clone(),
-            payload_builder: PayloadBuilder { 
+            payload_builder: PayloadBuilder {
                 consensus: consensus.clone(),
                 read_storage: read_storage.clone(),
                 write_storage: write_storage.clone(),
@@ -167,11 +170,13 @@ impl Engine {
                 write_storage: write_storage.clone(),
                 execution: execution.clone(),
                 chain: chain.clone(),
+                sync_registry: sync_registry.clone(),
                 event_tx: event_tx.clone(),
             },
             rpc_engine,
             forkchoice_validator,
             mempool_listener,
+            sync_registry,
         };
 
         // Spawn rebuild listener

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::path::PathBuf;
 use alloy_rlp::Decodable;
-use wasix_eth_sync::processor::BlockProcessor;
+use wasix_eth_core::sync::processor::BlockProcessor;
 use wasix_eth_types::{Block, Transaction};
 use wasix_eth_utils::{error, info, warn};
 use crate::node_components::execution::ExecutionPayload;

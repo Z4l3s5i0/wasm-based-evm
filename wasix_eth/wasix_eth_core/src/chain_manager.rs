@@ -27,14 +27,8 @@ pub trait ChainManager: Send + Sync {
     /// Checks if the node has a block with the given hash.
     async fn has_block(&self, hash: B256) -> bool;
 
-    /// Triggers a synchronization process.
-    async fn trigger_sync(&self) -> wasix_eth_types::Result<()>;
-
     /// Reverts the chain to a specific height.
     async fn revert_to_height(&self, height: u64) -> wasix_eth_types::Result<()>;
-    
-    /// Sets a callback or channel to trigger sync in the SyncController.
-    async fn set_sync_trigger(&self, trigger: Box<dyn Fn() + Send + Sync>);
 
     /// Checks if the given block hash is known to be invalid.
     async fn is_invalid(&self, hash: B256) -> bool;
@@ -50,12 +44,6 @@ pub trait ChainManager: Send + Sync {
 
     /// Returns the latest known valid ancestor of an invalid block.
     async fn get_latest_valid_ancestor(&self, hash: B256) -> Option<B256>;
-
-    /// Adds a hash that we need to sync, optionally with a peer affinity.
-    async fn add_sync_target(&self, hash: B256, peer_id: Option<String>);
-
-    /// Pops a sync target from the list of pending targets (returns hash and optional peer affinity).
-    async fn pop_sync_target(&self) -> Option<(B256, Option<String>)>;
 
     /// Retrieves the total difficulty of the head block.
     async fn total_difficulty(&self) -> U256;
@@ -85,8 +73,6 @@ pub struct ChainManagerImpl {
     pub canonical: Arc<CanonicalState>,
     pub block_tree: Arc<BlockTree>,
     pub reorg_handler: Arc<ReorgHandler>,
-    sync_trigger: tokio::sync::RwLock<Option<Box<dyn Fn() + Send + Sync>>>,
-    sync_targets: tokio::sync::RwLock<Vec<(B256, Option<String>)>>,
 }
 
 impl ChainManagerImpl {
@@ -104,8 +90,6 @@ impl ChainManagerImpl {
             canonical,
             block_tree,
             reorg_handler,
-            sync_trigger: tokio::sync::RwLock::new(None),
-            sync_targets: tokio::sync::RwLock::new(Vec::new()),
         }
     }
 }
@@ -134,19 +118,6 @@ impl ChainManager for ChainManagerImpl {
         matches!(self.read_storage.header(BlockId::Hash(hash.into())), Ok(Some(_)))
     }
 
-
-    async fn trigger_sync(&self) -> wasix_eth_types::Result<()> {
-        if let Some(trigger) = self.sync_trigger.read().await.as_ref() {
-            trigger();
-        }
-        Ok(())
-    }
-
-    async fn set_sync_trigger(&self, trigger: Box<dyn Fn() + Send + Sync>) {
-        let mut current = self.sync_trigger.write().await;
-        *current = Some(trigger);
-    }
-
     async fn is_invalid(&self, hash: B256) -> bool {
         self.block_tree.get_invalidation_reason(hash).await.is_some()
     }
@@ -161,18 +132,6 @@ impl ChainManager for ChainManagerImpl {
 
     async fn remove_invalid_block(&self, hash: B256) {
         self.block_tree.remove_invalid(hash).await;
-    }
-
-    async fn add_sync_target(&self, hash: B256, peer_id: Option<String>) {
-        let mut targets = self.sync_targets.write().await;
-        if !targets.iter().any(|(h, _)| *h == hash) {
-            targets.push((hash, peer_id));
-        }
-    }
-
-    async fn pop_sync_target(&self) -> Option<(B256, Option<String>)> {
-        let mut targets = self.sync_targets.write().await;
-        targets.pop()
     }
 
     async fn get_latest_valid_ancestor(&self, hash: B256) -> Option<B256> {

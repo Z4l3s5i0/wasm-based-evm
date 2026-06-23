@@ -19,7 +19,6 @@ wasix_eth_storage = {workspace = true}
 wasix_eth_core = {workspace = true}
 wasix_eth_execution = {workspace = true}
 wasix_eth_p2p = {workspace = true}
-wasix_eth_sync = {workspace = true}
 wasix_eth_rpc = {workspace = true}
 
 tokio = { workspace = true, features = ["rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" , "signal"]}

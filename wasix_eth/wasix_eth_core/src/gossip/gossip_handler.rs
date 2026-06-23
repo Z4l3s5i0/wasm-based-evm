@@ -5,12 +5,14 @@ use wasix_eth_utils::{debug, error, info};
 use wasix_eth_utils::metrics::GOSSIP_MESSAGES_RECEIVED;
 use wasix_eth_types::{Block, Result, Transaction};
 use crate::chain_manager::ChainManager;
+use crate::sync::registry::SyncRegistry;
 use crate::gossip::engine_sink::EngineSink;
 use crate::Engine;
 
 pub struct GossipService {
     engine: Arc<Engine>,
     chain: Arc<dyn ChainManager>,
+    sync_registry: Arc<SyncRegistry>,
     gossip_rx: Receiver<Vec<u8>>,
 }
 
@@ -18,11 +20,13 @@ impl GossipService {
     pub fn new(
         engine: Arc<Engine>,
         chain: Arc<dyn ChainManager>,
+        sync_registry: Arc<SyncRegistry>,
         gossip_rx: Receiver<Vec<u8>>,
     ) -> Self {
         Self {
             engine,
             chain,
+            sync_registry,
             gossip_rx,
         }
     }
@@ -54,9 +58,9 @@ impl GossipService {
                 if !has_block {
                     // If we don't have it, trigger sync to process it and its ancestors
                     info!("[Gossip] New block received via gossip, triggering sync: {:?}", block_hash);
-                    let chain = self.chain.clone();
+                    let registry = self.sync_registry.clone();
                     tokio::spawn(async move {
-                        let _ = chain.trigger_sync().await;
+                        registry.add_target(block_hash, None).await;
                     });
                 }
             }

@@ -4,6 +4,7 @@ use wasix_eth_types::p2p::{GetBlockHeaders, BlockHashOrNumber, GetBlockBodies, R
 use alloy_consensus::Block as ConsensusBlock;
 use alloy_consensus::TxEnvelope as Transaction;
 use alloy_primitives::{B256, U256};
+use rand::seq::SliceRandom;
 
 pub struct Downloader {
     pub(crate) peer_provider: Arc<dyn PeerProvider>,
@@ -45,6 +46,17 @@ impl Downloader {
             }
         }
         best_peer
+    }
+
+    pub async fn get_any_peer(&self) -> Option<String> {
+        let peers = self.peer_provider.get_active_peers().await.ok()?;
+        if peers.is_empty() {
+            return None;
+        }
+        
+        let mut rng = rand::thread_rng();
+        peers.choose(&mut rng).map(|p| p.peer_id.clone())
+        //peers.first().map(|p| p.peer_id.clone())
     }
 
     pub async fn download_headers(&self, peer_id: &str, start: u64, amount: u64) -> anyhow::Result<Vec<wasix_eth_types::Header>> {

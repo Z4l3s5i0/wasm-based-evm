@@ -5,7 +5,6 @@ members = [
     "wasix_eth_types",
     "wasix_eth_execution",
     "wasix_eth_p2p",
-    "wasix_eth_sync",
     "wasix_eth_app",
     "wasix_eth_utils",
     "wasix_eth_core",
@@ -35,7 +34,6 @@ wasix_eth_storage = { path = "wasix_eth_storage", version = "0.1.0" }
 wasix_eth_types = { path = "wasix_eth_types", version = "0.1.0" }
 wasix_eth_execution = { path = "wasix_eth_execution", version = "0.1.0" }
 wasix_eth_p2p = { path = "wasix_eth_p2p", version = "0.1.0" }
-wasix_eth_sync = { path = "wasix_eth_sync", version = "0.1.0" }
 wasix_eth_core = { path = "wasix_eth_core", version = "0.1.0" }
 
 # app

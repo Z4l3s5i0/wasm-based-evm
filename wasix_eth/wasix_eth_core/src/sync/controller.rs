@@ -1,18 +1,19 @@
-use crate::downloader::Downloader;
-use crate::processor::BlockProcessor;
 use std::sync::Arc;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types::SyncInfo;
 use alloy_rpc_types::engine::ForkchoiceState;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
-use wasix_eth_core::{ChainManager};
-use wasix_eth_core::engine::sidechain_tracker::InvalidationReason;
-use wasix_eth_core::mempool::mempool_provider::MempoolProvider;
 use wasix_eth_types::sync::{SyncProvider, PeerProvider};
 use wasix_eth_types::{async_trait, SyncStatus, Transaction, Block, Hardfork, ChainConfig};
 use wasix_eth_utils::metrics::SYNC_STATUS;
 use wasix_eth_utils::{debug, error, info};
+use crate::chain_manager::InvalidationReason;
+use crate::ChainManager;
+use crate::mempool::mempool_provider::MempoolProvider;
+use crate::sync::registry::SyncRegistry;
+use crate::sync::downloader::Downloader;
+use crate::sync::processor::BlockProcessor;
 
 pub struct SyncController {
     read_storage: DatabaseReadProvider,
@@ -20,6 +21,7 @@ pub struct SyncController {
     downloader: Downloader,
     processor: BlockProcessor,
     chain_manager: Arc<dyn ChainManager>,
+    sync_registry: Arc<SyncRegistry>,
     sync_lock: tokio::sync::Mutex<()>,
 }
 
@@ -29,6 +31,7 @@ impl SyncController {
         peer_provider: Arc<dyn PeerProvider>,
         processor: BlockProcessor,
         chain_manager: Arc<dyn ChainManager>,
+        sync_registry: Arc<SyncRegistry>,
         mempool: Arc<dyn MempoolProvider>,
     ) -> Self {
         Self {
@@ -37,6 +40,7 @@ impl SyncController {
             downloader: Downloader::new(peer_provider),
             processor,
             chain_manager,
+            sync_registry,
             sync_lock: tokio::sync::Mutex::new(()),
         }
     }
@@ -63,10 +67,10 @@ impl SyncController {
         let (_local_hash, local_height) = self.chain_manager.head_block().await;
         let local_td = self.chain_manager.total_difficulty().await;
 
-        if let Some((target_hash, affinity_peer)) = self.chain_manager.pop_sync_target().await {
+        if let Some((target_hash, affinity_peer)) = self.sync_registry.pop_target().await {
             debug!("[Sync] Attempting to sync specific target {:?} (affinity: {:?})", target_hash, affinity_peer);
             
-            let mut sync_peer = None;
+            let mut sync_peer: Option<String> = None;
             if let Some(peer_id) = affinity_peer.as_ref() {
                 if let Some(_session) = self.downloader.peer_provider.get_session(peer_id).await {
                     sync_peer = Some(peer_id.clone());
@@ -78,6 +82,12 @@ impl SyncController {
                     sync_peer = Some(best_peer_id);
                 }
             }
+            // If still none, pick any active peer to try fetching the specific target
+            if sync_peer.is_none() {
+                if let Some(any_peer_id) = self.downloader.get_any_peer().await {
+                    sync_peer = Some(any_peer_id);
+                }
+            }
 
             if let Some(peer_id) = sync_peer {
                 if let Err(e) = self.fetch_ancestors(&peer_id, target_hash, target_hash).await {
@@ -86,7 +96,7 @@ impl SyncController {
             } else {
                 debug!("[Sync] No peers found for target {:?}, triggering broadened discovery", target_hash);
                 // Put it back
-                self.chain_manager.add_sync_target(target_hash, affinity_peer).await;
+                self.sync_registry.add_target(target_hash, affinity_peer).await;
             }
         }
 
@@ -186,7 +196,7 @@ impl SyncController {
         for (header, body) in headers.into_iter().zip(bodies.into_iter()) {
             let block_num = header.number;
             let block_timestamp = header.timestamp;
-            let block = wasix_eth_types::Block { header, body };
+            let block = Block { header, body };
             let block_hash = block.header.hash_slow();
 
             // Check if parent exists in storage
@@ -195,7 +205,7 @@ impl SyncController {
 
             if !parent_exists && block_num > 0 {
                 debug!("[Sync] Parent block {:?} for {} missing, fetching ancestors", parent_hash, block_num);
-                self.chain_manager.add_sync_target(parent_hash, Some(peer_id.to_string())).await;
+                self.sync_registry.add_target(parent_hash, Some(peer_id.to_string())).await;
                 if let Err(e) = self.fetch_ancestors(peer_id, parent_hash, block_hash).await {
                     error!("[Sync] Failed to fetch ancestors: {}", e);
                     self.chain_manager.add_invalid_block(block_hash, parent_hash, InvalidationReason::Hard).await;
@@ -267,7 +277,21 @@ impl SyncController {
             }
 
             debug!("[Sync] Fetching ancestor block {:?}", current_hash);
-            let block = self.downloader.download_block_by_hash(peer_id, current_hash).await?;
+            // Try the affinity/best peer first; if it fails, try other active peers
+            let mut fetched_block = self.downloader.download_block_by_hash(peer_id, current_hash).await;
+            if fetched_block.is_err() {
+                debug!("[Sync] Primary peer {} did not return block {:?}, trying other peers", peer_id, current_hash);
+                if let Ok(peers) = self.downloader.peer_provider.get_active_peers().await {
+                    for p in peers.iter().filter(|p| p.peer_id != *peer_id) {
+                        if let Ok(block) = self.downloader.download_block_by_hash(&p.peer_id, current_hash).await {
+                            fetched_block = Ok(block);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            let block = fetched_block.map_err(|e| anyhow::anyhow!("Failed to fetch block {:?} from any peer: {}", current_hash, e))?;
             let parent_hash = block.header.parent_hash;
             to_process.push(block);
             current_hash = parent_hash;

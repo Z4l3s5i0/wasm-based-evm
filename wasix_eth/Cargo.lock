@@ -3995,7 +3995,6 @@ dependencies = [
  "wasix_eth_p2p",
  "wasix_eth_rpc",
  "wasix_eth_storage",
- "wasix_eth_sync",
  "wasix_eth_types",
  "wasix_eth_utils",
 ]
@@ -4004,6 +4003,7 @@ dependencies = [
 name = "wasix_eth_core"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
@@ -4012,6 +4012,7 @@ dependencies = [
  "alloy-signer-local",
  "anyhow",
  "futures-util",
+ "rand 0.8.5",
  "serde_json",
  "tempfile",
  "tokio",
@@ -4102,25 +4103,6 @@ dependencies = [
  "serde",
  "serde_json",
  "tempfile",
- "wasix_eth_types",
- "wasix_eth_utils",
-]
-
-[[package]]
-name = "wasix_eth_sync"
-version = "0.1.0"
-dependencies = [
- "alloy-consensus",
- "alloy-primitives",
- "alloy-rlp",
- "alloy-rpc-types",
- "anyhow",
- "rand 0.8.5",
- "tempfile",
- "tokio",
- "wasix_eth_core",
- "wasix_eth_execution",
- "wasix_eth_storage",
  "wasix_eth_types",
  "wasix_eth_utils",
 ]

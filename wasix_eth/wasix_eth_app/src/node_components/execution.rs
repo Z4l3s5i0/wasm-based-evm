@@ -8,6 +8,7 @@ use wasix_eth_core::engine::canonicality_tracker::CanonicalState;
 use wasix_eth_core::engine::sidechain_tracker::BlockTree;
 use wasix_eth_core::engine::reorg_manager::ReorgHandler;
 use wasix_eth_core::{ChainManager, ChainManagerImpl, Engine, EthConsensus};
+use wasix_eth_core::sync::registry::SyncRegistry;
 use wasix_eth_execution::execution_provider::EthExecutionProvider;
 use wasix_eth_storage::{read::DatabaseReadProvider, write::DatabaseWriteProvider};
 use wasix_eth_types::U256;
@@ -18,6 +19,7 @@ pub struct ExecutionPayload {
     pub engine: Arc<Engine>,
     pub mempool: Arc<Mempool>,
     pub chain_manager: Arc<dyn ChainManager>,
+    pub sync_registry: Arc<SyncRegistry>,
 }
 
 impl ExecutionPayload {
@@ -47,6 +49,7 @@ impl ExecutionPayload {
             (*read_provider).clone(),
         ));
         let consensus = Arc::new(EthConsensus::new(read_provider.clone()));
+        let sync_registry = Arc::new(SyncRegistry::new());
         let forkchoice_validator = ForkchoiceValidator::new(
             (*read_provider).clone(),
             chain_manager.clone(),
@@ -75,14 +78,16 @@ impl ExecutionPayload {
             block_tree.clone(),
             reorg_handler.clone(),
             forkchoice_validator.clone(),
-            mempool_listener
+            mempool_listener,
+            sync_registry.clone(),
         ));
 
         Self {
             rpc_engine,
-            engine,
+            engine: engine.clone(),
             mempool,
             chain_manager,
+            sync_registry,
         }
     }
 }

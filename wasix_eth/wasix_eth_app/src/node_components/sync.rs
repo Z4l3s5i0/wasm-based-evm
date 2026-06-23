@@ -1,16 +1,19 @@
-use wasix_eth_sync::SyncController;
-use wasix_eth_sync::processor::BlockProcessor;
 use wasix_eth_core::gossip::gossip_bridge::GossipBridge;
 use wasix_eth_core::gossip::GossipService;
+use wasix_eth_core::sync::registry::SyncRegistry;
 use wasix_eth_core::{Engine, ChainManager};
 use wasix_eth_p2p::{SyncService, PeerManager};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_types::sync::SyncProvider;
+use wasix_eth_core::sync::sync_orchestrator::SyncOrchestrator;
 use std::sync::Arc;
 use tokio::task::JoinHandle;
+use wasix_eth_core::sync::controller::SyncController;
+use wasix_eth_core::sync::processor::BlockProcessor;
 
 pub struct SyncPayload {
     pub sync_controller: Arc<SyncController>,
+    pub sync_orchestrator: Arc<SyncOrchestrator>,
     pub gossip_bridge: Arc<GossipBridge>,
 }
 
@@ -20,6 +23,7 @@ impl SyncPayload {
         peer_manager: Arc<PeerManager>,
         engine: Arc<Engine>,
         chain_manager: Arc<dyn ChainManager>,
+        sync_registry: Arc<SyncRegistry>,
         sync_service: Arc<SyncService>,
     ) -> Self {
         let processor = BlockProcessor::new(engine.clone());
@@ -28,23 +32,19 @@ impl SyncPayload {
             peer_manager.registry.clone(),
             processor,
             chain_manager.clone(),
+            sync_registry.clone(),
             engine.mempool.clone(),
         ));
 
-        sync_service.set_provider(sync_controller.clone()).await;
+        let sync_orchestrator = Arc::new(SyncOrchestrator::new(sync_registry.clone(), sync_controller.clone() as Arc<dyn SyncProvider>));
 
-        let sync_ctrl = sync_controller.clone();
-        chain_manager.set_sync_trigger(Box::new(move || {
-            let ctrl = sync_ctrl.clone();
-            tokio::spawn(async move {
-                let _ = ctrl.trigger_sync().await;
-            });
-        })).await;
+        sync_service.set_provider(sync_controller.clone()).await;
 
         let gossip_bridge = Arc::new(GossipBridge::new(sync_service));
 
         Self {
             sync_controller,
+            sync_orchestrator,
             gossip_bridge,
         }
     }
@@ -69,6 +69,7 @@ impl SyncPayload {
         let gossip_service = GossipService::new(
             engine.clone(),
             chain_manager.clone(),
+            self.sync_orchestrator.registry.clone(),
             gossip_rx,
         );
         tasks.push(tokio::spawn(async move {
@@ -79,6 +80,12 @@ impl SyncPayload {
         let sc_task = self.sync_controller.clone();
         tasks.push(tokio::spawn(async move {
             sc_task.start().await;
+        }));
+
+        // 3. Start SyncOrchestrator
+        let so_task = self.sync_orchestrator.clone();
+        tasks.push(tokio::spawn(async move {
+            so_task.run().await;
         }));
 
         tasks

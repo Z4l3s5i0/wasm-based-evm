@@ -1,6 +1,7 @@
 use futures_util::{future::BoxFuture, FutureExt};
 use crate::engine::canonicality_tracker::CanonicalState;
 use crate::engine::sidechain_tracker::{BlockTree, InvalidationReason};
+use crate::sync::registry::SyncRegistry;
 use crate::ChainManager;
 use crate::Consensus;
 use alloy_rpc_types::RpcBlockHash;
@@ -27,10 +28,15 @@ pub struct PayloadProcessor {
     pub write_storage: DatabaseWriteProvider,
     pub execution: Arc<dyn ExecutionProvider>,
     pub chain: Arc<dyn ChainManager>,
+    pub sync_registry: Arc<SyncRegistry>,
     pub event_tx: broadcast::Sender<EngineEvent>,
 }
 
 impl PayloadProcessor {
+    pub async fn add_sync_target(&self, hash: B256, peer_id: Option<String>) {
+        self.sync_registry.add_target(hash, peer_id).await;
+    }
+
     pub async fn new_payload_internal(
         &self, 
         block: Block<Transaction>, 
@@ -178,10 +184,10 @@ impl PayloadProcessor {
             if !is_genesis {
                 debug!("[PayloadProcessor] Parent block not found in storage: requested_parent={:?}", parent_hash);
                 
-                self.chain.add_sync_target(parent_hash, None).await;
-                if let Err(e) = self.chain.trigger_sync().await {
-                    error!("[PayloadProcessor] Failed to trigger sync for missing parent: {}", e);
-                }
+                let registry = self.sync_registry.clone();
+                tokio::spawn(async move {
+                    registry.add_target(parent_hash, None).await;
+                });
 
                 return Some(PayloadStatus {
                     status: PayloadStatusEnum::Syncing,

@@ -10,7 +10,6 @@ wasix_eth_storage = { workspace = true }
 wasix_eth_types = { workspace = true }
 wasix_eth_execution = { workspace = true }
 wasix_eth_p2p = { workspace = true }
-wasix_eth_sync = { workspace = true }
 wasix_eth_utils = { workspace = true }
 wasix_eth_app = { workspace = true }
 tokio = { workspace = true }

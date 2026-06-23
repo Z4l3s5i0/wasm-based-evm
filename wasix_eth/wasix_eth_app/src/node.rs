@@ -155,6 +155,7 @@ impl Node {
             network_payload.peer_manager.clone(),
             execution_payload.engine.clone(),
             execution_payload.chain_manager.clone(),
+            execution_payload.sync_registry.clone(),
             network_payload.sync_service.clone(),
         ).await;
 
