@@ -1,3 +1,4 @@
+use crate::engine::canonicality_tracker::CanonicalState;
 use crate::account_manager::AccountManager;
 use crate::chain_manager::ChainManager;
 use crate::mempool::mempool_provider::MempoolProvider;
@@ -50,6 +51,7 @@ pub struct RPCEngine {
     pub event_tx: broadcast::Sender<EngineEvent>,
     pub consensus: Arc<dyn Consensus>,
     pub execution: Arc<dyn ExecutionProvider>,
+    pub canonical: Arc<CanonicalState>,
 }
 
 impl RPCEngine {
@@ -63,6 +65,7 @@ impl RPCEngine {
         event_tx: broadcast::Sender<EngineEvent>,
         consensus: Arc<dyn Consensus>,
         execution: Arc<dyn ExecutionProvider>,
+        canonical: Arc<CanonicalState>,
     ) -> Self {
         Self {
             read_storage: read_storage.clone(),
@@ -73,6 +76,7 @@ impl RPCEngine {
             event_tx: event_tx.clone(),
             consensus: consensus.clone(),
             execution: execution.clone(),
+            canonical,
        }
     }
 
@@ -123,7 +127,8 @@ impl RPCEngine {
 
         // 1. Add to mempool synchronously to ensure consistency for block building
         let from = tx.recover_signer().unwrap_or_default();
-        let current_nonce = self.read_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest), None).unwrap_or_default();
+        let (head_hash, _) = self.canonical.get_head().await;
+        let current_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
         
         if self.mempool.add_transaction(tx.clone(), current_nonce).await {
             debug!("[Engine] Added transaction {:?} to mempool", hash);

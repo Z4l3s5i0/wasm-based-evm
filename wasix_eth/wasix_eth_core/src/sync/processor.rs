@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use alloy_primitives::B256;
-use wasix_eth_types::{Block, Transaction, SignerRecoverable, BlockId, BlockNumberOrTag};
-use wasix_eth_utils::info;
 use crate::Engine;
+use alloy_primitives::B256;
+use std::sync::Arc;
+use wasix_eth_types::{Block, Transaction};
+use wasix_eth_utils::info;
 
 #[derive(Clone)]
 pub struct BlockProcessor {
@@ -32,11 +32,8 @@ impl BlockProcessor {
     }
 
     pub async fn process_transaction(&self, tx: Transaction) -> anyhow::Result<()> {
-        let from = tx.recover_signer().map_err(|e| anyhow::anyhow!("Signer recovery failed: {}", e))?;
-        let nonce = self.engine.rpc_engine.get_transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest)).await
-            .unwrap_or(0);
-            
-        self.engine.mempool.add_transaction(tx, nonce).await;
+        self.engine.rpc_engine.submit_transaction(tx).await
+            .map_err(|e| anyhow::anyhow!("Failed to submit transaction: {:?}", e))?;
         Ok(())
     }
 

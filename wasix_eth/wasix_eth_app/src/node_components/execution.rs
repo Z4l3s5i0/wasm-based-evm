@@ -62,7 +62,8 @@ impl ExecutionPayload {
             mempool.clone(),
             engine_event_tx.clone(),
             consensus.clone(),
-            execution_provider.clone()
+            execution_provider.clone(),
+            canonical.clone()
         ));
         let engine = Arc::new(Engine::new(
             (*read_provider).clone(),

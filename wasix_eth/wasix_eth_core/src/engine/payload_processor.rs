@@ -248,17 +248,41 @@ impl PayloadProcessor {
         let block_number = block.header.number;
 
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
-            chain_id: self.read_storage.chain_id().unwrap_or(1),
+            chain_id: self.read_storage.chain_id().unwrap_or(31133),
             ..Default::default()
         });
+        
+        // 1. Validate parent block - Move this up to handle SYNCING/ACCEPTED early for unknown parents
+        // if it's not a protocol-level structural failure.
+        if let Some(status) = self.validate_parent_block(parent_hash).await {
+            if status.status != PayloadStatusEnum::Syncing && status.status != PayloadStatusEnum::Accepted {
+
+                self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
+
+                let self_clone = self.clone();
+                tokio::spawn(async move {
+                    self_clone.invalidate_descendants(actual_hash).await;
+                });
+
+                let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
+                return Ok(PayloadStatus {
+                    status: status.status,
+                    latest_valid_hash: latest_valid,
+                });
+            }
+
+            // If we have no structural failure yet, but parent is missing, we MUST return SYNCING or ACCEPTED.
+            // But the spec says we SHOULD perform structural validation even if the parent is missing.
+            // So we delay returning SYNCING until after structural validation.
+        }
+
         // 2. Cancun validation
         if let Err(e) = self.consensus.validate_cancun(&block, expected_blob_versioned_hashes.as_deref()) {
-            error!("[PayloadProcessor] Cancun validation failed: {}", e);
+            error!("[PayloadProcessor] Cancun validation failed for block {}: {}", actual_hash, e);
             // EIP-4844: "Client software SHOULD NOT permanently blacklist the block hash if it is rejected due to a mismatch between
             // expected_blob_versioned_hashes and the actual hashes in the block."
 
             // If the block is already known to be valid in storage, we MUST NOT mark it as invalid or remove it.
-            // We just return INVALID for THIS call.
             if let Ok(Some(existing_header)) = self.read_storage.header(BlockId::Hash(actual_hash.into())) {
                 if existing_header.hash_slow() == actual_hash {
                     let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
@@ -283,30 +307,37 @@ impl PayloadProcessor {
                 latest_valid_hash: latest_valid,
             });
         }
-        // 1. Validate parent block
-        if let Some(status) = self.validate_parent_block(parent_hash).await {
-            if status.status != PayloadStatusEnum::Syncing && status.status != PayloadStatusEnum::Accepted {
-                // If the parent is marked INVALID, we should only blacklist this block if the parent is canonical OR if it was already marked invalid by a canonical chain reorg.
-                let _parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
-                let _parent_is_finalized = self.canonical.get_finalized().await == parent_hash;
-                
-                //if _parent_is_canonical || _parent_is_finalized {
-                    self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
 
-                    // Recursive invalidation
-                    let self_clone = self.clone();
-                    tokio::spawn(async move {
-                        self_clone.invalidate_descendants(actual_hash).await;
+        // 2.5 Structural validation (Body)
+        if let Err(e) = self.consensus.validate_body(&block, &chain_config) {
+            error!("[PayloadProcessor] Body validation failed for block {}: {}", actual_hash, e);
+            // Structural failures are Hard invalid.
+            if let Ok(Some(existing_header)) = self.read_storage.header(BlockId::Hash(actual_hash.into())) {
+                if existing_header.hash_slow() == actual_hash {
+                    let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
+                    return Ok(PayloadStatus {
+                        status: PayloadStatusEnum::Invalid { validation_error: e },
+                        latest_valid_hash: latest_valid,
                     });
-                //}
-
-                let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
-                return Ok(PayloadStatus {
-                    status: status.status,
-                    latest_valid_hash: latest_valid,
-                });
+                }
             }
 
+            let parent_is_canonical = self.read_storage.is_canonical(parent_hash).unwrap_or(false);
+            let parent_is_finalized = self.canonical.get_finalized().await == parent_hash;
+            if parent_is_canonical || parent_is_finalized {
+                self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
+            }
+
+            let _ = self.write_storage.remove_payload_by_block_hash(actual_hash);
+            let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
+            return Ok(PayloadStatus {
+                status: PayloadStatusEnum::Invalid { validation_error: e },
+                latest_valid_hash: latest_valid,
+            });
+        }
+
+        // Now handle the SYNCING/ACCEPTED case if parent is missing
+        if let Some(status) = self.validate_parent_block(parent_hash).await {
             if status.status == PayloadStatusEnum::Accepted || status.status == PayloadStatusEnum::Syncing {
                 debug!("[PayloadProcessor] Parent unknown for block {:?}, buffering in block tree", actual_hash);
                 self.block_tree.add_orphan(parent_hash, block, expected_blob_versioned_hashes, parent_beacon_block_root).await;
