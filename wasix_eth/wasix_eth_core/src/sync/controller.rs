@@ -3,6 +3,7 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types::SyncInfo;
 use alloy_rpc_types::engine::ForkchoiceState;
 use wasix_eth_storage::read::DatabaseReadProvider;
+use wasix_eth_storage::HeaderProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
 use wasix_eth_types::sync::{SyncProvider, PeerProvider};
 use wasix_eth_types::{async_trait, SyncStatus, Transaction, Block, Hardfork, ChainConfig};
@@ -231,17 +232,36 @@ impl SyncController {
         
         // 5. Update forkchoice to the latest imported block
         if let Some((hash, number)) = last_imported_block {
+            // Post‑Merge rule: Do NOT alter canonical head from sync ranges.
+            // In Paris/Shanghai and later, forkchoice is dictated by the CL via Engine API.
+            let active_fork = Hardfork::get_active_fork(&chain_config, number, last_imported_timestamp);
+            if active_fork >= Hardfork::Shanghai {
+                debug!(
+                    "[Sync] Synced post‑merge range up to block #{} ({}); head update deferred to Engine API",
+                    number, hash
+                );
+                self.chain_manager.set_sync_status(SyncStatus::None).await;
+                return Ok(());
+            }
+
             let state = ForkchoiceState {
                 head_block_hash: hash,
                 safe_block_hash: hash,
                 finalized_block_hash: B256::ZERO,
             };
-            
-            let fork = Hardfork::get_active_fork(&chain_config, number, last_imported_timestamp);
-            let version = if fork >= Hardfork::Cancun { 3 } else { 2 };
 
-            match self.processor.engine.forkchoice_updated(state, None, version).await {
-                Ok(_) => info!("[Sync] Successfully updated forkchoice (V{}) to block {} ({})", version, number, hash),
+            let version = if active_fork >= Hardfork::Cancun { 3 } else { 2 };
+
+            match self
+                .processor
+                .engine
+                .forkchoice_updated(state, None, version)
+                .await
+            {
+                Ok(_) => info!(
+                    "[Sync] Successfully updated forkchoice (V{}) to block {} ({})",
+                    version, number, hash
+                ),
                 Err(e) => error!("[Sync] Failed to update forkchoice after sync range: {}", e),
             }
         }
@@ -310,7 +330,7 @@ impl SyncController {
         let mut last_processed_hash = None;
         let mut last_processed_num = 0;
         let mut last_processed_timestamp = 0;
-        
+
         for block in to_process.into_iter().rev() {
             let block_num = block.header.number;
             let block_hash = block.header.hash_slow();
@@ -321,7 +341,7 @@ impl SyncController {
                 error!("[Sync] Failed to process ancestor block {}: {}", block_num, e);
                 // Mark block as invalid
                 self.chain_manager.add_invalid_block(block_hash, parent_hash, InvalidationReason::Hard).await;
-                
+
                 // Immediately mark the requested head as invalid too
                 if requested_head != block_hash {
                     self.chain_manager.add_invalid_block(requested_head, block_hash, InvalidationReason::Hard).await;
@@ -342,17 +362,36 @@ impl SyncController {
 
         // Update forkchoice if we processed any blocks
         if let Some(hash) = last_processed_hash {
+            // Post‑Merge rule: Do NOT alter canonical head from ancestor fetching.
+            // In Paris/Shanghai and later, forkchoice is dictated by the CL via Engine API.
+            let active_fork =
+                Hardfork::get_active_fork(&chain_config, last_processed_num, last_processed_timestamp);
+            if active_fork >= Hardfork::Shanghai {
+                debug!(
+                    "[Sync] Processed post‑merge ancestor block #{} ({}); head update deferred to Engine API",
+                    last_processed_num, hash
+                );
+                return Ok(());
+            }
+
             let state = ForkchoiceState {
                 head_block_hash: hash,
                 safe_block_hash: hash,
                 finalized_block_hash: B256::ZERO,
             };
-            
-            let fork = Hardfork::get_active_fork(&chain_config, last_processed_num, last_processed_timestamp);
-            let version = if fork >= Hardfork::Cancun { 3 } else { 2 };
 
-            if let Err(e) = self.processor.engine.forkchoice_updated(state, None, version).await {
-                error!("[Sync] Failed to update forkchoice (V{}) after fetching ancestors to block {}: {}", version, last_processed_num, e);
+            let version = if active_fork >= Hardfork::Cancun { 3 } else { 2 };
+
+            if let Err(e) = self
+                .processor
+                .engine
+                .forkchoice_updated(state, None, version)
+                .await
+            {
+                error!(
+                    "[Sync] Failed to update forkchoice (V{}) after fetching ancestors to block {}: {}",
+                    version, last_processed_num, e
+                );
             }
         }
 
@@ -385,28 +424,86 @@ impl SyncProvider for SyncController {
         let block_hash = block.header.hash_slow();
         let block_num = block.header.number;
         let block_timestamp = block.header.timestamp;
-        
-        let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
-            chain_id: self.read_storage.chain_id().unwrap_or(1),
-            ..Default::default()
-        });
 
+        // Load chain config for fork detection
+        let chain_config = self
+            .read_storage
+            .chain_config()
+            .ok()
+            .flatten()
+            .unwrap_or_else(|| ChainConfig {
+                chain_id: self.read_storage.chain_id().unwrap_or(1),
+                ..Default::default()
+            });
+
+        // 1) Idempotency: if we already have this block, do nothing
+        if self.chain_manager.has_block(block_hash).await {
+            return Ok(());
+        }
+
+        // 2) Import the block to make it available in storage (side branches included)
         self.processor.process_block(block).await?;
-        
-        // Update forkchoice for gossip block
+
+        // 3) Post‑Merge rule: Do NOT alter canonical head from P2P gossip
+        //    In Paris/Shanghai and later, forkchoice is dictated by the CL via Engine API.
+        let active_fork = Hardfork::get_active_fork(&chain_config, block_num, block_timestamp);
+        if active_fork >= Hardfork::Shanghai {
+            // Keep database populated; wait for CL `forkchoiceUpdated` to move head.
+            debug!(
+                "[Sync] Imported post‑merge gossip block #{} ({}); head update deferred to Engine API",
+                block_num, block_hash
+            );
+            return Ok(());
+        }
+
+        // 4) Pre‑merge fallback: only move head forward if this block directly extends the head
+        let (curr_head_hash, curr_head_num) = self.chain_manager.head_block().await;
+
+        // Guard A: equal height or older block must not change head
+        if block_num <= curr_head_num {
+            return Ok(());
+        }
+
+        // Guard B: only update head if it is the direct child of current head
+        let is_direct_descendant = if block_num == curr_head_num + 1 {
+            // Cheap check via parent hash equality when available
+            if let Ok(Some(header)) = self
+                .read_storage
+                .header(wasix_eth_types::BlockId::Hash(block_hash.into()))
+            {
+                header.parent_hash == curr_head_hash
+            } else {
+                // If header not yet queryable (race), be conservative and skip updating head via gossip
+                false
+            }
+        } else {
+            false
+        };
+
+        if !is_direct_descendant {
+            // Higher height but not directly extending our head → side branch; don't self‑reorg on gossip
+            return Ok(());
+        }
+
+        // Safe to update head in pre‑merge mode
         let state = ForkchoiceState {
             head_block_hash: block_hash,
             safe_block_hash: block_hash,
             finalized_block_hash: B256::ZERO,
         };
-        
-        let fork = Hardfork::get_active_fork(&chain_config, block_num, block_timestamp);
-        let version = if fork >= Hardfork::Cancun { 3 } else { 2 };
-
-        if let Err(e) = self.processor.engine.forkchoice_updated(state, None, version).await {
-            error!("[Sync] Failed to update forkchoice (V{}) for gossip block {} ({}): {}", version, block_num, block_hash, e);
+        let version = if active_fork >= Hardfork::Cancun { 3 } else { 2 };
+        if let Err(e) = self
+            .processor
+            .engine
+            .forkchoice_updated(state, None, version)
+            .await
+        {
+            error!(
+                "[Sync] Failed to update forkchoice (V{}) for gossip block {} ({}): {}",
+                version, block_num, block_hash, e
+            );
         }
-        
+
         Ok(())
     }
 

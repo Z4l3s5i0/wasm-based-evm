@@ -73,12 +73,40 @@ impl ReorgHandler {
             }
         }
 
+        // If the new head itself is the common ancestor, it means we are attempting to move backwards.
+        if common_ancestor_found && common_ancestor_hash == new_head {
+            debug!(
+                "[ChainManager] Proposed new head is an ancestor (hash {:?}). Skipping reorg.",
+                new_head
+            );
+            return Ok(ReorgContext {
+                common_ancestor_hash,
+                new_canonical_blocks: Vec::new(),
+                is_reorg: false,
+            });
+        }
+
+        // No reorg if the old head equals the common ancestor (already on canonical tip)
+        if common_ancestor_found && common_ancestor_hash == old_head {
+            return Ok(ReorgContext {
+                common_ancestor_hash,
+                new_canonical_blocks,
+                is_reorg: false,
+            });
+        }
+
         let is_reorg = common_ancestor_found && old_head != common_ancestor_hash;
         if is_reorg {
-            info!("[ChainManager] Reorg detected! Common ancestor: {:?} at height {}",
+            info!(
+                "[ChainManager] Reorg detected! Common ancestor: {:?} at height {}",
                 common_ancestor_hash,
-                self.read_storage.header(BlockId::Hash(common_ancestor_hash.into())).ok().flatten().map(|h| h.number).unwrap_or(0)
-             );
+                self.read_storage
+                    .header(BlockId::Hash(common_ancestor_hash.into()))
+                    .ok()
+                    .flatten()
+                    .map(|h| h.number)
+                    .unwrap_or(0)
+            );
         }
 
         Ok(ReorgContext {
