@@ -414,6 +414,46 @@ impl Engine {
         // 0. Check if head block is known before ancestry validation
         let head_status = self.determine_payload_status(forkchoice_state.head_block_hash).await;
 
+        // Extra check for invalid head or parent
+        if head_status.status == PayloadStatusEnum::Syncing {
+            // Check if head or its parent is explicitly known to be invalid
+            if let Some(reason) = self.chain.get_invalidation_reason(forkchoice_state.head_block_hash).await {
+                if reason == InvalidationReason::Hard {
+                    let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
+                    debug!("[Engine] forkchoice head {:?} is known invalid (Hard). Latest valid: {:?}", forkchoice_state.head_block_hash, latest_valid);
+                    return Ok(ForkchoiceUpdated {
+                        payload_status: PayloadStatus {
+                            status: PayloadStatusEnum::Invalid { validation_error: "Head block is known to be invalid".to_string() },
+                            latest_valid_hash: latest_valid,
+                        },
+                        payload_id: None,
+                    });
+                }
+            }
+            
+            // Check parent if head is unknown
+            if let Ok(None) = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))) {
+                 // Try to get parent from somewhere else (payload map or block tree)
+                 let header_opt: Option<Header> = self.payload_processor.get_header_from_anywhere(forkchoice_state.head_block_hash).await;
+                 let parent_hash = header_opt.map(|h| h.parent_hash);
+                 if let Some(p_hash) = parent_hash {
+                    if let Some(reason) = self.chain.get_invalidation_reason(p_hash).await {
+                        if reason == InvalidationReason::Hard {
+                            let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
+                            debug!("[Engine] forkchoice head {:?} has known invalid parent {:?} (Hard). Latest valid: {:?}", forkchoice_state.head_block_hash, p_hash, latest_valid);
+                            return Ok(ForkchoiceUpdated {
+                                payload_status: PayloadStatus {
+                                    status: PayloadStatusEnum::Invalid { validation_error: "Parent block is known to be invalid".to_string() },
+                                    latest_valid_hash: latest_valid,
+                                },
+                                payload_id: None,
+                            });
+                        }
+                    }
+                 }
+            }
+        }
+
         // If headBlockHash is unknown or invalid, return status immediately and don't validate ancestry
         if head_status.status != PayloadStatusEnum::Valid {
             debug!("[Engine] Head block {:?} status is {:?}, returning immediately", forkchoice_state.head_block_hash, head_status.status);

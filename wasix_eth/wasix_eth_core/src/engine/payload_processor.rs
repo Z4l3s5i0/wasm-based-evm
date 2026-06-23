@@ -65,6 +65,28 @@ impl PayloadProcessor {
             processing.insert(actual_hash);
         }
 
+        // 0. Check if parent is explicitly known invalid, reject immediately
+        let parent_hash = block.header.parent_hash;
+        if let Some(reason) = self.chain.get_invalidation_reason(parent_hash).await {
+            if reason == InvalidationReason::Hard {
+                let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
+                debug!("[PayloadProcessor] rejecting payload {:?} because parent {:?} is known invalid (Hard). Latest valid: {:?}", actual_hash, parent_hash, latest_valid);
+                
+                // Also mark this block as invalid
+                self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
+                
+                {
+                    let mut processing = self.processing_payloads.write().unwrap();
+                    processing.remove(&actual_hash);
+                }
+
+                return Ok(PayloadStatus {
+                    status: PayloadStatusEnum::Invalid { validation_error: "Parent block is known to be invalid".to_string() },
+                    latest_valid_hash: latest_valid,
+                });
+            }
+        }
+
         let result = self.new_payload_internal_inner(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
 
         if let Ok(ref status) = result {
@@ -81,7 +103,7 @@ impl PayloadProcessor {
         result
     }
 
-    async fn get_header_from_anywhere(&self, hash: B256) -> Option<Header> {
+    pub async fn get_header_from_anywhere(&self, hash: B256) -> Option<Header> {
         // 1. Check storage
         if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(hash.into())) {
             return Some(header);
