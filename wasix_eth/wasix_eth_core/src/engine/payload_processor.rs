@@ -48,12 +48,9 @@ impl PayloadProcessor {
         if actual_hash != expected_block_hash {
             debug!("[PayloadProcessor] block hash mismatch: actual={}, expected={}", actual_hash, expected_block_hash);
             
-            // Mark as invalid to preserve parent link
-            self.chain.add_invalid_block(actual_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-
             return Ok(PayloadStatus {
                 status: PayloadStatusEnum::Invalid { validation_error: "INVALID_BLOCK_HASH".to_string() },
-                latest_valid_hash: self.chain.get_latest_valid_ancestor(block.header.parent_hash).await,
+                latest_valid_hash: None,
             });
         }
 
@@ -80,8 +77,6 @@ impl PayloadProcessor {
             if let Err(e) = self.consensus.validate_cancun(&block, expected_blob_versioned_hashes.as_deref()) {
                 error!("[PayloadProcessor] Cancun validation (versioned hashes) failed for block {}: {}", actual_hash, e);
                 
-                // Mark as invalid to preserve parent link
-                self.chain.add_invalid_block(actual_hash, block.header.parent_hash, InvalidationReason::Hard).await;
 
                 {
                     let mut processing = self.processing_payloads.write().unwrap();
@@ -89,14 +84,12 @@ impl PayloadProcessor {
                 }
                 return Ok(PayloadStatus {
                     status: PayloadStatusEnum::Invalid { validation_error: e },
-                    latest_valid_hash: self.chain.get_latest_valid_ancestor(block.header.parent_hash).await,
+                    latest_valid_hash: None,
                 });
             }
             if let Err(e) = self.consensus.validate_parent_beacon_block_root(&block.header, parent_beacon_block_root) {
                 error!("[PayloadProcessor] Cancun validation (parent beacon block root) failed for block {}: {}", actual_hash, e);
                 
-                // Mark as invalid to preserve parent link
-                self.chain.add_invalid_block(actual_hash, block.header.parent_hash, InvalidationReason::Hard).await;
 
                 {
                     let mut processing = self.processing_payloads.write().unwrap();
@@ -104,7 +97,7 @@ impl PayloadProcessor {
                 }
                 return Ok(PayloadStatus {
                     status: PayloadStatusEnum::Invalid { validation_error: e },
-                    latest_valid_hash: self.chain.get_latest_valid_ancestor(block.header.parent_hash).await,
+                    latest_valid_hash: None,
                 });
             }
         }
@@ -141,9 +134,6 @@ impl PayloadProcessor {
                     latest_valid_hash: latest_valid,
                 });
             } else if reason == InvalidationReason::Soft {
-                 // For SOFT invalidation of parent, we should also return INVALID for the child
-                 // so it can be retried later if the parent becomes valid.
-                 // We don't mark the child as HARD invalid in this case.
                  let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
                  info!("[PayloadProcessor] rejecting payload {:?} because parent {:?} is known invalid (Soft). Latest valid: {:?}", actual_hash, parent_hash, latest_valid);
                  
@@ -328,7 +318,7 @@ impl PayloadProcessor {
             ..Default::default()
         });
         
-        let active_fork = wasix_eth_types::Hardfork::get_active_fork(&chain_config, block_number, block.header.timestamp);
+        let active_fork = Hardfork::get_active_fork(&chain_config, block_number, block.header.timestamp);
         debug!("[PayloadProcessor] active_fork: {:?} for block {}", active_fork, block_number);
 
         // 1. Cancun validation
