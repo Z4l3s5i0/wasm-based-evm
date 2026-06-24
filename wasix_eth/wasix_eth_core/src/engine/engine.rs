@@ -760,139 +760,25 @@ impl Engine {
     }
 
     pub async fn import_block(&self, block: Block<Transaction>) -> wasix_eth_types::Result<()> {
-        let block_num = block.header.number;
         let block_hash = block.header.hash_slow();
+        info!("[Engine] import_block (sync path) for block {} hash {}", block.header.number, block_hash);
 
-        let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
-            chain_id: self.read_storage.chain_id().unwrap_or(1),
-            ..Default::default()
-        });
+        // Delegate to new_payload_internal to ensure same validation and buffering logic
+        let status = self.new_payload_internal(block, block_hash, None, None).await
+            .map_err(|e| anyhow::anyhow!("Payload internal failed: {}", e))?;
 
-        // 1. Validate body roots
-        if let Err(e) = self.consensus.validate_body(&block, &chain_config) {
-            error!("[Engine] Body validation failed for block {}: {}", block_num, e);
-            self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-            self.payload_processor.revalidate_dependent_payloads(block_hash).await;
-            return Err(anyhow::anyhow!("Body validation failed: {}", e));
-        }
-
-        // 2. Validate parent
-        if let Some(status) = self.validate_parent_block(block.header.parent_hash).await {
-            match status.status {
-                PayloadStatusEnum::Valid => {},
-                PayloadStatusEnum::Invalid { .. } => {
-                    self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-                    self.revalidate_dependent_payloads(block_hash).await;
-                    return Err(anyhow::anyhow!("Parent block validation failed: {:?}", status.status));
-                }
-                _ => return Err(anyhow::anyhow!("Parent block validation failed: {:?}", status.status)),
-            }
-        }
-
-        // 2.5 Cancun validation (internal consistency only as we are in sync mode)
-        if let Err(e) = self.consensus.validate_cancun(&block, None) {
-            error!("[Engine] Cancun validation failed for block {}: {}", block_num, e);
-            self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-            self.revalidate_dependent_payloads(block_hash).await;
-            return Err(anyhow::anyhow!("Cancun validation failed: {}", e));
-        }
-
-        // 2.6 Beacon root validation
-        if let Err(e) = self.consensus.validate_parent_beacon_block_root(&block.header, block.header.parent_beacon_block_root) {
-            error!("[Engine] Beacon root validation failed for block {}: {}", block_num, e);
-            self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-            self.revalidate_dependent_payloads(block_hash).await;
-            return Err(anyhow::anyhow!("Beacon root validation failed: {}", e));
-        }
-
-        let parent_header = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(block.header.parent_hash))).ok().flatten();
-        if let Some(parent) = &parent_header {
-            if let Err(e) = self.consensus.validate_header(&block.header, parent, &chain_config) {
-                error!("[Engine] Header validation failed for block {}: {}", block_num, e);
-                self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-                self.revalidate_dependent_payloads(block_hash).await;
-                return Err(anyhow::anyhow!("Header validation failed: {}", e));
-            }
-        }
-
-        // 3. Execute block
-        let parent_state_root = parent_header.as_ref().map(|h| h.state_root);
-
-        let batch = self.write_storage.begin_batch()?;
-
-        info!("[Engine] Starting execution for block {}", block_num);
-        let exec_result = self.execution.execute_block_with_batch(block.clone(), &batch, parent_state_root);
-        info!("[Engine] Execution finished for block {}. Result is success: {}", block_num, exec_result.is_ok());
-
-        match exec_result {
-            Ok((final_block, receipts)) => {
-                // 3.5 Post-execution validation
-                if let Err(e) = self.consensus.validate_block_post_execution(
-                    &block, 
-                    final_block.header.gas_used, 
-                    final_block.header.receipts_root, 
-                    final_block.header.logs_bloom, 
-                    final_block.header.state_root
-                ) {
-                    error!("[Engine] Post-execution validation failed for block {}: {}", block_num, e);
-                    self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-                    self.revalidate_dependent_payloads(block_hash).await;
-                    return Err(anyhow::anyhow!("Post-execution validation failed: {}", e));
-                }
-
-                // 4. Persist block atomically
-                let parent_td = if block_num == 0 {
-                    U256::ZERO
-                } else {
-                    match self.read_storage.header_td(block.header.parent_hash) {
-                        Ok(Some(td)) => td,
-                        Ok(None) => return Err(anyhow::anyhow!("Parent TD not found for block {} (parent: {})", block_num, block.header.parent_hash)),
-                        Err(e) => return Err(anyhow::anyhow!("Failed to retrieve parent TD for block {}: {}", block_num, e)),
-                    }
-                };
-                let td = parent_td + block.header.difficulty;
-
-                batch.insert_header(block_hash, block.header.clone())?;
-                batch.insert_header_td(block_hash, td)?;
-                batch.insert_header_number(block_hash, block_num)?;
-                batch.insert_block_hash(block_hash, block_num)?;
-                batch.insert_block_body(block_hash, block_num, block.body.clone())?;
-                
-                // Persist ChangeSets
-                let account_changes = batch.collect_account_changes();
-                let storage_changes = batch.collect_storage_changes();
-                batch.insert_account_change_set(block_num, account_changes)?;
-                batch.insert_storage_change_set(block_num, storage_changes)?;
-
-                // Persist receipts and transaction lookup
-                for (i, tx) in block.body.transactions.iter().enumerate() {
-                    let tx_hash = *tx.hash();
-                    batch.insert_transaction(tx_hash, tx.clone())?;
-                    if let Some(receipt) = receipts.get(i) {
-                        batch.insert_receipt(block_hash, i as u64, receipt.clone())?;
-                    }
-                    batch.insert_transaction_lookup(tx_hash, block_hash, i as u64)?;
-                }
-
-                info!("[Engine] Committing batch for block {}", block_num);
-                let start_commit_outer = std::time::Instant::now();
-                batch.commit()?;
-                info!("[Engine] Batch committed for block {} in {:?}", block_num, start_commit_outer.elapsed());
-
-                // Emit event for new block
-                let _ = self.event_tx.send(EngineEvent::NewBlock(block));
-                info!("[Engine] Successfully imported block {} (hash: {})", block_num, block_hash);
-                
-                // Trigger revalidation of any payloads waiting for this block
-                self.revalidate_dependent_payloads(block_hash).await;
-
+        match status.status {
+            PayloadStatusEnum::Valid => {
+                info!("[Engine] import_block: block {} is VALID", block_hash);
                 Ok(())
             }
-            Err(e) => {
-                self.chain.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-                // Trigger revalidation for descendants (they will become INVALID)
-                self.revalidate_dependent_payloads(block_hash).await;
-                Err(anyhow::anyhow!("Execution failed for block {}: {}", block_num, e))
+            PayloadStatusEnum::Syncing | PayloadStatusEnum::Accepted => {
+                info!("[Engine] import_block: block {} is SYNCING/ACCEPTED (buffered)", block_hash);
+                Ok(())
+            }
+            PayloadStatusEnum::Invalid { validation_error } => {
+                error!("[Engine] import_block: block {} is INVALID: {}", block_hash, validation_error);
+                Err(anyhow::anyhow!("Block is INVALID: {}", validation_error))
             }
         }
     }
@@ -995,12 +881,7 @@ impl Engine {
         parent_beacon_block_root: Option<B256>,
     ) -> RpcResult<PayloadStatus> {
         let actual_hash = block.header.hash_slow();
-        info!("[Engine] new_payload_internal: block={}, hash={}, parent={}", block.header.number, actual_hash, block.header.parent_hash);
-        let result = self.payload_processor.new_payload_internal(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
-        if let Ok(ref status) = result {
-            info!("[Engine] new_payload_internal result for {}: {:?}", actual_hash, status.status);
-        }
-        result
+        self.payload_processor.new_payload_internal(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await
     }
 
     // --- helper methods engine calls ---

@@ -19,14 +19,14 @@ impl BlockProcessor {
     }
 
     pub async fn process_block(&self, block: Block<Transaction>) -> anyhow::Result<()> {
-        
+        let block_hash = block.header.hash_slow();
         match self.engine.import_block(block).await {
             Ok(_) => {
-                info!("[Processor] Successfully executed and persisted block");
+                info!("[BlockProcessor] import_block successful for hash {}", block_hash);
                 Ok(())
             }
             Err(e) => {
-                Err(anyhow::anyhow!("Import failed: {}", e))
+                Err(anyhow::anyhow!("Import failed for {}: {}", block_hash, e))
             }
         }
     }

@@ -191,41 +191,31 @@ impl SyncController {
             return Err(anyhow::anyhow!("Downloaded {} bodies for {} headers", bodies.len(), headers.len()));
         }
 
-        // 4. Process blocks
         let mut last_imported_block = None;
         let mut last_imported_timestamp = 0;
+        // 4. Process blocks
         for (header, body) in headers.into_iter().zip(bodies.into_iter()) {
             let block_num = header.number;
             let block_timestamp = header.timestamp;
             let block = Block { header, body };
             let block_hash = block.header.hash_slow();
 
-            // Check if parent exists in storage
-            let parent_hash = block.header.parent_hash;
-            let parent_exists = self.read_storage.block_by_hash(parent_hash)?.is_some();
-
-            if !parent_exists && block_num > 0 {
-                debug!("[Sync] Parent block {:?} for {} missing, fetching ancestors", parent_hash, block_num);
-                self.sync_registry.add_target(parent_hash, Some(peer_id.to_string())).await;
-                if let Err(e) = self.fetch_ancestors(peer_id, parent_hash, block_hash).await {
-                    error!("[Sync] Failed to fetch ancestors: {}", e);
-                    self.chain_manager.add_invalid_block(block_hash, parent_hash, InvalidationReason::Hard).await;
-                    self.chain_manager.set_sync_status(SyncStatus::None).await;
-                    return Err(e);
-                }
-            }
-
             if let Err(e) = self.processor.process_block(block.clone()).await {
                 error!("[Sync] Failed to process block {}: {}", block_num, e);
-                // Mark the block as invalid in ChainManager
-                self.chain_manager.add_invalid_block(block_hash, block.header.parent_hash, InvalidationReason::Hard).await;
-                
-                // Trigger recursive invalidation of orphans for this invalid block
-                self.processor.invalidate_descendants(block_hash).await;
-
                 self.chain_manager.set_sync_status(SyncStatus::None).await;
                 return Err(e);
             }
+            
+            // Check if we should abort sync due to a reorg triggered by Engine API
+            let (current_head_hash, _) = self.chain_manager.head_block().await;
+            let active_fork = Hardfork::get_active_fork(&chain_config, block_num, block_timestamp);
+            if active_fork >= Hardfork::Shanghai && current_head_hash != B256::ZERO {
+                 // In post-merge, if the current canonical head is NOT an ancestor of what we are syncing,
+                 // it might mean the CL shifted to a different branch.
+                 // However, we are just "filling" the block tree/storage here, so we can continue
+                 // unless the block we just processed was marked invalid.
+            }
+
             last_imported_block = Some((block_hash, block_num));
             last_imported_timestamp = block_timestamp;
         }
@@ -334,25 +324,10 @@ impl SyncController {
         for block in to_process.into_iter().rev() {
             let block_num = block.header.number;
             let block_hash = block.header.hash_slow();
-            let parent_hash = block.header.parent_hash;
             let block_timestamp = block.header.timestamp;
 
             if let Err(e) = self.processor.process_block(block).await {
                 error!("[Sync] Failed to process ancestor block {}: {}", block_num, e);
-                // Mark block as invalid
-                self.chain_manager.add_invalid_block(block_hash, parent_hash, InvalidationReason::Hard).await;
-
-                // Immediately mark the requested head as invalid too
-                if requested_head != block_hash {
-                    self.chain_manager.add_invalid_block(requested_head, block_hash, InvalidationReason::Hard).await;
-                }
-
-                // Clear all current sync targets as we've hit an invalid chain segment
-                self.sync_registry.clear_targets().await;
-
-                // Trigger recursive invalidation of orphans for this invalid ancestor
-                self.processor.invalidate_descendants(block_hash).await;
-
                 return Err(anyhow::anyhow!("Ancestor block processing failed: {}", e));
             }
             last_processed_hash = Some(block_hash);
