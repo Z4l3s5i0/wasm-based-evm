@@ -251,7 +251,7 @@ impl ChainManager for ChainManagerImpl {
             };
         }
 
-        if let Ok(Some(_)) = self.read_storage.header(wasix_eth_types::BlockId::Hash(head_block_hash.into())) {
+        if let Ok(Some(_)) = self.read_storage.header(BlockId::Hash(head_block_hash.into())) {
             return wasix_eth_types::PayloadStatus {
                 status: wasix_eth_types::PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),

@@ -306,14 +306,12 @@ impl<'a, S: StateProvider + StateWriter> EthTrie<'a, S> {
 
     pub fn insert_nibbles(&mut self, nibbles: Nibbles, value: Vec<u8>) -> anyhow::Result<()> {
         let root = self.root_hash;
-        wasix_eth_utils::info!("[EthTrie] insert_nibbles: root={:?}, nibbles={:?}", root, nibbles);
         self.root_hash = self.insert_recursive(root, nibbles, value)?;
         Ok(())
     }
 
     pub fn delete_nibbles(&mut self, nibbles: Nibbles) -> anyhow::Result<()> {
         let root = self.root_hash;
-        wasix_eth_utils::info!("[EthTrie] delete_nibbles: root={:?}, nibbles={:?}", root, nibbles);
         self.root_hash = self.delete_recursive(root, nibbles)?;
         Ok(())
     }
