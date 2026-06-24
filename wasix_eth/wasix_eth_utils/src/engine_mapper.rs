@@ -24,6 +24,32 @@ use wasix_eth_types::B256;
 use wasix_eth_types::Hardfork;
 use wasix_eth_types::ChainConfig;
 
+/// Encode a transaction for inclusion in an execution payload.
+/// For EIP-4844 blob transactions, this strips the sidecar and encodes
+/// only the consensus (non-network) format, as required by the Engine API spec.
+fn encode_tx_for_payload(tx: &Transaction) -> Vec<u8> {
+    match tx {
+        Transaction::Eip4844(signed_tx) => {
+            // Strip sidecar: re-create a Signed<TxEip4844Variant> with just TxEip4844
+            use wasix_eth_types::{TxEip4844Variant, Signed};
+            let inner_tx: wasix_eth_types::TxEip4844 = signed_tx.tx().clone().into();
+            let stripped = Signed::new_unchecked(
+                TxEip4844Variant::<wasix_eth_types::BlobTransactionSidecarVariant>::TxEip4844(inner_tx),
+                *signed_tx.signature(),
+                *signed_tx.hash(),
+            );
+            let mut out = Vec::new();
+            stripped.encode_2718(&mut out);
+            out
+        }
+        _ => {
+            let mut out = Vec::new();
+            tx.encode_2718(&mut out);
+            out
+        }
+    }
+}
+
 pub struct EngineMapper;
 
 impl EngineMapper {
@@ -51,6 +77,7 @@ impl EngineMapper {
                 let mut out = Vec::new();
                 tx.encode_2718(&mut out);
                 out.into()
+                // encode_tx_for_payload(tx).into()
             }).collect(),
         }
     }
@@ -114,6 +141,7 @@ impl EngineMapper {
                 let mut out = Vec::new();
                 tx.encode_2718(&mut out);
                 out.into()
+                // encode_tx_for_payload(tx).into()
             }).collect(),
             withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()),
         }

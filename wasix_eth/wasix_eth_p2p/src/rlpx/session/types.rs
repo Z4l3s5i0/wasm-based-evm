@@ -35,7 +35,6 @@ pub enum SessionRequest {
     SendNewPooledTransactionHashes(NewPooledTransactionHashes),
     Ping,
     Disconnect(Disconnect),
-    // New response requests
     SendBlockHeaders(RequestPair<BlockHeaders>),
     SendBlockBodies(RequestPair<BlockBodies>),
     SendPooledTransactions(RequestPair<PooledTransactions>),

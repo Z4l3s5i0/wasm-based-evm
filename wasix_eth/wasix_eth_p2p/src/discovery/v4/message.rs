@@ -13,7 +13,7 @@ pub struct NodeEndpoint {
 }
 
 impl Encodable for NodeEndpoint {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+    fn encode(&self, out: &mut dyn BufMut) {
         let h = Header { list: true, payload_length: self.payload_length() };
         h.encode(out);
         match self.ip {

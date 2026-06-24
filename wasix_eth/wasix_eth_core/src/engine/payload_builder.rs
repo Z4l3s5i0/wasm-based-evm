@@ -22,6 +22,32 @@ use wasix_eth_types::ConsensusTransaction;
 use wasix_eth_utils::{debug, info, error, warn};
 use wasix_eth_types::Result;
 
+use std::collections::HashMap;
+use std::sync::RwLock;
+
+// Simple CancellationToken since we don't have tokio-util
+#[derive(Clone, Default)]
+pub struct CancellationToken {
+    cancelled: Arc<std::sync::atomic::AtomicBool>,
+}
+
+impl CancellationToken {
+    pub fn new() -> Self {
+        Self::default()
+    }
+    pub fn cancel(&self) {
+        self.cancelled.store(true, std::sync::atomic::Ordering::SeqCst);
+    }
+    pub fn is_cancelled(&self) -> bool {
+        self.cancelled.load(std::sync::atomic::Ordering::SeqCst)
+    }
+    pub async fn cancelled(&self) {
+        while !self.is_cancelled() {
+            tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct PayloadBuilder {
     pub consensus: Arc<dyn Consensus>,
@@ -29,6 +55,7 @@ pub struct PayloadBuilder {
     pub write_storage: DatabaseWriteProvider,
     pub execution: Arc<dyn ExecutionProvider>,
     pub mempool: Arc<dyn MempoolProvider>,
+    pub cancel_tokens: Arc<RwLock<HashMap<PayloadId, CancellationToken>>>,
 }
 
 impl PayloadBuilder {
@@ -75,31 +102,84 @@ impl PayloadBuilder {
 
         let id = self.generate_payload_id(&head_block_hash, &attr).await;
 
-        // Calculate base fee (simplified EIP-1559)
+        // Comply with spec: SHOULD NOT restart if it already exists
+        if self.read_storage.get_payload(&id).is_some() {
+            return Ok(Some(id));
+        }
+
+        // 1. Build initial empty payload
+        self.build_empty_payload(head_block_hash, attr.clone(), id.clone()).await?;
+
+        // 2. Start continuous building background task
+        let builder = self.clone();
+        let token = CancellationToken::new();
+        {
+            let mut tokens = self.cancel_tokens.write().unwrap();
+            if let Some(old_token) = tokens.insert(id.clone(), token.clone()) {
+                let _ = old_token;
+                old_token.cancel();
+            }
+        }
+
+        tokio::spawn(async move {
+            let start_time = std::time::Instant::now();
+            let slot_duration = std::time::Duration::from_millis(12000); // SLOT_DURATION_MS
+            
+            while !token.is_cancelled() {
+                if start_time.elapsed() >= slot_duration {
+                    debug!("[PayloadBuilder] Stopping continuous building for {:?}: time limit reached", id);
+                    break;
+                }
+
+                if let Err(e) = builder.maybe_rebuild_payload(id.clone()).await {
+                    error!("[PayloadBuilder] Error during continuous building for {:?}: {:?}", id, e);
+                }
+
+                // Wait for a bit or until mempool change (simplified to 1s sleep for now)
+                tokio::select! {
+                    _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
+                    _ = token.cancelled() => break,
+                }
+            }
+            
+            let mut tokens = builder.cancel_tokens.write().unwrap();
+            if let Some(t) = tokens.get(&id) {
+                let token_cancelled = t.is_cancelled();
+                if token_cancelled == token.is_cancelled() {
+                    tokens.remove(&id);
+                }
+            }
+        });
+
+        Ok(Some(id))
+    }
+
+    async fn build_empty_payload(
+        &self,
+        head_block_hash: B256,
+        attr: PayloadAttributes,
+        id: PayloadId,
+    ) -> RpcResult<()> {
+        let parent_block = self.read_storage.block_by_hash(head_block_hash).map_err(|e| RpcError::Internal(e.to_string()))?
+            .or_else(|| {
+                self.read_storage.get_payload_by_block_hash(head_block_hash)
+                    .map(|(b, _, _)| b)
+            })
+            .ok_or_else(|| RpcError::InvalidForkchoiceState(format!("Head block not found for empty payload building: {:?}", head_block_hash)))?;
+
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
             ..Default::default()
         });
         let base_fee_per_gas = self.consensus.calculate_next_base_fee(&parent_block.header, &chain_config);
-        let blob_base_fee = self.consensus.calculate_next_blob_base_fee(&parent_block.header, &chain_config);
-
-        let active_fork = wasix_eth_types::Hardfork::get_active_fork(&chain_config, parent_block.header.number + 1, attr.timestamp);
-        let max_blobs_per_block = active_fork.blob_params(&chain_config).map(|p| p.max_blob_count as u32);
-
-        // Build block logic
-        let transactions = self.mempool.peek_best_transactions(
-            parent_block.header.gas_limit, 
-            U256::from(base_fee_per_gas.unwrap_or_default()),
-            blob_base_fee.map(U256::from),
-            max_blobs_per_block
-        ).await;
 
         let execution = Arc::clone(&self.execution);
         let parent_header_clone = parent_block.header.clone();
         let attr_clone = attr.clone();
+        
         let (finalized_block, receipts) = match tokio::task::spawn_blocking(move || {
             execution.execute_block_for_payload(
-                transactions,
+                vec![], // Empty transaction set
                 &parent_header_clone,
                 &attr_clone,
                 base_fee_per_gas,
@@ -107,36 +187,19 @@ impl PayloadBuilder {
         }).await {
             Ok(Ok(res)) => res,
             Ok(Err(e)) => {
-                warn!("[PayloadBuilder] Execution failed for payload building: {}", e);
-                return Ok(None);
+                warn!("[PayloadBuilder] Execution failed for empty payload building: {}", e);
+                return Err(RpcError::Internal(e.to_string()));
             }
             Err(e) => {
-                error!("[PayloadBuilder] Payload building task panicked: {}", e);
-                return Ok(None);
+                error!("[PayloadBuilder] Empty payload building task panicked: {}", e);
+                return Err(RpcError::Internal(e.to_string()));
             }
         };
 
-        let mut bundle = BlobsBundleV1::default();
-        for tx in &finalized_block.body.transactions {
-            if let Transaction::Eip4844(signed_tx) = tx {
-                if let Some(hashes) = signed_tx.tx().blob_versioned_hashes() {
-                    for hash in hashes {
-                        if let Some((blob, commitment, proof)) = self.mempool.get_blob(*hash).await {
-                            bundle.blobs.push(blob);
-                            bundle.commitments.push(commitment);
-                            bundle.proofs.push(proof);
-                        } else {
-                            return Err(RpcError::Internal(format!("Missing blob for transaction included in block: {:?}", signed_tx.hash())));
-                        }
-                    }
-                }
-            }
-        }
-
+        let bundle = BlobsBundleV1::default();
         let write_storage = self.write_storage.clone();
         let finalized_block_clone = finalized_block.clone();
         let receipts_clone = receipts.clone();
-        let blob_count = bundle.blobs.len() as u32;
         let id_clone = id.clone();
 
         match tokio::task::spawn_blocking(move || {
@@ -144,31 +207,30 @@ impl PayloadBuilder {
         }).await {
             Ok(Ok(_)) => {},
             Ok(Err(e)) => {
-                error!("[PayloadBuilder] Failed to persist payload: {}", e);
-                return Ok(None);
+                error!("[PayloadBuilder] Failed to persist empty payload: {}", e);
+                return Err(RpcError::Internal(e.to_string()));
             }
             Err(e) => {
-                error!("[PayloadBuilder] Payload persistence task panicked: {}", e);
-                return Ok(None);
+                error!("[PayloadBuilder] Empty payload persistence task panicked: {}", e);
+                return Err(RpcError::Internal(e.to_string()));
             }
         }
 
-        info!("[PayloadBuilder] Created payload_id={:?} for block_number={} with {} blobs", id, parent_block.header.number + 1, blob_count);
-
-        Ok(Some(id))
+        info!("[PayloadBuilder] Created initial empty payload_id={:?} for block_number={}", id, parent_block.header.number + 1);
+        Ok(())
     }
 
     pub async fn maybe_rebuild_payload(
         &self,
         payload_id: PayloadId,
     ) -> Result<()> {
-        let (payload_block, _payload_receipts, payload_bundle) = match self.read_storage.get_payload(&payload_id) {
+        let (payload_block, payload_receipts, _payload_bundle) = match self.read_storage.get_payload(&payload_id) {
             Some(p) => p,
             None => return Ok(()),
         };
 
         let head_hash = payload_block.header.parent_hash;
-        let old_blob_count = payload_bundle.blobs.len() as u32;
+        let old_value = self.calculate_block_value(&payload_block, &payload_receipts);
 
         let attr = PayloadAttributes {
             timestamp: payload_block.header.timestamp,
@@ -212,29 +274,15 @@ impl PayloadBuilder {
             max_blobs_per_block
         ).await;
 
-        // 4. Check new blob count without full execution first
-        let mut new_blob_count = 0;
-        for tx in &transactions {
-            if let Transaction::Eip4844(signed_tx) = tx {
-                if let Some(hashes) = signed_tx.tx().blob_versioned_hashes() {
-                    new_blob_count += hashes.len() as u32;
-                }
-            }
-        }
-
-        if new_blob_count <= old_blob_count {
-            // Check if there are any new transactions that might be better (e.g. higher tip)
-            // Even if blob count is the same, HIVE tests might expect optimal selection.
-            // But for now, we follow the requirement: "overwrite only when blob utilization improves"
-            return Ok(());
+        if transactions.is_empty() && !payload_block.body.transactions.is_empty() {
+             // Should not happen if we already have a payload with transactions, but good to be safe.
+             return Ok(());
         }
 
         tokio::task::yield_now().await;
 
-        debug!("[PayloadBuilder] Rebuilding payload {:?}: blob count {} -> {}", payload_id, old_blob_count, new_blob_count);
-
         let write_storage = self.write_storage.clone();
-        // 5. Re-run execution
+        // 4. Re-run execution
         let execution = Arc::clone(&self.execution);
         let parent_header_clone = parent_block.header.clone();
         let attr_clone = attr.clone();
@@ -247,6 +295,19 @@ impl PayloadBuilder {
             )
         }).await.map_err(|e| RpcError::Internal(format!("Payload rebuilding task panicked: {}", e)))?
         .map_err(|e| RpcError::Internal(e.to_string()))?;
+
+        // 5. Check if new block is better
+        let new_value = self.calculate_block_value(&finalized_block, &receipts);
+        if new_value <= old_value && !finalized_block.body.transactions.is_empty() && !payload_block.body.transactions.is_empty() {
+            return Ok(());
+        }
+        
+        // If the old one was empty and new one is not, or new one has higher value, replace it.
+        if new_value <= old_value && !payload_block.body.transactions.is_empty() {
+            return Ok(());
+        }
+
+        debug!("[PayloadBuilder] Rebuilding payload {:?}: value {} -> {}", payload_id, old_value, new_value);
 
         // 6. Collect blobs
         let mut bundle = BlobsBundleV1::default();
@@ -277,6 +338,11 @@ impl PayloadBuilder {
     }
 
     pub fn get_payload(&self, payload_id: &PayloadId) -> RpcResult<(Block<Transaction>, Vec<Receipt>, BlobsBundleV1)> {
+        // Stop continuous building when payload is requested
+        if let Some(token) = self.cancel_tokens.write().unwrap().remove(payload_id) {
+            token.cancel();
+        }
+
         self.read_storage.get_payload(payload_id)
             .ok_or_else(|| RpcError::BlockNotFound(wasix_eth_types::BlockId::Hash(B256::from_slice(&payload_id.0[..]).into())))
     }

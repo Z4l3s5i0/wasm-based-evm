@@ -159,6 +159,7 @@ impl Engine {
                 write_storage: write_storage.clone(),
                 execution: execution.clone(),
                 mempool: mempool.clone(),
+                cancel_tokens: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             },
             payload_processor: PayloadProcessor { 
                 processing_payloads: processing_payloads.clone(), 
@@ -177,30 +178,6 @@ impl Engine {
             mempool_listener,
             sync_registry,
         };
-
-        // Spawn rebuild listener
-        let mut event_rx = event_tx.subscribe();
-        let engine_clone = engine.clone();
-        tokio::spawn(async move {
-            while let Ok(event) = event_rx.recv().await {
-                if let EngineEvent::NewTransaction(tx) = event {
-                    if tx.is_eip4844() {
-                        let (head_hash, _) = engine_clone.canonical.get_head().await;
-                        let active_ids = engine_clone.read_storage.all_payload_ids();
-                        for payload_id in active_ids {
-                            if let Some((payload_block, _, _bundle)) = engine_clone.read_storage.get_payload(&payload_id) {
-                                if payload_block.header.parent_hash == head_hash {
-                                    let builder = engine_clone.payload_builder.clone();
-                                    tokio::spawn(async move {
-                                        let _ = builder.maybe_rebuild_payload(payload_id).await;
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-            }
-        });
 
         engine
     }
@@ -630,21 +607,16 @@ impl Engine {
     fn fork_validation(version: u8, chain_config: &ChainConfig, attr: &PayloadAttributes) -> Option<RpcResult<ForkchoiceUpdated>> {
         let fork = Hardfork::get_active_fork(&chain_config, 0, attr.timestamp); // block number unknown here, using 0 but timestamp should be enough for Cancun
 
+        // Prague validation: parentBeaconBlockRoot must be present (handled by Cancun check for now as it's >= Cancun)
+        // Actually, let's be more specific if we want to follow spec strictly.
+
         // engine_forkchoiceUpdatedV3 and above must be used for Cancun and above
         if version >= 3 && fork < Hardfork::Cancun {
-            if attr.parent_beacon_block_root.is_some() {
-                 return Some(Err(RpcError::UnsupportedFork("engine_forkchoiceUpdatedV3 and above must be used for Cancun and above".to_string())));
-            } else {
-                 return Some(Err(RpcError::InvalidPayloadAttributes("engine_forkchoiceUpdatedV3 and above must be used for Cancun and above".to_string())));
-            }
+            return Some(Err(RpcError::InvalidPayloadAttributes("engine_forkchoiceUpdatedV3 and above must be used for Cancun and above".to_string())));
         }
         // engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun
         if version < 3 && fork >= Hardfork::Cancun {
-            if attr.parent_beacon_block_root.is_some() {
-                 return Some(Err(RpcError::InvalidPayloadAttributes("engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun".to_string())));
-            } else {
-                 return Some(Err(RpcError::UnsupportedFork("engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun".to_string())));
-            }
+             return Some(Err(RpcError::UnsupportedFork("engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun".to_string())));
         }
 
         // Shanghai validation: withdrawals must be present if and only if Shanghai is active
