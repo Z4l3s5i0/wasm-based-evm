@@ -1,6 +1,7 @@
 pub mod discovery;
 pub mod peer;
 pub mod rlpx;
+pub mod error;
 
 pub use peer::peer_registry::PeerRegistry;
 pub use peer::sync_service::SyncService;

@@ -1,3 +1,4 @@
+use crate::error::P2pError;
 use std::collections::VecDeque;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::TcpStream;
@@ -62,9 +63,14 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         let mut payload = Vec::new();
         msg.encode(&mut payload);
         
-        // EIP-706: Only subprotocols are snappy compressed.
-        // P2P control messages (0x00-0x0f) are NEVER compressed.
-        self.send_raw_payload(id, &payload).await
+        // EIP-706: Hello(0x00) and Disconnect(0x01) are never compressed.
+        // P2P messages 0x02-0x0f ARE compressed if snappy is enabled.
+        let final_payload = if self.snappy_enabled() && id > 1 {
+            snap::raw::Encoder::new().compress_vec(&payload)?
+        } else {
+            payload
+        };
+        self.send_raw_payload(id, &final_payload).await
     }
 
     pub fn snappy_enabled(&self) -> bool {
@@ -169,35 +175,34 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         
         wasix_eth_utils::debug!("[P2P Stream] Read message ID: {}, payload size: {}", msg_id, cursor.len());
 
-        let payload = if msg_id >= 0x10 {
-            // All subprotocol messages (like eth) are ALWAYS snappy compressed if version >= 65.
+        // Determine if this message should be decompressed
+        // ID >= 0x10: Subprotocol messages (eth, snap, etc.)
+        // ID > 0x01 && ID < 0x10: P2P control messages (Ping, Pong, etc.)
+        let is_subprotocol = msg_id >= 0x10;
+        let is_compressible_p2p = msg_id > 0x01 && msg_id < 0x10;
+
+        let payload = if (is_subprotocol || is_compressible_p2p) && self.snappy_enabled() {
             if cursor.is_empty() {
                 Vec::new()
-            } else if self.snappy_enabled() {
-                // EIP-706: Decompressed size must be <= MAX_PAYLOAD_SIZE
-                match snap::raw::decompress_len(cursor) {
-                    Ok(decompressed_size) => {
-                        if decompressed_size > MAX_PAYLOAD_SIZE {
-                            return Err(anyhow!("Snappy decompressed size {} exceeds limit {}", decompressed_size, MAX_PAYLOAD_SIZE));
-                        }
-                        match snap::raw::Decoder::new().decompress_vec(cursor) {
-                            Ok(decompressed) => decompressed,
-                            Err(e) => {
-                                wasix_eth_utils::debug!("[P2P Stream] Snappy decompression failed for msg_id {}: {}", msg_id, e);
-                                cursor.to_vec()
-                            }
-                        }
-                    }
-                    Err(e) => {
-                        wasix_eth_utils::debug!("[P2P Stream] Snappy decompress_len failed for msg_id {}: {}", msg_id, e);
-                        cursor.to_vec()
-                    }
-                }
             } else {
-                cursor.to_vec()
+                // 1. Verify and retrieve the decompressed length safely
+                let decompressed_size = snap::raw::decompress_len(cursor).map_err(|e| {
+                    wasix_eth_utils::error!("[P2P Stream] Snappy decompress_len failed for msg_id {}: {}", msg_id, e);
+                    P2pError::Codec(format!("Snappy decompress_len failed: {}", e))
+                })?;
+
+                if decompressed_size > MAX_PAYLOAD_SIZE {
+                    return Err(P2pError::DecompressedSizeExceedsLimit(decompressed_size, MAX_PAYLOAD_SIZE).into());
+                }
+
+                // 2. Perform decompression and propagate error if it fails
+                snap::raw::Decoder::new().decompress_vec(cursor).map_err(|e| {
+                    wasix_eth_utils::error!("[P2P Stream] Snappy decompression failed for msg_id {}: {}", msg_id, e);
+                    P2pError::Decompression(e.to_string())
+                })?
             }
         } else {
-            // P2P control messages (0x00-0x0f) are NEVER snappy compressed.
+            // Raw bytes for Hello, Disconnect, or if Snappy is not enabled
             cursor.to_vec()
         };
         
