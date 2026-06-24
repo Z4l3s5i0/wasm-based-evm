@@ -1,5 +1,5 @@
 use crate::engine::canonicality_tracker::CanonicalState;
-use crate::engine::sidechain_tracker::BlockTree;
+use crate::engine::sidechain_tracker::{BlockTree, InvalidationReason};
 use crate::engine::reorg_manager::ReorgHandler;
 use crate::sync::registry::SyncRegistry;
 use crate::account_manager::AccountManager;
@@ -394,15 +394,37 @@ impl Engine {
         if head_status.status == PayloadStatusEnum::Syncing || matches!(head_status.status, PayloadStatusEnum::Invalid { .. }) {
             // Check if head or its parent is explicitly known to be invalid
             if let Some(reason) = self.chain.get_invalidation_reason(forkchoice_state.head_block_hash).await {
-                let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
-                info!("[Engine] forkchoice head {:?} is known invalid ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, reason, latest_valid);
-                return Ok(ForkchoiceUpdated {
-                    payload_status: PayloadStatus {
-                        status: PayloadStatusEnum::Invalid { validation_error: format!("Head block is known to be invalid: {:?}", reason) },
-                        latest_valid_hash: latest_valid,
-                    },
-                    payload_id: None,
-                });
+                // If the block is actually in storage/block_tree, it's not truly invalid for FCU
+                // unless it's a HARD invalidation.
+                if self.chain.has_block(forkchoice_state.head_block_hash).await && reason == InvalidationReason::Soft {
+                    info!("[Engine] forkchoice head {:?} is SOFT invalid but exists in storage. Treating as VALID for FCU.", forkchoice_state.head_block_hash);
+                    // We fall through to determine_payload_status which might still say Invalid,
+                    // but we want to allow FCU to potentially succeed if the block is actually there.
+                    // Actually, if it's in storage, determine_payload_status should have returned VALID.
+                } else {
+                    // If it's a SOFT invalidation, we might want to return SYNCING instead of INVALID
+                    // to avoid the CL from permanently rejecting the head.
+                    if reason == InvalidationReason::Soft {
+                        info!("[Engine] forkchoice head {:?} is SOFT invalid. Returning SYNCING to allow retry.", forkchoice_state.head_block_hash);
+                        return Ok(ForkchoiceUpdated {
+                            payload_status: PayloadStatus {
+                                status: PayloadStatusEnum::Syncing,
+                                latest_valid_hash: self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await,
+                            },
+                            payload_id: None,
+                        });
+                    }
+
+                    let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
+                    info!("[Engine] forkchoice head {:?} is known invalid ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, reason, latest_valid);
+                    return Ok(ForkchoiceUpdated {
+                        payload_status: PayloadStatus {
+                            status: PayloadStatusEnum::Invalid { validation_error: format!("Head block is known to be invalid: {:?}", reason) },
+                            latest_valid_hash: latest_valid,
+                        },
+                        payload_id: None,
+                    });
+                }
             }
             
             // Check parent if head is unknown or syncing
@@ -410,6 +432,18 @@ impl Engine {
             let parent_hash = header_opt.map(|h| h.parent_hash);
             if let Some(p_hash) = parent_hash {
                 if let Some(reason) = self.chain.get_invalidation_reason(p_hash).await {
+                    // If it's a SOFT invalidation of parent, we also return SYNCING.
+                    if reason == InvalidationReason::Soft {
+                        info!("[Engine] forkchoice head {:?} has SOFT invalid parent {:?}. Returning SYNCING to allow retry.", forkchoice_state.head_block_hash, p_hash);
+                        return Ok(ForkchoiceUpdated {
+                            payload_status: PayloadStatus {
+                                status: PayloadStatusEnum::Syncing,
+                                latest_valid_hash: self.chain.get_latest_valid_ancestor(p_hash).await,
+                            },
+                            payload_id: None,
+                        });
+                    }
+
                     let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
                     info!("[Engine] forkchoice head {:?} has known invalid parent {:?} ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, p_hash, reason, latest_valid);
                     return Ok(ForkchoiceUpdated {
@@ -607,16 +641,21 @@ impl Engine {
     fn fork_validation(version: u8, chain_config: &ChainConfig, attr: &PayloadAttributes) -> Option<RpcResult<ForkchoiceUpdated>> {
         let fork = Hardfork::get_active_fork(&chain_config, 0, attr.timestamp); // block number unknown here, using 0 but timestamp should be enough for Cancun
 
-        // Prague validation: parentBeaconBlockRoot must be present (handled by Cancun check for now as it's >= Cancun)
-        // Actually, let's be more specific if we want to follow spec strictly.
-
         // engine_forkchoiceUpdatedV3 and above must be used for Cancun and above
         if version >= 3 && fork < Hardfork::Cancun {
-            return Some(Err(RpcError::InvalidPayloadAttributes("engine_forkchoiceUpdatedV3 and above must be used for Cancun and above".to_string())));
+            if attr.parent_beacon_block_root.is_some() {
+                return Some(Err(RpcError::UnsupportedFork("engine_forkchoiceUpdatedV3 and above must be used for Cancun and above".to_string())));
+            } else {
+                return Some(Err(RpcError::InvalidPayloadAttributes("engine_forkchoiceUpdatedV3 and above must be used for Cancun and above".to_string())));
+            }
         }
         // engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun
         if version < 3 && fork >= Hardfork::Cancun {
-             return Some(Err(RpcError::UnsupportedFork("engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun".to_string())));
+            if attr.parent_beacon_block_root.is_some() {
+                return Some(Err(RpcError::InvalidPayloadAttributes("engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun".to_string())));
+            } else {
+                return Some(Err(RpcError::UnsupportedFork("engine_forkchoiceUpdatedV2 and below must be used for forks before Cancun".to_string())));
+            }
         }
 
         // Shanghai validation: withdrawals must be present if and only if Shanghai is active
@@ -884,6 +923,12 @@ impl Engine {
     }
 
     async fn determine_payload_status(&self, head_block_hash: B256) -> PayloadStatus {
+        if self.chain.has_block(head_block_hash).await {
+             return PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(head_block_hash),
+            };
+        }
         self.chain.determine_payload_status(head_block_hash).await
     }
     

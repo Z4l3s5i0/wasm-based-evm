@@ -81,13 +81,15 @@ impl PayloadProcessor {
             }
             processing.insert(actual_hash);
         }
+
         // Cancun validation (versioned hashes)
         if active_fork >= Hardfork::Cancun {
             if let Err(e) = self.consensus.validate_cancun(&block, expected_blob_versioned_hashes.as_deref()) {
                 error!("[PayloadProcessor] Cancun validation (versioned hashes) failed for block {}: {}", actual_hash, e);
 
-                
-                self.chain.add_invalid_block(actual_hash, block.header.parent_hash, InvalidationReason::Soft).await;
+                // EIP-4844: "Client software SHOULD NOT permanently blacklist the block hash if it is rejected due to a mismatch between
+                // expected_blob_versioned_hashes and the actual hashes in the block."
+                // We don't call add_invalid_block here to avoid blacklisting it.
                 
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
                 {
@@ -102,6 +104,9 @@ impl PayloadProcessor {
             if let Err(e) = self.consensus.validate_parent_beacon_block_root(&block.header, parent_beacon_block_root) {
                 error!("[PayloadProcessor] Cancun validation (parent beacon block root) failed for block {}: {}", actual_hash, e);
 
+                // This is also a potentially retryable error if the CL sent the wrong root, 
+                // but usually it's tied to the block itself. EIP-4844 doesn't explicitly mention this for root,
+                // but it's safer to use Soft invalidation or none.
                 self.chain.add_invalid_block(actual_hash, block.header.parent_hash, InvalidationReason::Soft).await;
 
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
@@ -343,8 +348,9 @@ impl PayloadProcessor {
 
                 // EIP-4844: "Client software SHOULD NOT permanently blacklist the block hash if it is rejected due to a mismatch between
                 // expected_blob_versioned_hashes and the actual hashes in the block."
+                
+                // We don't mark it as invalid in BlockTree here.
 
-                // If the block is already known to be valid in storage, we MUST NOT mark it as invalid or remove it.
                 if let Ok(Some(existing_header)) = self.read_storage.header(BlockId::Hash(actual_hash.into())) {
                     if existing_header.hash_slow() == actual_hash {
                         let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
