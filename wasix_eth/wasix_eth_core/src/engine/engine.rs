@@ -394,37 +394,28 @@ impl Engine {
         if head_status.status == PayloadStatusEnum::Syncing || matches!(head_status.status, PayloadStatusEnum::Invalid { .. }) {
             // Check if head or its parent is explicitly known to be invalid
             if let Some(reason) = self.chain.get_invalidation_reason(forkchoice_state.head_block_hash).await {
-                // If the block is actually in storage/block_tree, it's not truly invalid for FCU
-                // unless it's a HARD invalidation.
-                if self.chain.has_block(forkchoice_state.head_block_hash).await && reason == InvalidationReason::Soft {
-                    info!("[Engine] forkchoice head {:?} is SOFT invalid but exists in storage. Treating as VALID for FCU.", forkchoice_state.head_block_hash);
-                    // We fall through to determine_payload_status which might still say Invalid,
-                    // but we want to allow FCU to potentially succeed if the block is actually there.
-                    // Actually, if it's in storage, determine_payload_status should have returned VALID.
-                } else {
-                    // If it's a SOFT invalidation, we might want to return SYNCING instead of INVALID
-                    // to avoid the CL from permanently rejecting the head.
-                    if reason == InvalidationReason::Soft {
-                        info!("[Engine] forkchoice head {:?} is SOFT invalid. Returning SYNCING to allow retry.", forkchoice_state.head_block_hash);
-                        return Ok(ForkchoiceUpdated {
-                            payload_status: PayloadStatus {
-                                status: PayloadStatusEnum::Syncing,
-                                latest_valid_hash: self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await,
-                            },
-                            payload_id: None,
-                        });
-                    }
-
-                    let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
-                    info!("[Engine] forkchoice head {:?} is known invalid ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, reason, latest_valid);
+                // If it's a SOFT invalidation, we might want to return SYNCING instead of INVALID
+                // to avoid the CL from permanently rejecting the head.
+                if reason == InvalidationReason::Soft {
+                    info!("[Engine] forkchoice head {:?} is SOFT invalid. Returning SYNCING to allow retry.", forkchoice_state.head_block_hash);
                     return Ok(ForkchoiceUpdated {
                         payload_status: PayloadStatus {
-                            status: PayloadStatusEnum::Invalid { validation_error: format!("Head block is known to be invalid: {:?}", reason) },
-                            latest_valid_hash: latest_valid,
+                            status: PayloadStatusEnum::Syncing,
+                            latest_valid_hash: self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await,
                         },
                         payload_id: None,
                     });
                 }
+
+                let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
+                info!("[Engine] forkchoice head {:?} is known invalid ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, reason, latest_valid);
+                return Ok(ForkchoiceUpdated {
+                    payload_status: PayloadStatus {
+                        status: PayloadStatusEnum::Invalid { validation_error: format!("Head block is known to be invalid: {:?}", reason) },
+                        latest_valid_hash: latest_valid,
+                    },
+                    payload_id: None,
+                });
             }
             
             // Check parent if head is unknown or syncing
@@ -492,8 +483,10 @@ impl Engine {
                     return value;
                 }
             } else {
-                if let Some(value) = self.forkchoice_validator.check_header_without_headheader(forkchoice_state) {
-                    return value;
+                if head_status.status == PayloadStatusEnum::Valid {
+                    if let Some(value) = self.forkchoice_validator.check_header_without_headheader(forkchoice_state) {
+                        return value;
+                    }
                 }
             }
         }
@@ -923,12 +916,15 @@ impl Engine {
     }
 
     async fn determine_payload_status(&self, head_block_hash: B256) -> PayloadStatus {
-        if self.chain.has_block(head_block_hash).await {
-             return PayloadStatus {
+        // If the block is already officially imported in main storage, it's VALID.
+        // This takes precedence over any SOFT invalidation (e.g. from a bad newPayload call).
+        if self.read_storage.block_body_by_hash(head_block_hash).ok().flatten().is_some() {
+            return PayloadStatus {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),
             };
         }
+
         self.chain.determine_payload_status(head_block_hash).await
     }
     
