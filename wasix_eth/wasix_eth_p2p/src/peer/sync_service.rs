@@ -14,7 +14,7 @@ use wasix_eth_types::p2p::{
     GetPooledTransactions, PooledTransactions, GetReceipts, Receipts, GetNodeData, NodeData
 };
 use wasix_eth_types::{async_trait, Block, BlockId, GossipProvider, Transaction, B256, TxPooledEnvelope, BlobTransactionSidecar, Signed, TxEip4844Variant, BlobTransactionSidecarVariant};
-use wasix_eth_utils::{error, info};
+use wasix_eth_utils::{debug, error, info};
 
 use crate::peer::peer_manager::PeerManager;
 
@@ -180,11 +180,11 @@ impl SyncService {
                     use alloy_rlp::Encodable;
                     let mut buf = Vec::new();
                     pooled.encode(&mut buf);
-                    info!("[Sync] Serving stored pooled transaction {} length: {}", hash, buf.len());
+                    debug!("[Sync] Serving stored pooled transaction {} length: {}", hash, buf.len());
                     if let TxPooledEnvelope::Eip4844(s) = &pooled {
                          let inner_tx = s.tx();
                          let sidecar = &inner_tx.sidecar;
-                         info!("[Sync] Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
+                         debug!("[Sync] Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
                     }
                 }
                 txs.push(pooled);
@@ -236,11 +236,11 @@ impl SyncService {
                                 use alloy_rlp::Encodable;
                                 let mut buf = Vec::new();
                                 pooled.encode(&mut buf);
-                                info!("[Sync] Reconstructed pooled transaction {} length: {}", hash, buf.len());
+                                debug!("[Sync] Reconstructed pooled transaction {} length: {}", hash, buf.len());
                                 if let TxPooledEnvelope::Eip4844(s) = &pooled {
                                      let inner_tx = s.tx();
                                      let sidecar = &inner_tx.sidecar;
-                                     info!("[Sync] Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
+                                     debug!("[Sync] Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
                                 }
                             }
                             
@@ -375,7 +375,7 @@ impl GossipProvider for SyncService {
                         if let TxPooledEnvelope::Eip4844(s) = &pooled {
                              let inner_tx = s.tx();
                              let sidecar = &inner_tx.sidecar;
-                             info!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
+                             debug!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
                         }
                     }
                 pooled
@@ -422,7 +422,7 @@ impl GossipProvider for SyncService {
                                 if let TxPooledEnvelope::Eip4844(s) = &pooled {
                                      let inner_tx = s.tx();
                                      let sidecar = &inner_tx.sidecar;
-                                     info!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
+                                     debug!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
                                 }
                             }
 
@@ -435,20 +435,10 @@ impl GossipProvider for SyncService {
                     Transaction::Eip7702(t) => TxPooledEnvelope::Eip7702(t.clone()),
                 }
             };
-            info!(
-                "hash={} length={} encoded={}",
-                hash,
-                pooled.length(),
-                {
-                    let mut b = Vec::new();
-                    pooled.encode(&mut b);
-                    b.len()
-                }
-            );
             types.push(tx.ty());
             // Prefer exact raw bytes length if available to guarantee parity with wire format
             if let Some(raw) = self.mempool.get_pooled_bytes(hash).await {
-                info!("[Sync] Using stored raw pooled bytes for size: {} -> {} bytes", hash, raw.len());
+                debug!("[Sync] Using stored raw pooled bytes for size: {} -> {} bytes", hash, raw.len());
                 sizes.push(raw.len() as u64);
             } else {
                 let advertised_size = pooled.length();

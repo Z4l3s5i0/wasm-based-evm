@@ -37,7 +37,20 @@ impl BlockTree {
     }
 
     pub async fn mark_invalid(&self, hash: B256, parent_hash: B256, reason: InvalidationReason) {
-        self.invalid_blocks.write().await.insert(hash, (parent_hash, reason));
+        if hash == parent_hash {
+             wasix_eth_utils::error!("[BlockTree] Attempted to mark block {:?} as invalid with itself as parent!", hash);
+             // We still store it but with ZERO parent to avoid cycles
+             self.invalid_blocks.write().await.insert(hash, (B256::ZERO, reason));
+        } else {
+             self.invalid_blocks.write().await.insert(hash, (parent_hash, reason));
+        }
+        
+        // Also ensure the block is removed from the orphan pool if it's there
+        // but keep its parent link if we can't find it
+        let mut blocks = self.blocks.write().await;
+        if blocks.remove(&hash).is_none() {
+             // Block was not in pool, but that's okay, we have the parent_hash from the argument
+        }
     }
 
     pub async fn remove_invalid(&self, hash: B256) {

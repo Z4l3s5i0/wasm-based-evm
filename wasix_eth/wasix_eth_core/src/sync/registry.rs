@@ -60,4 +60,9 @@ impl SyncRegistry {
         let mut targets = self.targets.write().await;
         targets.clear();
     }
+
+    pub async fn is_syncing(&self) -> bool {
+        let status = self.status.read().await;
+        *status == SyncStatus::Syncing
+    }
 }

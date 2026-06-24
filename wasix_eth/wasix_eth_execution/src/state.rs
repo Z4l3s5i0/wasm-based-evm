@@ -86,7 +86,7 @@ impl<'a> StateApplier<'a> {
             let slot_b256 = B256::from_slice(slot.as_bytes());
             let val_u256 = U256::from_be_bytes(value.0);
             
-            let previous = self.batch.storage(addr, slot_b256, state_root).unwrap_or_default();
+            self.batch.storage(addr, slot_b256, state_root).unwrap_or_default();
 
             self.batch.update_storage(addr, slot_b256, val_u256)?;
         }

@@ -27,12 +27,9 @@ impl DatabaseWriteProvider {
     where
         F: FnOnce(&WriteTransaction) -> Result<R>,
     {
-        wasix_eth_utils::info!("[Storage] with_write: acquiring write lock...");
         let wtx = self.db.begin_write()?;
-        wasix_eth_utils::info!("[Storage] with_write: write lock acquired.");
         let result = f(&wtx)?;
         wtx.commit()?;
-        wasix_eth_utils::info!("[Storage] with_write: committed.");
         Ok(result)
     }
 
@@ -42,9 +39,7 @@ impl DatabaseWriteProvider {
     }
 
     pub fn begin_batch(&self) -> Result<BatchWriter> {
-        wasix_eth_utils::info!("[Storage] begin_batch: acquiring write lock...");
         let wtx = self.db.begin_write()?;
-        wasix_eth_utils::info!("[Storage] begin_batch: write lock acquired.");
         Ok(BatchWriter::new(wtx, DatabaseReadProvider::new(self.db.clone())))
     }
 
@@ -108,7 +103,6 @@ impl BatchWriter {
 
     fn calculate_state_root_internal(&self, is_eip161: bool, state_root: Option<B256>) -> Result<B256> {
         let state_root = state_root.or(*self.base_state_root.lock().unwrap());
-        wasix_eth_utils::info!("[BatchWriter] calculate_state_root_internal: root={:?}", state_root);
         let root = match state_root {
             Some(r) => r,
             None => {
@@ -128,8 +122,7 @@ impl BatchWriter {
 
         for addr in batch_addresses {
             let hashed_addr = alloy_primitives::keccak256(addr);
-            wasix_eth_utils::info!("[BatchWriter] Processing address {:?}", addr);
-            
+
             if let Some(acc) = self.account(addr, state_root)? {
                 let storage_root = self.calculate_storage_root_internal(addr, state_root)?;
                 
@@ -171,7 +164,6 @@ impl BatchWriter {
 
     fn calculate_storage_root_internal(&self, address: Address, state_root: Option<B256>) -> Result<B256> {
         let state_root = state_root.or(*self.base_state_root.lock().unwrap());
-        wasix_eth_utils::info!("[BatchWriter] calculate_storage_root_internal: address={:?}, root={:?}", address, state_root);
         let initial_storage_root = if self.resetted_storages.lock().unwrap().contains(&address) {
             alloy_trie::EMPTY_ROOT_HASH
         } else {
@@ -209,9 +201,7 @@ impl BatchWriter {
 
     pub fn commit(self) -> Result<()> {
         let start = std::time::Instant::now();
-        wasix_eth_utils::info!("[BatchWriter] committing...");
         self.wtx.commit()?;
-        wasix_eth_utils::info!("[BatchWriter] committed in {:?}", start.elapsed());
         Ok(())
     }
 
@@ -257,7 +247,7 @@ impl AccountProvider for BatchWriter {
     }
 
     fn addresses(&self) -> Result<Vec<Address>> {
-        let mut addresses = std::collections::HashSet::new();
+        let mut addresses = HashSet::new();
         
         // Add addresses from persistent DB
         for addr in self.read_provider.addresses()? {
@@ -298,7 +288,7 @@ impl StorageProvider for BatchWriter {
     }
 
     fn account_storages(&self, address: Address, state_root: Option<B256>) -> Result<Vec<(B256, U256)>> {
-        let mut storages = std::collections::HashMap::new();
+        let mut storages = HashMap::new();
 
         // 1. Add/update from persistent DB (latest or historical)
         for (slot, value) in self.read_provider.account_storages(address, state_root)? {

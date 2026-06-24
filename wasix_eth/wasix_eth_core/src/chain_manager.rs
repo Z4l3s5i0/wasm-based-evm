@@ -2,7 +2,7 @@ use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, HeaderProvider};
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_types::{async_trait, Block, BlockId, SyncStatus, Transaction, B256, U256};
-use wasix_eth_utils::warn;
+use wasix_eth_utils::{warn, info, debug};
 use crate::engine::canonicality_tracker::CanonicalState;
 pub(crate) use crate::engine::sidechain_tracker::{BlockTree, InvalidationReason};
 use crate::engine::reorg_manager::ReorgHandler;
@@ -115,7 +115,25 @@ impl ChainManager for ChainManagerImpl {
 
     async fn has_block(&self, hash: B256) -> bool {
         // Check if header exists in storage
-        matches!(self.read_storage.header(BlockId::Hash(hash.into())), Ok(Some(_)))
+        match self.read_storage.header(BlockId::Hash(hash.into())) {
+            Ok(Some(_)) => return true,
+            Ok(None) => {},
+            Err(e) => {
+                debug!("[ChainManager] Error reading header from storage for {:?}: {}", hash, e);
+            }
+        }
+        
+        // Check if block exists in block_tree (validated but not yet canonical/persistent)
+        if self.block_tree.contains_block(hash).await {
+            return true;
+        }
+
+        // Check payload map (persistent but not yet canonical)
+        if self.read_storage.get_payload_by_block_hash(hash).is_some() {
+            return true;
+        }
+
+        false
     }
 
     async fn is_invalid(&self, hash: B256) -> bool {
@@ -136,8 +154,10 @@ impl ChainManager for ChainManagerImpl {
 
     async fn get_latest_valid_ancestor(&self, hash: B256) -> Option<B256> {
         let mut current = hash;
+        let mut visited = HashSet::new();
 
         // If the starting hash is not in invalid_blocks, check if it's valid itself.
+        // This is important for the recursive calls or when validate_parent_block calls this on a valid block.
         if self.get_invalidation_reason(current).await.is_none() {
             if self.has_block(current).await {
                 return Some(current);
@@ -148,27 +168,41 @@ impl ChainManager for ChainManagerImpl {
                     return Some(current);
                 }
             }
-            // If current is ZERO, it means we reached the "parent" of genesis or a PoW block was recorded as parent.
             if current == B256::ZERO {
                 return Some(B256::ZERO);
             }
         }
 
         // Walk back through invalid blocks
-        // Add a safety limit and cycle detection
-        let mut visited = HashSet::new();
-
-        while let Some(_reason) = self.get_invalidation_reason(current).await {
+        while let Some(reason) = self.get_invalidation_reason(current).await {
+            debug!("[ChainManager] get_latest_valid_ancestor: walking back from invalid block {:?} (reason: {:?})", current, reason);
             if !visited.insert(current) {
-                // Cycle detected!
                 warn!("Cycle detected in invalid_blocks at hash {:?}", current);
                 return None;
             }
-            if let Some(parent) = self.block_tree.get_invalid_parent(current).await {
+
+            let mut parent_hash = self.block_tree.get_invalid_parent(current).await;
+
+            // Fallback: If not explicitly in invalid_parents map, try to find the block's parent hash from tree or storage
+            if parent_hash.is_none() {
+                if let Some(block) = self.block_tree.get_block(current).await {
+                    parent_hash = Some(block.header.parent_hash);
+                } else if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current.into())) {
+                    parent_hash = Some(header.parent_hash);
+                } else if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
+                    parent_hash = Some(block.header.parent_hash);
+                }
+            }
+
+            if let Some(parent) = parent_hash {
+                if parent == current {
+                    warn!("Block {:?} is its own parent in invalid chain! Breaking.", current);
+                    return None;
+                }
                 current = parent;
             } else {
                 // We reached the end of the invalid chain but don't know the parent.
-                // We cannot determine the latest valid ancestor.
+                debug!("[ChainManager] get_latest_valid_ancestor: reached end of invalid chain at {:?}, parent unknown", current);
                 return None;
             }
 
@@ -181,27 +215,23 @@ impl ChainManager for ChainManagerImpl {
         // Now current is the first non-invalid block we found.
         // It MUST be valid (known to the client) to be returned as latestValidHash.
         if self.has_block(current).await {
-            Some(current)
-        } else {
-            // Check if it's genesis
-            if let Ok(Some(genesis_hash)) = self.read_storage.block_hash(0) {
-                if current == genesis_hash {
-                    return Some(current);
-                }
-            }
-
-            // The spec says:
-            // "0x0000000000000000000000000000000000000000000000000000000000000000 if the above conditions are satisfied by a PoW block."
-            // "null if client software cannot determine the ancestor of the invalid payload satisfying the above conditions."
-
-            // If current is ZERO, it means we reached the "parent" of genesis or a PoW block was recorded as parent.
-            if current == B256::ZERO {
-                return Some(B256::ZERO);
-            }
-
-            // We can't determine if 'current' is valid because it's unknown.
-            None
+            debug!("[ChainManager] get_latest_valid_ancestor: found valid ancestor {:?}", current);
+            return Some(current);
         }
+
+        // Fallback for genesis / PoW blocks
+        if let Ok(Some(genesis_hash)) = self.read_storage.block_hash(0) {
+            if current == genesis_hash {
+                return Some(current);
+            }
+        }
+
+        if current == B256::ZERO {
+            return Some(B256::ZERO);
+        }
+
+        debug!("[ChainManager] get_latest_valid_ancestor: block {:?} is not invalid but not known (missing from storage)", current);
+        None
     }
 
     async fn total_difficulty(&self) -> U256 {
@@ -211,16 +241,14 @@ impl ChainManager for ChainManagerImpl {
 
     async fn determine_payload_status(&self, head_block_hash: B256) -> wasix_eth_types::PayloadStatus {
         if self.is_invalid(head_block_hash).await {
-            // Only return INVALID if the block is actually in storage.
-            // If it's not in storage, we should return SYNCING to satisfy syncing state machine requirements.
-            let exists = self.read_storage.header(wasix_eth_types::BlockId::Hash(head_block_hash.into())).ok().flatten().is_some();
-            if exists {
-                let latest_valid = self.get_latest_valid_ancestor(head_block_hash).await;
-                return wasix_eth_types::PayloadStatus {
-                    status: wasix_eth_types::PayloadStatusEnum::Invalid { validation_error: "Block is known to be invalid".to_string() },
-                    latest_valid_hash: latest_valid,
-                };
-            }
+            let latest_valid = self.get_latest_valid_ancestor(head_block_hash).await;
+            info!("[ChainManager] Block {:?} is known invalid. Latest valid ancestor: {:?}", head_block_hash, latest_valid);
+            return wasix_eth_types::PayloadStatus {
+                status: wasix_eth_types::PayloadStatusEnum::Invalid {
+                    validation_error: "Block is known to be invalid".to_string(),
+                },
+                latest_valid_hash: latest_valid,
+            };
         }
 
         if let Ok(Some(_)) = self.read_storage.header(wasix_eth_types::BlockId::Hash(head_block_hash.into())) {

@@ -4,7 +4,6 @@ use crate::engine::reorg_manager::ReorgHandler;
 use crate::sync::registry::SyncRegistry;
 use crate::account_manager::AccountManager;
 use crate::ChainManager;
-use crate::engine::sidechain_tracker::InvalidationReason;
 use crate::engine::payload_builder::PayloadBuilder;
 use crate::engine::payload_processor::PayloadProcessor;
 use crate::mempool::mempool_provider::MempoolProvider;
@@ -20,7 +19,7 @@ use wasix_eth_storage::read_traits::BlockProvider;
 use wasix_eth_storage::read_traits::ChainProvider;
 use wasix_eth_storage::read_traits::HeaderProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
-use wasix_eth_storage::write_traits::{BlockWriter, ChangeSetWriter, HeaderWriter, TransactionWriter};
+use wasix_eth_storage::write_traits::BlockWriter;
 use wasix_eth_types::eip6110_utils::encode_deposit_request;
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::sync::SyncProvider;
@@ -415,44 +414,35 @@ impl Engine {
         let head_status = self.determine_payload_status(forkchoice_state.head_block_hash).await;
 
         // Extra check for invalid head or parent
-        if head_status.status == PayloadStatusEnum::Syncing {
+        if head_status.status == PayloadStatusEnum::Syncing || matches!(head_status.status, PayloadStatusEnum::Invalid { .. }) {
             // Check if head or its parent is explicitly known to be invalid
             if let Some(reason) = self.chain.get_invalidation_reason(forkchoice_state.head_block_hash).await {
-                let head_exists = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))).ok().flatten().is_some();
-                if (reason == InvalidationReason::Hard || reason == InvalidationReason::Soft) && head_exists {
-                    let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
-                    info!("[Engine] forkchoice head {:?} is known invalid ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, reason, latest_valid);
+                let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
+                info!("[Engine] forkchoice head {:?} is known invalid ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, reason, latest_valid);
+                return Ok(ForkchoiceUpdated {
+                    payload_status: PayloadStatus {
+                        status: PayloadStatusEnum::Invalid { validation_error: format!("Head block is known to be invalid: {:?}", reason) },
+                        latest_valid_hash: latest_valid,
+                    },
+                    payload_id: None,
+                });
+            }
+            
+            // Check parent if head is unknown or syncing
+            let header_opt: Option<Header> = self.payload_processor.get_header_from_anywhere(forkchoice_state.head_block_hash).await;
+            let parent_hash = header_opt.map(|h| h.parent_hash);
+            if let Some(p_hash) = parent_hash {
+                if let Some(reason) = self.chain.get_invalidation_reason(p_hash).await {
+                    let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
+                    info!("[Engine] forkchoice head {:?} has known invalid parent {:?} ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, p_hash, reason, latest_valid);
                     return Ok(ForkchoiceUpdated {
                         payload_status: PayloadStatus {
-                            status: PayloadStatusEnum::Invalid { validation_error: "Head block is known to be invalid".to_string() },
+                            status: PayloadStatusEnum::Invalid { validation_error: format!("Parent block {:?} is known to be invalid: {:?}", p_hash, reason) },
                             latest_valid_hash: latest_valid,
                         },
                         payload_id: None,
                     });
                 }
-            }
-            
-            // Check parent if head is unknown
-            if let Ok(None) = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))) {
-                 // Try to get parent from somewhere else (payload map or block tree)
-                 let header_opt: Option<Header> = self.payload_processor.get_header_from_anywhere(forkchoice_state.head_block_hash).await;
-                 let parent_hash = header_opt.map(|h| h.parent_hash);
-                 if let Some(p_hash) = parent_hash {
-                    if let Some(reason) = self.chain.get_invalidation_reason(p_hash).await {
-                        let parent_exists = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(p_hash))).ok().flatten().is_some();
-                        if (reason == InvalidationReason::Hard || reason == InvalidationReason::Soft) && parent_exists {
-                            let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
-                            info!("[Engine] forkchoice head {:?} has known invalid parent {:?} ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, p_hash, reason, latest_valid);
-                            return Ok(ForkchoiceUpdated {
-                                payload_status: PayloadStatus {
-                                    status: PayloadStatusEnum::Invalid { validation_error: "Parent block is known to be invalid".to_string() },
-                                    latest_valid_hash: latest_valid,
-                                },
-                                payload_id: None,
-                            });
-                        }
-                    }
-                 }
             }
         }
 
@@ -880,7 +870,6 @@ impl Engine {
         expected_blob_versioned_hashes: Option<Vec<B256>>,
         parent_beacon_block_root: Option<B256>,
     ) -> RpcResult<PayloadStatus> {
-        let actual_hash = block.header.hash_slow();
         self.payload_processor.new_payload_internal(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await
     }
 

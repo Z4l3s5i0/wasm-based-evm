@@ -262,7 +262,7 @@ impl SyncController {
 
     async fn fetch_ancestors(&self, peer_id: &str, hash: B256, requested_head: B256) -> anyhow::Result<()> {
         let mut current_hash = hash;
-        let mut to_process = Vec::new();
+        let mut to_process: Vec<Block<Transaction>> = Vec::new();
 
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
@@ -278,7 +278,19 @@ impl SyncController {
             // Check if it's known to be invalid
             if let Some(reason) = self.chain_manager.get_invalidation_reason(current_hash).await {
                 if reason == InvalidationReason::Hard {
-                    self.chain_manager.add_invalid_block(requested_head, current_hash, InvalidationReason::Hard).await;
+                    if requested_head != current_hash {
+                        // Mark the requested head as invalid with its actual parent hash if we have it
+                        // to allow walking back to find the latest valid ancestor.
+                        // If we don't have it in the to_process vector yet, we'll try to find it.
+                        let mut head_parent = B256::ZERO;
+                        for b in &to_process {
+                            if b.header.hash_slow() == requested_head {
+                                head_parent = b.header.parent_hash;
+                                break;
+                            }
+                        }
+                        self.chain_manager.add_invalid_block(requested_head, head_parent, InvalidationReason::Hard).await;
+                    }
                     
                     // Clear sync targets since we've reached a known invalid chain
                     self.sync_registry.clear_targets().await;
@@ -321,13 +333,30 @@ impl SyncController {
         let mut last_processed_num = 0;
         let mut last_processed_timestamp = 0;
 
-        for block in to_process.into_iter().rev() {
+        for block in to_process.clone().into_iter().rev() {
             let block_num = block.header.number;
             let block_hash = block.header.hash_slow();
             let block_timestamp = block.header.timestamp;
 
-            if let Err(e) = self.processor.process_block(block).await {
+            if let Err(e) = self.processor.process_block(block.clone()).await {
                 error!("[Sync] Failed to process ancestor block {}: {}", block_num, e);
+                
+                // If the block is invalid, mark the requested head as invalid as well.
+                // Note: process_block already marks block_hash as invalid with its correct parent.
+                if requested_head != block_hash {
+                    // We mark the requested head as invalid with its ACTUAL parent hash
+                    // so that get_latest_valid_ancestor can walk back correctly.
+                    let mut head_parent = block.header.parent_hash; // default to current failed block's parent if we can't find better
+                    for b in &to_process {
+                        if b.header.hash_slow() == requested_head {
+                            head_parent = b.header.parent_hash;
+                            break;
+                        }
+                    }
+                    self.chain_manager.add_invalid_block(requested_head, head_parent, InvalidationReason::Hard).await;
+                }
+                self.sync_registry.clear_targets().await;
+                
                 return Err(anyhow::anyhow!("Ancestor block processing failed: {}", e));
             }
             last_processed_hash = Some(block_hash);
@@ -381,7 +410,7 @@ impl SyncProvider for SyncController {
     }
 
     async fn trigger_sync(&self) -> anyhow::Result<()> {
-        info!("[Sync] Manual sync trigger received");
+        debug!("[Sync] Manual sync trigger received");
         let result = self.sync_step().await;
         if result.is_ok() {
             debug!("[Sync] Manual sync step completed successfully");

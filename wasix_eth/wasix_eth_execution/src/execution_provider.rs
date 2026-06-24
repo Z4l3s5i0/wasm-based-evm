@@ -208,7 +208,7 @@ impl EthExecutionProvider {
             }
             
             if block.header.gas_used != cumulative_gas_used {
-                info!("[Execution] GAS MISMATCH: expected={}, calculated={}. Diff={}",
+                debug!("[Execution] GAS MISMATCH: expected={}, calculated={}. Diff={}",
                     block.header.gas_used, cumulative_gas_used, block.header.gas_used.saturating_sub(cumulative_gas_used));
                 return Err(anyhow::anyhow!(
                     "Gas used mismatch for block {}: expected {}, calculated {}",
@@ -441,7 +441,7 @@ impl ExecutionProvider for EthExecutionProvider {
     }
 
     fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
-        info!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?}", block.header.number, commit, state_root);
+        debug!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?}", block.header.number, commit, state_root);
         let batch = self.write_storage.begin_batch()?;
         
         let (executed_block, receipts) = match self.execute_block_with_batch(block.clone(), &batch, state_root) {
@@ -453,17 +453,15 @@ impl ExecutionProvider for EthExecutionProvider {
         };
         
         if commit {
-            info!("[Execution] execute_block_with_state_root: committing batch for block {}", block.header.number);
-            
+            debug!("[Execution] execute_block_with_state_root: committing batch for block {}", block.header.number);
+
             // Persist ChangeSets
             let account_changes = batch.collect_account_changes();
             let storage_changes = batch.collect_storage_changes();
             batch.insert_account_change_set(executed_block.header.number, account_changes)?;
             batch.insert_storage_change_set(executed_block.header.number, storage_changes)?;
 
-            let start_commit = std::time::Instant::now();
             batch.commit()?;
-            info!("[Execution] execute_block_with_state_root: batch commit took {:?}", start_commit.elapsed());
         }
         
         Ok((executed_block, receipts))
@@ -489,11 +487,6 @@ impl ExecutionProvider for EthExecutionProvider {
 
         let (chain_config, fork, config, env) = self.prepare_execution_env(&block.header)?;
         
-        info!("[Execution] Block {}: beneficiary={:?}, gas_limit={}, gas_used_expected={}, transactions={}, ommers={}, fork={:?}, timestamp={}, prague_time={:?}, cancun_time={:?}, shanghai_time={:?}", 
-            block.header.number, block.header.beneficiary, block.header.gas_limit, block.header.gas_used, 
-            block.body.transactions.len(), block.body.ommers.len(), fork, block.header.timestamp, 
-            chain_config.prague_time, chain_config.cancun_time, chain_config.shanghai_time);
-        
         let is_eip161 = fork >= Hardfork::SpuriousDragon;
 
         let block_processor = BlockProcessor::new(batch);
@@ -502,7 +495,7 @@ impl ExecutionProvider for EthExecutionProvider {
         if fork >= Hardfork::Cancun {
             if let Some(beacon_root) = block.header.parent_beacon_block_root {
                 block_processor.apply_beacon_root(fork, beacon_root, block.header.timestamp, state_root)?;
-                info!("[Execution] EIP-4788 system call finished");
+                debug!("[Execution] EIP-4788 system call finished");
             }
         }
 
@@ -517,7 +510,7 @@ impl ExecutionProvider for EthExecutionProvider {
         // EIP-2935: Serve historical block hashes from state
         let mut gas_2935: u64 = 0;
         if fork >= Hardfork::Prague {
-            info!("[Execution] Executing EIP-2935 history storage system call");
+            debug!("[Execution] Executing EIP-2935 history storage system call");
             let parent_hash = block.header.parent_hash;
             let _sc2935 = self.executor.execute_system_call(
                 SYSTEM_ADDRESS,
@@ -534,7 +527,6 @@ impl ExecutionProvider for EthExecutionProvider {
                 e
             })?;
             gas_2935 = _sc2935.used_gas;
-            info!("[Execution] EIP-2935 system call finished");
             // cumulative_gas_used = cumulative_gas_used.saturating_add(gas_2935);
 
         }
@@ -560,7 +552,7 @@ impl ExecutionProvider for EthExecutionProvider {
                 &mut cumulative_gas_used,
                 state_root,
             )?;
-            info!("[Execution] Transaction {} finished: hash={:?}, gas_used={}, cumulative={}", tx_idx, tx.hash(), result.gas_used, cumulative_gas_used);
+            debug!("[Execution] Transaction {} finished: hash={:?}, gas_used={}, cumulative={}", tx_idx, tx.hash(), result.gas_used, cumulative_gas_used);
             receipts.push(result.receipt);
 
         }
@@ -587,7 +579,7 @@ impl ExecutionProvider for EthExecutionProvider {
         // EIP-7002: Execution layer triggerable withdrawals
         let mut gas_7002: u64 = 0;
         if fork >= Hardfork::Prague {
-            info!("[Execution] Executing EIP-7002 withdrawal requests system call");
+            debug!("[Execution] Executing EIP-7002 withdrawal requests system call");
             let sc7002 = self.executor.execute_system_call(
                 SYSTEM_ADDRESS,
                 WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
@@ -608,7 +600,7 @@ impl ExecutionProvider for EthExecutionProvider {
             let requests_data = sc7002.output;
 
             if !requests_data.is_empty() {
-                info!("[Execution] EIP-7002 withdrawal requests received: len={}", requests_data.len());
+                debug!("[Execution] EIP-7002 withdrawal requests received: len={}", requests_data.len());
                 if requests_data.len() % 76 != 0 {
                     return Err(anyhow::anyhow!("EIP-7002 system call returned malformed data length: {}", requests_data.len()));
                 }
@@ -622,16 +614,14 @@ impl ExecutionProvider for EthExecutionProvider {
             } else {
                 debug!("[Execution] No withdrawal requests returned from system call");
             }
-            // Now that we've added the 7002 gas, we can report the final block gas used
-            info!("[Execution] Block {} execution finished: gas_used_total={}", 
-                block.header.number, cumulative_gas_used);
+
         }
 
         let mut requests = withdrawal_requests;
         // EIP-7251: Consolidation requests
         let mut gas_7251: u64 = 0;
         if fork >= Hardfork::Prague {
-            info!("[Execution] Executing EIP-7251 consolidation requests system call");
+            debug!("[Execution] Executing EIP-7251 consolidation requests system call");
             let sc7251 = self.executor.execute_system_call(
                 SYSTEM_ADDRESS,
                 CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
@@ -652,7 +642,6 @@ impl ExecutionProvider for EthExecutionProvider {
             let result = sc7251.output;
             
             if !result.is_empty() {
-                info!("[Execution] EIP-7251 consolidation requests received: len={}", result.len());
                 if result.len() % 76 != 0 {
                     return Err(anyhow::anyhow!("EIP-7251 system call returned malformed data length: {}", result.len()));
                 }
@@ -671,23 +660,18 @@ impl ExecutionProvider for EthExecutionProvider {
             }
         }
 
-        info!("[Execution] Starting block rewards for block {}", block.header.number);
         block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
-        info!("[Execution] Block rewards finished for block {}", block.header.number);
 
         // Gas accounting breakdown (temporary diagnostic)
         let tx_sum = cumulative_gas_used.saturating_sub(gas_7002);
-        info!(
+        debug!(
             "[Execution] gas debug: tx_sum={}, eip7002_gas={}, eip7251_gas={}, eip2935_gas={}",
             tx_sum, gas_7002, gas_7251, gas_2935
         );
 
-        info!("[Execution] Calculating state root for block {}", block.header.number);
         let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
-        info!("[Execution] State root calculated: {:?}", calculated_root);
+        debug!("[Execution] State root calculated: {:?}", calculated_root);
 
-        info!("[Execution] Finalizing block header for block {}", block.header.number);
-        // block_processor.finalize_block_header(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests)?;
         self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests)?;
         info!("[Execution] Block header finalized for block {}", block.header.number);
         Ok((block, receipts))

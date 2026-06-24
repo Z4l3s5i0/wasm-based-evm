@@ -219,6 +219,9 @@ impl Consensus for EthConsensus {
 
     fn validate_body(&self, block: &Block<Transaction>, chain_config: &ChainConfig) -> Result<(), String> {
         // 0. Resolve fork for Prague validation
+        // Note: For post-merge blocks (which Engine API handles), TD is usually not needed for fork resolution
+        // as forks are timestamp-based. If we don't have the parent TD, we assume merge has happened
+        // if the block number/timestamp suggests a post-merge fork.
         let td = self.read_storage.header_td(block.header.parent_hash).ok().flatten();
         let current_fork = Hardfork::get_active_fork_with_total_difficulty(chain_config, block.header.number, block.header.timestamp, td);
         let is_prague = current_fork >= Hardfork::Prague;
