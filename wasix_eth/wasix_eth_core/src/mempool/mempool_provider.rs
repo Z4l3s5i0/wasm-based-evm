@@ -1,4 +1,4 @@
-use wasix_eth_types::{async_trait, Address, ConsensusTransaction, Transaction, B256, U256, Blob, Bytes48, TxPooledEnvelope, Bytes};
+use wasix_eth_types::{async_trait, ConsensusTransaction, Transaction, B256, U256, Blob, Bytes48, TxPooledEnvelope, Bytes};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::AccountProvider;
 use crate::mempool::mempool::Mempool;
@@ -52,101 +52,103 @@ impl MempoolProvider for Mempool {
     /// Revalidate the mempool against the latest state.
     /// Removes transactions that are no longer valid (e.g. nonce too low, insufficient balance).
     async fn revalidate(&self, state: &DatabaseReadProvider) {
-        let (pending, queued, base_fee, blobs) = {
-            let inner = self.inner.read().await;
-            (inner.pending_transactions.clone(), inner.queued_transactions.clone(), inner.base_fee, inner.blobs.clone())
-        };
-
         let mut to_remove = Vec::new();
+        let mut addresses_to_promote = Vec::new();
 
-        // Check pending transactions
-        for (address, queue) in &pending {
-            let (current_nonce, current_balance) = if let Ok(Some(acc)) = state.account(*address, None) {
-                (acc.nonce, acc.balance)
-            } else {
-                (0, U256::ZERO)
-            };
+        {
+            let inner = self.inner.read().await;
+            let base_fee = inner.base_fee;
 
-            for tx in queue {
-                let tx_nonce = tx.nonce();
-                // Check if transaction can pay the base fee
-                let max_fee = tx.max_fee_per_gas();
+            // Check pending transactions
+            for (address, queue) in &inner.pending_transactions {
+                let (current_nonce, current_balance) = if let Ok(Some(acc)) = state.account(*address, None) {
+                    (acc.nonce, acc.balance)
+                } else {
+                    (0, U256::ZERO)
+                };
 
-                if max_fee < base_fee.to::<u128>() {
-                    info!("[Mempool] Evicting transaction {:?} (nonce: {}) because max fee {} is below base fee {}", 
-                        tx.hash(), tx_nonce, max_fee, base_fee);
-                    to_remove.push(*tx.hash());
-                    continue;
-                }
+                for tx in queue {
+                    let tx_nonce = tx.nonce();
+                    // Check if transaction can pay the base fee
+                    let max_fee = tx.max_fee_per_gas();
 
-                // A very simplified balance check: gas_limit * gas_price + value
-                let gas_limit = tx.gas_limit() as u128;
-                let gas_price = tx.gas_price().unwrap_or_default();
-                let value = tx.value().to::<u128>();
-                let required_balance = U256::from(gas_limit * gas_price + value);
+                    if max_fee < base_fee.to::<u128>() {
+                        info!("[Mempool] Evicting transaction {:?} (nonce: {}) because max fee {} is below base fee {}", 
+                            tx.hash(), tx_nonce, max_fee, base_fee);
+                        to_remove.push(*tx.hash());
+                        continue;
+                    }
 
-                if tx_nonce < current_nonce || current_balance < required_balance {
-                    to_remove.push(*tx.hash());
-                    continue;
-                }
+                    // For EIP-1559 transactions, the absolute maximum a user might pay is gas_limit * max_fee_per_gas + value.
+                    let gas_limit = tx.gas_limit() as u128;
+                    let max_fee_per_gas = tx.max_fee_per_gas();
+                    let value = tx.value().to::<u128>();
+                    let required_balance = U256::from(gas_limit * max_fee_per_gas + value);
 
-                // Check blobs for EIP-4844 transactions
-                if tx.is_eip4844() {
-                    if let Some(hashes) = tx.blob_versioned_hashes() {
-                        for hash in hashes {
-                            if !blobs.contains_key(hash) {
-                                info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
-                                to_remove.push(*tx.hash());
-                                break;
+                    if tx_nonce < current_nonce || current_balance < required_balance {
+                        to_remove.push(*tx.hash());
+                        continue;
+                    }
+
+                    // Check blobs for EIP-4844 transactions
+                    if tx.is_eip4844() {
+                        if let Some(hashes) = tx.blob_versioned_hashes() {
+                            for hash in hashes {
+                                if !inner.blobs.contains_key(hash) {
+                                    info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
+                                    to_remove.push(*tx.hash());
+                                    break;
+                                }
                             }
                         }
                     }
                 }
             }
-        }
 
-        // Check queued transactions
-        for (address, queue) in &queued {
-            let (current_nonce, current_balance) = if let Ok(Some(acc)) = state.account(*address, None) {
-                (acc.nonce, acc.balance)
-            } else {
-                (0, U256::ZERO)
-            };
+            // Check queued transactions
+            for (address, queue) in &inner.queued_transactions {
+                let (current_nonce, current_balance) = if let Ok(Some(acc)) = state.account(*address, None) {
+                    (acc.nonce, acc.balance)
+                } else {
+                    (0, U256::ZERO)
+                };
 
-            for tx in queue {
-                let tx_nonce = tx.nonce();
-                // Check if transaction can pay the base fee
-                let max_fee = tx.max_fee_per_gas();
+                for tx in queue {
+                    let tx_nonce = tx.nonce();
+                    // Check if transaction can pay the base fee
+                    let max_fee = tx.max_fee_per_gas();
 
-                if max_fee < base_fee.to::<u128>() {
-                    info!("[Mempool] Evicting transaction {:?} (nonce: {}) because max fee {} is below base fee {}", 
-                        tx.hash(), tx_nonce, max_fee, base_fee);
-                    to_remove.push(*tx.hash());
-                    continue;
-                }
+                    if max_fee < base_fee.to::<u128>() {
+                        info!("[Mempool] Evicting transaction {:?} (nonce: {}) because max fee {} is below base fee {}", 
+                            tx.hash(), tx_nonce, max_fee, base_fee);
+                        to_remove.push(*tx.hash());
+                        continue;
+                    }
 
-                let gas_limit = tx.gas_limit() as u128;
-                let gas_price = tx.gas_price().unwrap_or_default();
-                let value = tx.value().to::<u128>();
-                let required_balance = U256::from(gas_limit * gas_price + value);
+                    let gas_limit = tx.gas_limit() as u128;
+                    let max_fee_per_gas = tx.max_fee_per_gas();
+                    let value = tx.value().to::<u128>();
+                    let required_balance = U256::from(gas_limit * max_fee_per_gas + value);
 
-                if tx_nonce < current_nonce || current_balance < required_balance {
-                    to_remove.push(*tx.hash());
-                    continue;
-                }
+                    if tx_nonce < current_nonce || current_balance < required_balance {
+                        to_remove.push(*tx.hash());
+                        continue;
+                    }
 
-                // Check blobs for EIP-4844 transactions
-                if tx.is_eip4844() {
-                    if let Some(hashes) = tx.blob_versioned_hashes() {
-                        for hash in hashes {
-                            if !blobs.contains_key(hash) {
-                                info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
-                                to_remove.push(*tx.hash());
-                                break;
+                    // Check blobs for EIP-4844 transactions
+                    if tx.is_eip4844() {
+                        if let Some(hashes) = tx.blob_versioned_hashes() {
+                            for hash in hashes {
+                                if !inner.blobs.contains_key(hash) {
+                                    info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
+                                    to_remove.push(*tx.hash());
+                                    break;
+                                }
                             }
                         }
                     }
                 }
+                addresses_to_promote.push(*address);
             }
         }
 
@@ -156,8 +158,7 @@ impl MempoolProvider for Mempool {
         }
 
         // Try to promote queued transactions in case some were removed or new ones can be moved
-        let addresses: Vec<Address> = queued.keys().copied().collect();
-        for address in addresses {
+        for address in addresses_to_promote {
             let current_nonce = if let Ok(Some(acc)) = state.account(address, None) {
                 acc.nonce
             } else {

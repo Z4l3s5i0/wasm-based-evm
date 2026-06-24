@@ -530,13 +530,13 @@ mod tests {
         mempool.inner.write().await.add_transaction(tx2.clone(), 0);
 
         // Peek with gas limit enough for both
-        let best = mempool.peek_best_transactions(50000, U256::from(100), None).await;
+        let best = mempool.peek_best_transactions(50000, U256::from(100), None, None).await;
         assert_eq!(best.len(), 2);
         assert_eq!(best[0].hash(), tx2.hash()); // tx2 has higher tip
         assert_eq!(best[1].hash(), tx1.hash());
 
         // Peek with gas limit enough for only one
-        let best_one = mempool.peek_best_transactions(30000, U256::from(100), None).await;
+        let best_one = mempool.peek_best_transactions(30000, U256::from(100), None, None).await;
         assert_eq!(best_one.len(), 1);
         assert_eq!(best_one[0].hash(), tx2.hash());
     }
@@ -581,7 +581,7 @@ mod tests {
         inner.pending_transactions.entry(from).or_default().push_back(tx2.clone());
         drop(inner);
 
-        let best = mempool.peek_best_transactions(100000, U256::from(100), None).await;
+        let best = mempool.peek_best_transactions(100000, U256::from(100), None, None).await;
         assert_eq!(best.len(), 2);
         assert_eq!(best[0].hash(), tx1.hash()); // Nonce 0 must come first even if Tx2 has higher tip
         assert_eq!(best[1].hash(), tx2.hash());

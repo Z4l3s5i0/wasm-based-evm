@@ -31,8 +31,11 @@ fn encode_tx_for_payload(tx: &Transaction) -> Vec<u8> {
     match tx {
         Transaction::Eip4844(signed_tx) => {
             // Strip sidecar: re-create a Signed<TxEip4844Variant> with just TxEip4844
-            use wasix_eth_types::{TxEip4844Variant, Signed};
-            let inner_tx: wasix_eth_types::TxEip4844 = signed_tx.tx().clone().into();
+            use wasix_eth_types::{TxEip4844Variant, Signed, TxEip4844};
+            let inner_tx: TxEip4844 = match signed_tx.tx() {
+                TxEip4844Variant::TxEip4844(tx) => tx.clone(),
+                TxEip4844Variant::TxEip4844WithSidecar(tx_sidecar) => tx_sidecar.tx.clone(),
+            };
             let stripped = Signed::new_unchecked(
                 TxEip4844Variant::<wasix_eth_types::BlobTransactionSidecarVariant>::TxEip4844(inner_tx),
                 *signed_tx.signature(),
@@ -74,10 +77,7 @@ impl EngineMapper {
             },
             block_hash: block.header.hash_slow(),
             transactions: block.body.transactions.iter().map(|tx| {
-                let mut out = Vec::new();
-                tx.encode_2718(&mut out);
-                out.into()
-                // encode_tx_for_payload(tx).into()
+                encode_tx_for_payload(tx).into()
             }).collect(),
         }
     }
@@ -138,10 +138,7 @@ impl EngineMapper {
     pub fn to_execution_payload_body_v1(block: &Block<Transaction>) -> ExecutionPayloadBodyV1 {
         ExecutionPayloadBodyV1 {
             transactions: block.body.transactions.iter().map(|tx| {
-                let mut out = Vec::new();
-                tx.encode_2718(&mut out);
-                out.into()
-                // encode_tx_for_payload(tx).into()
+                encode_tx_for_payload(tx).into()
             }).collect(),
             withdrawals: block.body.withdrawals.clone().map(|w| w.to_vec()),
         }

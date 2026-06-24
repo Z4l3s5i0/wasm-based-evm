@@ -43,21 +43,37 @@ impl GossipService {
     }
 
     async fn handle_message(&self, data: Vec<u8>) -> Result<(), Box<dyn std::error::Error>> {
+        if data.len() > 10 * 1024 * 1024 {
+            return Err("Gossip message too large".into());
+        }
+
         let mut data_slice = data.as_slice();
         
         // Try decoding as a Block first
         if let Ok(block) = Block::decode(&mut data_slice) {
             let block: Block<Transaction> = block;
             let block_hash = block.header.hash_slow();
+
+            // Basic block validation before ingestion
+            let (_head_hash, head_num) = self.chain.head_block().await;
+            
+            // 1. Check if block number is too far in the future
+            if block.header.number > head_num + 1024 {
+                return Err(format!("Gossiped block {} too far in future (head {})", block.header.number, head_num).into());
+            }
+
+            // 2. Check if parent exists
+            let parent_exists = self.chain.has_block(block.header.parent_hash).await;
+
             debug!("[Gossip] Received block via gossip: {:?} (number {})", block_hash, block.header.number);
             
             // Ingest block via sink
             if self.engine.ingest_block(block).await {
                 // Check if we have it in sync layer
                 let has_block = self.chain.has_block(block_hash).await;
-                if !has_block {
-                    // If we don't have it, trigger sync to process it and its ancestors
-                    info!("[Gossip] New block received via gossip, triggering sync: {:?}", block_hash);
+                if !has_block && !parent_exists {
+                    // If we don't have it and don't have its parent, trigger sync to process it and its ancestors
+                    info!("[Gossip] New block received via gossip with unknown parent, triggering sync: {:?}", block_hash);
                     let registry = self.sync_registry.clone();
                     tokio::spawn(async move {
                         registry.add_target(block_hash, None).await;
@@ -68,6 +84,10 @@ impl GossipService {
         }
 
         // Fallback to Transaction
+        if data.len() > 128 * 1024 {
+            return Err("Transaction gossip message too large".into());
+        }
+
         data_slice = data.as_slice();
         let tx = Transaction::decode(&mut data_slice)
             .map_err(|e| format!("Failed to decode gossip message as Block or Transaction: {}", e))?;

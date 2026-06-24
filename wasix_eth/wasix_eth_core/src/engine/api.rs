@@ -308,8 +308,22 @@ impl RPCEngine {
         }
 
         // Convert to Transaction (TxEnvelope) for submission to mempool
-        let signed_tx: Transaction = pooled_tx.try_into()
+        let mut signed_tx: Transaction = pooled_tx.try_into()
             .map_err(|_| RpcError::InvalidParams("Failed to convert pooled tx to envelope".to_string()))?;
+
+        // Strip sidecar from EIP-4844 transactions for the mempool (consensus format)
+        if let Transaction::Eip4844(signed_tx_sidecar) = &signed_tx {
+            use wasix_eth_types::{TxEip4844Variant, Signed, TxEip4844};
+            let inner_tx: TxEip4844 = match signed_tx_sidecar.tx() {
+                TxEip4844Variant::TxEip4844(tx) => tx.clone(),
+                TxEip4844Variant::TxEip4844WithSidecar(tx_sidecar) => tx_sidecar.tx.clone(),
+            };
+            signed_tx = Transaction::Eip4844(Signed::new_unchecked(
+                TxEip4844Variant::<wasix_eth_types::BlobTransactionSidecarVariant>::TxEip4844(inner_tx),
+                *signed_tx_sidecar.signature(),
+                *signed_tx_sidecar.hash(),
+            ));
+        }
 
         self.submit_transaction(signed_tx).await
     }
