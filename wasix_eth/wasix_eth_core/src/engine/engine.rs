@@ -566,7 +566,6 @@ impl Engine {
 
                                 // 4. Emit CanonicalBlock events for the newly canonical blocks
                                 for block in context.new_canonical_blocks {
-                                    // let _ = self.event_tx.send(EngineEvent::CanonicalBlock(block));
                                     self.mempool_listener.handle_canonical_block(block).await;
                                 }
                             } else if old_head != forkchoice_state.head_block_hash {
@@ -604,15 +603,15 @@ impl Engine {
             }
         }
 
-        // 2. Build payload if requested and status is VALID (or SYNCING)
-        let (status, payload_id) = if status.status == PayloadStatusEnum::Valid || (status.status == PayloadStatusEnum::Syncing && payload_attributes.is_some()) {
+        // 2. Build payload if requested and status is VALID
+        let (status, payload_id) = if status.status == PayloadStatusEnum::Valid {
             if let Some(attr) = payload_attributes {
                 match self.build_new_payload(forkchoice_state.head_block_hash, attr, &status).await {
                     Ok(id) => (status, id),
                     Err(e) => {
-                        // Rollback forkchoice in storage on error
-                        let _ = self.write_storage.update_forkchoice(old_head, old_safe, old_finalized);
-                        return Err(e);
+                        error!("[Engine] Failed to build payload: {}", e);
+                        // We return the status but with payload_id = None instead of failing the whole RPC call
+                        (status, None)
                     }
                 }
             } else {

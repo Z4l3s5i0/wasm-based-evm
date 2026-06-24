@@ -86,6 +86,9 @@ impl PayloadProcessor {
             if let Err(e) = self.consensus.validate_cancun(&block, expected_blob_versioned_hashes.as_deref()) {
                 error!("[PayloadProcessor] Cancun validation (versioned hashes) failed for block {}: {}", actual_hash, e);
 
+                
+                self.chain.add_invalid_block(actual_hash, block.header.parent_hash, InvalidationReason::Soft).await;
+                
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
                 {
                     let mut processing = self.processing_payloads.write().unwrap();
@@ -98,6 +101,8 @@ impl PayloadProcessor {
             }
             if let Err(e) = self.consensus.validate_parent_beacon_block_root(&block.header, parent_beacon_block_root) {
                 error!("[PayloadProcessor] Cancun validation (parent beacon block root) failed for block {}: {}", actual_hash, e);
+
+                self.chain.add_invalid_block(actual_hash, block.header.parent_hash, InvalidationReason::Soft).await;
 
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
                 {

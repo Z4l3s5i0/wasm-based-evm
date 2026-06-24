@@ -19,7 +19,7 @@ use wasix_eth_types::B256;
 use wasix_eth_types::U256;
 use wasix_eth_types::BlobsBundleV1;
 use wasix_eth_types::ConsensusTransaction;
-use wasix_eth_utils::{debug, info};
+use wasix_eth_utils::{debug, info, error, warn};
 use wasix_eth_types::Result;
 
 #[derive(Clone)]
@@ -97,15 +97,24 @@ impl PayloadBuilder {
         let execution = Arc::clone(&self.execution);
         let parent_header_clone = parent_block.header.clone();
         let attr_clone = attr.clone();
-        let (finalized_block, receipts) = tokio::task::spawn_blocking(move || {
+        let (finalized_block, receipts) = match tokio::task::spawn_blocking(move || {
             execution.execute_block_for_payload(
                 transactions,
                 &parent_header_clone,
                 &attr_clone,
                 base_fee_per_gas,
             )
-        }).await.map_err(|e| RpcError::Internal(format!("Payload building task panicked: {}", e)))?
-        .map_err(|e| RpcError::Internal(e.to_string()))?;
+        }).await {
+            Ok(Ok(res)) => res,
+            Ok(Err(e)) => {
+                warn!("[PayloadBuilder] Execution failed for payload building: {}", e);
+                return Ok(None);
+            }
+            Err(e) => {
+                error!("[PayloadBuilder] Payload building task panicked: {}", e);
+                return Ok(None);
+            }
+        };
 
         let mut bundle = BlobsBundleV1::default();
         for tx in &finalized_block.body.transactions {
@@ -130,10 +139,19 @@ impl PayloadBuilder {
         let blob_count = bundle.blobs.len() as u32;
         let id_clone = id.clone();
 
-        tokio::task::spawn_blocking(move || {
+        match tokio::task::spawn_blocking(move || {
             write_storage.add_payload(id_clone, finalized_block_clone, receipts_clone, bundle)
-        }).await.map_err(|e| RpcError::Internal(format!("Payload persistence task panicked: {}", e)))?
-        .map_err(|e| RpcError::Internal(e.to_string()))?;
+        }).await {
+            Ok(Ok(_)) => {},
+            Ok(Err(e)) => {
+                error!("[PayloadBuilder] Failed to persist payload: {}", e);
+                return Ok(None);
+            }
+            Err(e) => {
+                error!("[PayloadBuilder] Payload persistence task panicked: {}", e);
+                return Ok(None);
+            }
+        }
 
         info!("[PayloadBuilder] Created payload_id={:?} for block_number={} with {} blobs", id, parent_block.header.number + 1, blob_count);
 
