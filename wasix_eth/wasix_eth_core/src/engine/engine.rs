@@ -403,8 +403,8 @@ impl Engine {
                                     payload_attributes: Option<PayloadAttributes>,
                                     version: u8) -> RpcResult<ForkchoiceUpdated> {
 
-        debug!("[Engine] forkchoice_updated: head={:?} safe={:?} finalized={:?} version={}", 
-            forkchoice_state.head_block_hash, forkchoice_state.safe_block_hash, forkchoice_state.finalized_block_hash, version);
+        info!("[Engine] forkchoice_updated: head={:?} safe={:?} finalized={:?} version={} attr={}", 
+            forkchoice_state.head_block_hash, forkchoice_state.safe_block_hash, forkchoice_state.finalized_block_hash, version, payload_attributes.is_some());
 
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
@@ -418,9 +418,10 @@ impl Engine {
         if head_status.status == PayloadStatusEnum::Syncing {
             // Check if head or its parent is explicitly known to be invalid
             if let Some(reason) = self.chain.get_invalidation_reason(forkchoice_state.head_block_hash).await {
-                if reason == InvalidationReason::Hard {
+                let head_exists = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))).ok().flatten().is_some();
+                if (reason == InvalidationReason::Hard || reason == InvalidationReason::Soft) && head_exists {
                     let latest_valid = self.chain.get_latest_valid_ancestor(forkchoice_state.head_block_hash).await;
-                    debug!("[Engine] forkchoice head {:?} is known invalid (Hard). Latest valid: {:?}", forkchoice_state.head_block_hash, latest_valid);
+                    info!("[Engine] forkchoice head {:?} is known invalid ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, reason, latest_valid);
                     return Ok(ForkchoiceUpdated {
                         payload_status: PayloadStatus {
                             status: PayloadStatusEnum::Invalid { validation_error: "Head block is known to be invalid".to_string() },
@@ -438,9 +439,10 @@ impl Engine {
                  let parent_hash = header_opt.map(|h| h.parent_hash);
                  if let Some(p_hash) = parent_hash {
                     if let Some(reason) = self.chain.get_invalidation_reason(p_hash).await {
-                        if reason == InvalidationReason::Hard {
+                        let parent_exists = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(p_hash))).ok().flatten().is_some();
+                        if (reason == InvalidationReason::Hard || reason == InvalidationReason::Soft) && parent_exists {
                             let latest_valid = self.chain.get_latest_valid_ancestor(p_hash).await;
-                            debug!("[Engine] forkchoice head {:?} has known invalid parent {:?} (Hard). Latest valid: {:?}", forkchoice_state.head_block_hash, p_hash, latest_valid);
+                            info!("[Engine] forkchoice head {:?} has known invalid parent {:?} ({:?}). Latest valid: {:?}", forkchoice_state.head_block_hash, p_hash, reason, latest_valid);
                             return Ok(ForkchoiceUpdated {
                                 payload_status: PayloadStatus {
                                     status: PayloadStatusEnum::Invalid { validation_error: "Parent block is known to be invalid".to_string() },
@@ -818,7 +820,11 @@ impl Engine {
 
         let batch = self.write_storage.begin_batch()?;
 
-        match self.execution.execute_block_with_batch(block.clone(), &batch, parent_state_root) {
+        info!("[Engine] Starting execution for block {}", block_num);
+        let exec_result = self.execution.execute_block_with_batch(block.clone(), &batch, parent_state_root);
+        info!("[Engine] Execution finished for block {}. Result is success: {}", block_num, exec_result.is_ok());
+
+        match exec_result {
             Ok((final_block, receipts)) => {
                 // 3.5 Post-execution validation
                 if let Err(e) = self.consensus.validate_block_post_execution(
@@ -868,7 +874,10 @@ impl Engine {
                     batch.insert_transaction_lookup(tx_hash, block_hash, i as u64)?;
                 }
 
+                info!("[Engine] Committing batch for block {}", block_num);
+                let start_commit_outer = std::time::Instant::now();
                 batch.commit()?;
+                info!("[Engine] Batch committed for block {} in {:?}", block_num, start_commit_outer.elapsed());
 
                 // Emit event for new block
                 let _ = self.event_tx.send(EngineEvent::NewBlock(block));
@@ -894,6 +903,7 @@ impl Engine {
         expected_blob_versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus> {
+        info!("[Engine] engine_newPayloadV3: block={}, hash={:?}", payload.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.block_hash);
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
             ..Default::default()
@@ -984,7 +994,13 @@ impl Engine {
         expected_blob_versioned_hashes: Option<Vec<B256>>,
         parent_beacon_block_root: Option<B256>,
     ) -> RpcResult<PayloadStatus> {
-        self.payload_processor.new_payload_internal(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await
+        let actual_hash = block.header.hash_slow();
+        info!("[Engine] new_payload_internal: block={}, hash={}, parent={}", block.header.number, actual_hash, block.header.parent_hash);
+        let result = self.payload_processor.new_payload_internal(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
+        if let Ok(ref status) = result {
+            info!("[Engine] new_payload_internal result for {}: {:?}", actual_hash, status.status);
+        }
+        result
     }
 
     // --- helper methods engine calls ---

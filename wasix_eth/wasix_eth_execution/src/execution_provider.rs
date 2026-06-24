@@ -441,7 +441,7 @@ impl ExecutionProvider for EthExecutionProvider {
     }
 
     fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
-        debug!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?}", block.header.number, commit, state_root);
+        info!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?}", block.header.number, commit, state_root);
         let batch = self.write_storage.begin_batch()?;
         
         let (executed_block, receipts) = match self.execute_block_with_batch(block.clone(), &batch, state_root) {
@@ -453,7 +453,7 @@ impl ExecutionProvider for EthExecutionProvider {
         };
         
         if commit {
-            debug!("[Execution] execute_block_with_state_root: committing batch for block {}", block.header.number);
+            info!("[Execution] execute_block_with_state_root: committing batch for block {}", block.header.number);
             
             // Persist ChangeSets
             let account_changes = batch.collect_account_changes();
@@ -463,7 +463,7 @@ impl ExecutionProvider for EthExecutionProvider {
 
             let start_commit = std::time::Instant::now();
             batch.commit()?;
-            debug!("[Execution] execute_block_with_state_root: batch commit took {:?}", start_commit.elapsed());
+            info!("[Execution] execute_block_with_state_root: batch commit took {:?}", start_commit.elapsed());
         }
         
         Ok((executed_block, receipts))
@@ -671,7 +671,9 @@ impl ExecutionProvider for EthExecutionProvider {
             }
         }
 
+        info!("[Execution] Starting block rewards for block {}", block.header.number);
         block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
+        info!("[Execution] Block rewards finished for block {}", block.header.number);
 
         // Gas accounting breakdown (temporary diagnostic)
         let tx_sum = cumulative_gas_used.saturating_sub(gas_7002);
@@ -680,9 +682,14 @@ impl ExecutionProvider for EthExecutionProvider {
             tx_sum, gas_7002, gas_7251, gas_2935
         );
 
+        info!("[Execution] Calculating state root for block {}", block.header.number);
         let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
+        info!("[Execution] State root calculated: {:?}", calculated_root);
+
+        info!("[Execution] Finalizing block header for block {}", block.header.number);
         // block_processor.finalize_block_header(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests)?;
         self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests)?;
+        info!("[Execution] Block header finalized for block {}", block.header.number);
         Ok((block, receipts))
     }
 

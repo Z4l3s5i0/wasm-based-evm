@@ -167,7 +167,9 @@ impl ChainManager for ChainManagerImpl {
             if let Some(parent) = self.block_tree.get_invalid_parent(current).await {
                 current = parent;
             } else {
-                break;
+                // We reached the end of the invalid chain but don't know the parent.
+                // We cannot determine the latest valid ancestor.
+                return None;
             }
 
             if visited.len() >= 1024 {
@@ -177,7 +179,7 @@ impl ChainManager for ChainManagerImpl {
         }
 
         // Now current is the first non-invalid block we found.
-        // It might be valid or just unknown.
+        // It MUST be valid (known to the client) to be returned as latestValidHash.
         if self.has_block(current).await {
             Some(current)
         } else {
@@ -209,11 +211,16 @@ impl ChainManager for ChainManagerImpl {
 
     async fn determine_payload_status(&self, head_block_hash: B256) -> wasix_eth_types::PayloadStatus {
         if self.is_invalid(head_block_hash).await {
-            let latest_valid = self.get_latest_valid_ancestor(head_block_hash).await;
-            return wasix_eth_types::PayloadStatus {
-                status: wasix_eth_types::PayloadStatusEnum::Invalid { validation_error: "Block is known to be invalid".to_string() },
-                latest_valid_hash: latest_valid,
-            };
+            // Only return INVALID if the block is actually in storage.
+            // If it's not in storage, we should return SYNCING to satisfy syncing state machine requirements.
+            let exists = self.read_storage.header(wasix_eth_types::BlockId::Hash(head_block_hash.into())).ok().flatten().is_some();
+            if exists {
+                let latest_valid = self.get_latest_valid_ancestor(head_block_hash).await;
+                return wasix_eth_types::PayloadStatus {
+                    status: wasix_eth_types::PayloadStatusEnum::Invalid { validation_error: "Block is known to be invalid".to_string() },
+                    latest_valid_hash: latest_valid,
+                };
+            }
         }
 
         if let Ok(Some(_)) = self.read_storage.header(wasix_eth_types::BlockId::Hash(head_block_hash.into())) {

@@ -19,7 +19,7 @@ use wasix_eth_types::B256;
 use wasix_eth_types::U256;
 use wasix_eth_types::BlobsBundleV1;
 use wasix_eth_types::ConsensusTransaction;
-use wasix_eth_utils::debug;
+use wasix_eth_utils::{debug, info};
 use wasix_eth_types::Result;
 
 #[derive(Clone)]
@@ -56,7 +56,7 @@ impl PayloadBuilder {
         status: &PayloadStatus,
     ) -> RpcResult<Option<PayloadId>> {
         if status.status == PayloadStatusEnum::Syncing {
-            debug!("[PayloadBuilder] Cannot build payload: head block missing (status is Syncing)");
+            info!("[PayloadBuilder] Cannot build payload: head block missing (status is Syncing)");
             return Ok(None);
         }
 
@@ -128,13 +128,14 @@ impl PayloadBuilder {
         let finalized_block_clone = finalized_block.clone();
         let receipts_clone = receipts.clone();
         let blob_count = bundle.blobs.len() as u32;
+        let id_clone = id.clone();
 
         tokio::task::spawn_blocking(move || {
-            write_storage.add_payload(id, finalized_block_clone, receipts_clone, bundle)
+            write_storage.add_payload(id_clone, finalized_block_clone, receipts_clone, bundle)
         }).await.map_err(|e| RpcError::Internal(format!("Payload persistence task panicked: {}", e)))?
         .map_err(|e| RpcError::Internal(e.to_string()))?;
 
-        debug!("[PayloadBuilder] Created payload_id={:?} for block_number={} with {} blobs", id, parent_block.header.number + 1, blob_count);
+        info!("[PayloadBuilder] Created payload_id={:?} for block_number={} with {} blobs", id, parent_block.header.number + 1, blob_count);
 
         Ok(Some(id))
     }
