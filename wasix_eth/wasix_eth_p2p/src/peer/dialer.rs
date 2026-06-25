@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep};
+use std::time::Instant;
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::PeerDiscoveryWriter;
 use wasix_eth_storage::read_traits::PeerDiscoveryProvider;
@@ -21,6 +22,7 @@ pub struct PeerDialer {
     registry: Arc<PeerRegistry>,
     write_provider: DatabaseWriteProvider,
     dial_attempts: Arc<Mutex<HashMap<SocketAddr, (u32, bool)>>>,
+    protocol_penalties: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
 }
 
 impl PeerDialer {
@@ -29,6 +31,7 @@ impl PeerDialer {
             registry,
             write_provider,
             dial_attempts: Arc::new(Mutex::new(HashMap::new())),
+            protocol_penalties: Arc::new(Mutex::new(HashMap::new())),
         }
     }
 
@@ -53,10 +56,21 @@ impl PeerDialer {
             registry: self.registry.clone(),
             write_provider: self.write_provider.clone(),
             dial_attempts: self.dial_attempts.clone(),
+            protocol_penalties: self.protocol_penalties.clone(),
         }
     }
 
     async fn dial_peer_internal(&self, addr: SocketAddr) {
+        {
+            let penalties = self.protocol_penalties.lock().await;
+            if let Some(penalty_until) = penalties.get(&addr) {
+                if Instant::now() < *penalty_until {
+                    debug!("[P2P Dialer] Peer {} is penalized, skipping dial", addr);
+                    return;
+                }
+            }
+        }
+
         let (attempts, last_error_was_eof) = {
             let mut guard = self.dial_attempts.lock().await;
             let entry = guard.entry(addr).or_insert((0, false));
@@ -166,12 +180,19 @@ impl PeerDialer {
                     }
                     Err(e) => {
                         error!("[P2P Dialer] Handshake failed with {}: {}", addr, e);
-                        let is_eof = e.to_string().contains("early eof");
+                        let err_str = e.to_string();
+                        let is_eof = err_str.contains("early eof");
                         if is_eof {
                             let mut guard = self.dial_attempts.lock().await;
                             if let Some(entry) = guard.get_mut(&addr) {
                                 entry.1 = true;
                             }
+                        }
+
+                        if err_str.contains("MAC mismatch") {
+                            info!("[P2P Dialer] Protocol error (MAC mismatch) with {}, penalizing", addr);
+                            let mut penalties = self.protocol_penalties.lock().await;
+                            penalties.insert(addr, Instant::now() + Duration::from_secs(60));
                         }
                     }
                 }

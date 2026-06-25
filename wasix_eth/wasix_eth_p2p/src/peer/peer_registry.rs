@@ -59,6 +59,11 @@ impl PeerProvider for PeerRegistry {
     fn as_any(&self) -> &dyn std::any::Any {
         self
     }
+
+    fn disconnect_peer(&self, peer_id: &str) -> Result<()> {
+        let _ = self.disconnect_tx.try_send(peer_id.to_string());
+        Ok(())
+    }
 }
 
 impl PeerRegistry {

@@ -25,6 +25,7 @@ pub trait PeerProvider: Send + Sync {
     async fn get_active_peers(&self) -> Result<Vec<PeerEntry>>;
     async fn get_session(&self, peer_id: &str) -> Option<Arc<dyn P2pSession>>;
     fn as_any(&self) -> &dyn std::any::Any;
+    fn disconnect_peer(&self, peer_id: &str) -> Result<()>;
 }
 
 

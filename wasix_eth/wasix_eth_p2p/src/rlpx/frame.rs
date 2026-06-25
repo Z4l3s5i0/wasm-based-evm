@@ -133,7 +133,7 @@ impl RlpxFrameCodec {
         let expected_mac = self.ingress_mac.digest();
         
         if expected_mac.as_slice() != header_mac {
-            return Err(anyhow!("Header MAC mismatch"));
+            return Err(crate::error::P2pError::HeaderMacMismatch.into());
         }
         
         let mut header = *header_ciphertext;
@@ -155,7 +155,7 @@ impl RlpxFrameCodec {
         let expected_mac = self.ingress_mac.digest();
 
         if expected_mac.as_slice() != frame_mac {
-            return Err(anyhow!("Frame MAC mismatch"));
+            return Err(crate::error::P2pError::FrameMacMismatch.into());
         }
         
         let mut payload = frame_ciphertext.to_vec();

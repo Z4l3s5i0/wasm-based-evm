@@ -10,4 +10,8 @@ pub enum P2pError {
     FrameSizeTooLarge(usize),
     #[error("Snappy decompressed size {0} exceeds limit {1}")]
     DecompressedSizeExceedsLimit(usize, usize),
+    #[error("Header MAC mismatch")]
+    HeaderMacMismatch,
+    #[error("Frame MAC mismatch")]
+    FrameMacMismatch,
 }

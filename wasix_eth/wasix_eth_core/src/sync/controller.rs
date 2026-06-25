@@ -543,6 +543,11 @@ impl SyncProvider for SyncController {
     }
 
     async fn handle_announced_pooled_transactions(&self, peer_id: String, hashes: Vec<B256>) -> wasix_eth_types::Result<()> {
+        if self.downloader.peer_provider.get_session(&peer_id).await.is_none() {
+            debug!("[Sync] Skipping pooled transaction announcement from disconnected peer {}", peer_id);
+            return Ok(());
+        }
+
         let mut hashes_to_download = Vec::with_capacity(hashes.len());
         for hash in hashes {
             // Skip if already in mempool

@@ -71,7 +71,13 @@ impl Downloader {
                 skip: 0,
                 reverse: false,
             },
-        }).await?;
+        }).await.map_err(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("channel closed") || err_str.contains("Session closed") {
+                let _ = self.peer_provider.disconnect_peer(peer_id);
+            }
+            e
+        })?;
 
         Ok(response.message.0)
     }
@@ -83,7 +89,13 @@ impl Downloader {
         let response = session.get_block_bodies(RequestPair {
             request_id: rand::random(),
             message: GetBlockBodies(hashes),
-        }).await?;
+        }).await.map_err(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("channel closed") || err_str.contains("Session closed") {
+                let _ = self.peer_provider.disconnect_peer(peer_id);
+            }
+            e
+        })?;
 
         Ok(response.message.0)
     }
@@ -126,7 +138,13 @@ impl Downloader {
         let response = session.get_pooled_transactions(RequestPair {
             request_id: rand::random(),
             message: GetPooledTransactions(hashes),
-        }).await?;
+        }).await.map_err(|e| {
+            let err_str = e.to_string();
+            if err_str.contains("channel closed") || err_str.contains("Session closed") {
+                let _ = self.peer_provider.disconnect_peer(peer_id);
+            }
+            e
+        })?;
 
         Ok(response.message.0)
     }

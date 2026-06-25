@@ -88,6 +88,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                         Ok(Ok((id, payload))) => {
                             if !self.handle_message(id, payload).await {
                                 info!("[P2P Session] Protocol requested disconnect for {}", self.peer_id);
+                                self.notify_disconnect().await;
                                 break;
                             }
                         }
@@ -110,6 +111,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                 }
             }
         }
+        self.notify_disconnect().await;
     }
 
     async fn handle_request(&mut self, req: SessionRequest) -> Result<()> {

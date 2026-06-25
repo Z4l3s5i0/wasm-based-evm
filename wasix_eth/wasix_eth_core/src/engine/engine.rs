@@ -19,7 +19,6 @@ use wasix_eth_storage::read_traits::BlockProvider;
 use wasix_eth_storage::read_traits::ChainProvider;
 use wasix_eth_storage::read_traits::HeaderProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
-use wasix_eth_storage::write_traits::BlockWriter;
 use wasix_eth_types::eip6110_utils::encode_deposit_request;
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::sync::SyncProvider;
