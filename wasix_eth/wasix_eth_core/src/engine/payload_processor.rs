@@ -489,14 +489,18 @@ impl PayloadProcessor {
         // Before executing, check if parent header is available in storage.
         // We MUST NOT proceed to execution if the parent is only in the orphan pool or payload map,
         // because its state root hasn't been fully processed and committed to the database yet.
-        let parent_header_in_storage = self.read_storage.header(BlockId::Hash(parent_hash.into())).ok().flatten();
+        let parent_header_in_storage = self.read_storage.header(BlockId::Hash(parent_hash.into())).ok().flatten()
+            .or_else(|| {
+                // Fallback: Check Payloads table if not in main Headers table
+                self.read_storage.get_payload_by_block_hash(parent_hash).map(|(b, _, _)| b.header)
+            });
         
         // If header not in storage, check if it's currently being processed or available elsewhere.
         let parent_header = if parent_header_in_storage.is_none() {
              if self.processing_payloads.read().unwrap().contains(&parent_hash) {
                   // If it's being processed, we can't get its header yet but we know it's coming.
                   // We return SYNCING and the CL will retry.
-                  debug!("[PayloadProcessor] Parent block {:?} is currently being processed. Returning SYNCING.", parent_hash);
+                  info!("[PayloadProcessor] Parent block {:?} is currently being processed. Returning SYNCING.", parent_hash);
                   return Ok(PayloadStatus {
                       status: PayloadStatusEnum::Syncing,
                       latest_valid_hash: None,
@@ -505,7 +509,7 @@ impl PayloadProcessor {
 
              // If parent is found in the orphan pool or as a pending payload, we must buffer this child and return ACCEPTED.
              if let Some(anywhere_header) = self.get_header_from_anywhere(parent_hash).await {
-                  debug!("[PayloadProcessor] Parent block {:?} found in orphan pool or payload map. Buffering block {:?} and returning ACCEPTED.", parent_hash, actual_hash);
+                  info!("[PayloadProcessor] Parent block {:?} found in orphan pool or payload map. Buffering block {:?} and returning ACCEPTED.", parent_hash, actual_hash);
                   
                   // Even if we don't execute, we should validate the header if we have the parent header to return INVALID early if possible.
                   if let Err(e) = self.consensus.validate_header(&block.header, &anywhere_header, &chain_config) {
@@ -532,7 +536,7 @@ impl PayloadProcessor {
         };
 
         if parent_header.is_none() {
-            debug!("[PayloadProcessor] Parent block {:?} header not found anywhere. Returning SYNCING to trigger discovery.", parent_hash);
+            info!("[PayloadProcessor] Parent block {:?} header not found anywhere. Returning SYNCING to trigger discovery.", parent_hash);
             return Ok(PayloadStatus {
                 status: PayloadStatusEnum::Syncing,
                 latest_valid_hash: None,

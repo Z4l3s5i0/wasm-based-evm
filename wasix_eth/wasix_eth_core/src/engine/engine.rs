@@ -924,6 +924,14 @@ impl Engine {
             };
         }
 
+        // Check Payloads table
+        if self.read_storage.get_payload_by_block_hash(head_block_hash).is_some() {
+            return PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(head_block_hash),
+            };
+        }
+
         self.chain.determine_payload_status(head_block_hash).await
     }
     

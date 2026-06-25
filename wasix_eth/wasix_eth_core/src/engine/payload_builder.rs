@@ -127,7 +127,7 @@ impl PayloadBuilder {
             
             while !token.is_cancelled() {
                 if start_time.elapsed() >= slot_duration {
-                    debug!("[PayloadBuilder] Stopping continuous building for {:?}: time limit reached", id);
+                    info!("[PayloadBuilder] Stopping continuous building for {:?}: time limit reached", id);
                     break;
                 }
 
@@ -250,7 +250,7 @@ impl PayloadBuilder {
         let parent_block = match parent_block {
             Some(b) => b,
             None => {
-                debug!("[PayloadBuilder] Cannot rebuild payload {:?}: head block not found", payload_id);
+                info!("[PayloadBuilder] Cannot rebuild payload {:?}: head block not found", payload_id);
                 return Ok(());
             }
         };
@@ -307,7 +307,7 @@ impl PayloadBuilder {
             return Ok(());
         }
 
-        debug!("[PayloadBuilder] Rebuilding payload {:?}: value {} -> {}", payload_id, old_value, new_value);
+        info!("[PayloadBuilder] Rebuilding payload {:?}: value {} -> {}", payload_id, old_value, new_value);
 
         // 6. Collect blobs
         let mut bundle = BlobsBundleV1::default();

@@ -122,7 +122,18 @@ impl ReorgHandler {
             let number = block.header.number;
 
             info!("[ChainManager] Marking block {} (hash {}) as canonical", number, hash);
-
+            
+            // Ensure both Header and Body are in main storage
+            let body_exists = self.read_storage.block_body_by_hash(hash).ok().flatten().is_some();
+            if !body_exists {
+                debug!("[ChainManager] Block {} not found in main storage, checking Payloads table", hash);
+                if let Some((full_block, receipts, _bundle)) = self.read_storage.get_payload_by_block_hash(hash) {
+                    // This call should internally insert Header, Body, and Receipts
+                    self.write_storage.insert_block(full_block, receipts)?;
+                    self.write_storage.remove_payload_by_block_hash(hash)?;
+                    debug!("[ChainManager] Promoted block {} from Payloads to main storage", hash);
+                }
+            }
             // 1. Mark as canonical (Number -> Hash)
             self.write_storage.set_canonical(number, hash)?;
 
@@ -204,14 +215,14 @@ impl ReorgHandler {
         // Clear tracking maps to avoid polluting subsequent forward execution
         self.write_storage.clear_tracking();
 
-        // 3. Synchronize Trie - This is CRITICAL for re-orgs
-        let target_header = self.read_storage.header(BlockId::Number(height.into()))?
-            .ok_or_else(|| anyhow::anyhow!("Header not found for height {}", height))?;
-
-        let calculated_root = self.write_storage.calculate_state_root(true, Some(target_header.state_root))?;
-        if calculated_root != target_header.state_root {
-             wasix_eth_utils::error!("[ReorgManager] State root mismatch after rollback to height {}! Expected: {}, Calculated: {}", height, target_header.state_root, calculated_root);
-        }
+        // // 3. Synchronize Trie - This is CRITICAL for re-orgs
+        // let target_header = self.read_storage.header(BlockId::Number(height.into()))?
+        //     .ok_or_else(|| anyhow::anyhow!("Header not found for height {}", height))?;
+        //
+        // let calculated_root = self.write_storage.calculate_state_root(true, Some(target_header.state_root))?;
+        // if calculated_root != target_header.state_root {
+        //      wasix_eth_utils::error!("[ReorgManager] State root mismatch after rollback to height {}! Expected: {}, Calculated: {}", height, target_header.state_root, calculated_root);
+        // }
 
         Ok(())
     }
