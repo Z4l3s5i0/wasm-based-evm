@@ -25,7 +25,10 @@ impl SyncRegistry {
         }
     }
 
-    pub async fn add_target(&self, hash: B256, peer_id: Option<String>) {
+    pub async fn add_target(&self, hash: B256, peer_id: Option<String>, chain_manager: Arc<dyn crate::ChainManager>) {
+        if chain_manager.has_block(hash).await {
+            return; // Already have it
+        }
         let mut targets = self.targets.write().await;
         // Check if already present
         if !targets.iter().any(|(h, _)| *h == hash) {

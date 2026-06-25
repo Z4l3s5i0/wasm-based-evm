@@ -97,7 +97,7 @@ impl SyncController {
             } else {
                 debug!("[Sync] No peers found for target {:?}, triggering broadened discovery", target_hash);
                 // Put it back
-                self.sync_registry.add_target(target_hash, affinity_peer).await;
+                self.sync_registry.add_target(target_hash, affinity_peer, self.chain_manager.clone()).await;
             }
         }
 
@@ -199,6 +199,14 @@ impl SyncController {
             let block_timestamp = header.timestamp;
             let block = Block { header, body };
             let block_hash = block.header.hash_slow();
+
+            // Skip if we already have this block
+            if self.chain_manager.has_block(block_hash).await {
+                debug!("[Sync] Skipping already known block {} ({})", block_num, block_hash);
+                last_imported_block = Some((block_hash, block_num));
+                last_imported_timestamp = block_timestamp;
+                continue;
+            }
 
             if let Err(e) = self.processor.process_block(block.clone()).await {
                 error!("[Sync] Failed to process block {}: {}", block_num, e);
@@ -337,6 +345,15 @@ impl SyncController {
             let block_num = block.header.number;
             let block_hash = block.header.hash_slow();
             let block_timestamp = block.header.timestamp;
+
+            // Skip if we already have this block
+            if self.chain_manager.has_block(block_hash).await {
+                debug!("[Sync] Skipping already known ancestor block {} ({})", block_num, block_hash);
+                last_processed_hash = Some(block_hash);
+                last_processed_num = block_num;
+                last_processed_timestamp = block_timestamp;
+                continue;
+            }
 
             if let Err(e) = self.processor.process_block(block.clone()).await {
                 error!("[Sync] Failed to process ancestor block {}: {}", block_num, e);

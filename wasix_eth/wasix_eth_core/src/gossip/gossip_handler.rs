@@ -75,8 +75,9 @@ impl GossipService {
                     // If we don't have it and don't have its parent, trigger sync to process it and its ancestors
                     info!("[Gossip] New block received via gossip with unknown parent, triggering sync: {:?}", block_hash);
                     let registry = self.sync_registry.clone();
+                    let chain = self.chain.clone();
                     tokio::spawn(async move {
-                        registry.add_target(block_hash, None).await;
+                        registry.add_target(block_hash, None, chain).await;
                     });
                 }
             }

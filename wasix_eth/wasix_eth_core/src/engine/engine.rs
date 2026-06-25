@@ -91,7 +91,7 @@ impl SyncProvider for Engine {
         self.chain.sync_status().await
     }
     async fn trigger_sync(&self) -> wasix_eth_types::Result<()> {
-        self.sync_registry.add_target(B256::ZERO, None).await;
+        self.sync_registry.add_target(B256::ZERO, None, self.chain.clone()).await;
         Ok(())
     }
     async fn has_block(&self, hash: B256) -> bool {

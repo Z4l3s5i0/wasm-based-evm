@@ -33,7 +33,7 @@ pub struct PayloadProcessor {
 
 impl PayloadProcessor {
     pub async fn add_sync_target(&self, hash: B256, peer_id: Option<String>) {
-        self.sync_registry.add_target(hash, peer_id).await;
+        self.sync_registry.add_target(hash, peer_id, self.chain.clone()).await;
     }
 
     pub async fn new_payload_internal(
@@ -45,6 +45,7 @@ impl PayloadProcessor {
     ) -> RpcResult<PayloadStatus> {
         let actual_hash = block.header.hash_slow();
         info!("[PayloadProcessor] new_payload_internal: block={}, hash={}, parent={}", block.header.number, actual_hash, block.header.parent_hash);
+
         if actual_hash != expected_block_hash {
             debug!("[PayloadProcessor] block hash mismatch: actual={}, expected={}", actual_hash, expected_block_hash);
             
@@ -130,7 +131,7 @@ impl PayloadProcessor {
             }
         }
 
-        // 0. Check if block is already known and validated in storage
+        // Idempotency check: If block is in storage, it's VALID
         if let Ok(Some(_)) = self.read_storage.block_body_by_hash(actual_hash) {
             {
                 let mut processing = self.processing_payloads.write().unwrap();
@@ -138,8 +139,19 @@ impl PayloadProcessor {
             }
             return Ok(PayloadStatus {
                 status: PayloadStatusEnum::Valid,
-                latest_valid_hash: Some(actual_hash),
+                latest_valid_hash: Some(actual_hash)
             });
+        }
+
+        // Check if it's a known invalid block
+        if let Some(reason) = self.chain.get_invalidation_reason(actual_hash).await {
+            if reason == InvalidationReason::Hard {
+                let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
+                return Ok(PayloadStatus {
+                    status: PayloadStatusEnum::Invalid { validation_error: "Block is known to be invalid".to_string() },
+                    latest_valid_hash: latest_valid,
+                });
+            }
         }
 
         // 0.1 Check if parent is explicitly known invalid, reject immediately
@@ -180,15 +192,15 @@ impl PayloadProcessor {
 
         let result = self.new_payload_internal_inner(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
 
+        {
+            let mut processing = self.processing_payloads.write().unwrap();
+            processing.remove(&actual_hash);
+        }
+
         if let Ok(ref status) = result {
             if status.status == PayloadStatusEnum::Valid {
                 self.revalidate_dependent_payloads(actual_hash).await;
             }
-        }
-
-        {
-            let mut processing = self.processing_payloads.write().unwrap();
-            processing.remove(&actual_hash);
         }
 
         result
@@ -253,8 +265,9 @@ impl PayloadProcessor {
             info!("[PayloadProcessor] Parent block {:?} not found. Returning ACCEPTED.", parent_hash);
             
             let registry = self.sync_registry.clone();
+            let chain = self.chain.clone();
             tokio::spawn(async move {
-                registry.add_target(parent_hash, None).await;
+                registry.add_target(parent_hash, None, chain).await;
             });
 
             return Some(PayloadStatus {
@@ -693,6 +706,7 @@ impl PayloadProcessor {
     pub fn invalidate_descendants(&self, initial_invalid_hash: B256) -> BoxFuture<'_, ()> {
         async move {
             let mut parents_to_invalidate = vec![initial_invalid_hash];
+            let mut blocks_to_remove = Vec::new(); // Track blocks to delete safely
             
             while let Some(parent_hash) = parents_to_invalidate.pop() {
                 let children_hashes = self.block_tree.remove_children(parent_hash).await;
@@ -700,15 +714,19 @@ impl PayloadProcessor {
                 if !children_hashes.is_empty() {
                     debug!("[PayloadProcessor] Invalidating {} dependent payloads for invalid parent {:?}", children_hashes.len(), parent_hash);
                     for child_hash in children_hashes {
-                        self.block_tree.remove_block(child_hash).await;
-                        
-                        // Mark as invalid in chain manager
+                        // Mark as invalid in chain manager immediately
                         self.chain.add_invalid_block(child_hash, parent_hash, InvalidationReason::Hard).await;
                         
-                        // Recurse
+                        // Push for recursion and tracking
                         parents_to_invalidate.push(child_hash);
+                        blocks_to_remove.push(child_hash);
                     }
                 }
+            }
+
+            // Remove blocks from the tree after the traversal is safely complete
+            for hash in blocks_to_remove {
+                self.block_tree.remove_block(hash).await;
             }
         }.boxed()
     }
