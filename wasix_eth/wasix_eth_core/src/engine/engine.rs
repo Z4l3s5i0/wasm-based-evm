@@ -924,6 +924,22 @@ impl Engine {
             };
         }
 
+        // Check block tree (orphan/sidechain blocks)
+        if self.chain.get_block(head_block_hash).await.is_some() {
+            return PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(head_block_hash),
+            };
+        }
+
+        // Check if it's in the payloads map (processed but not yet canonical)
+        if let Some(_) = self.read_storage.get_payload_by_block_hash(head_block_hash) {
+            return PayloadStatus {
+                status: PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(head_block_hash),
+            };
+        }
+
         self.chain.determine_payload_status(head_block_hash).await
     }
     

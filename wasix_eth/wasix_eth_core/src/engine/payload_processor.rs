@@ -147,6 +147,10 @@ impl PayloadProcessor {
         if let Some(reason) = self.chain.get_invalidation_reason(actual_hash).await {
             if reason == InvalidationReason::Hard {
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
+                {
+                    let mut processing = self.processing_payloads.write().unwrap();
+                    processing.remove(&actual_hash);
+                }
                 return Ok(PayloadStatus {
                     status: PayloadStatusEnum::Invalid { validation_error: "Block is known to be invalid".to_string() },
                     latest_valid_hash: latest_valid,
@@ -262,7 +266,15 @@ impl PayloadProcessor {
 
         // If parent is not known (not in storage AND not in block_tree), it's SYNCING/ACCEPTED.
         if !is_genesis && !self.chain.has_block(parent_hash).await {
-            info!("[PayloadProcessor] Parent block {:?} not found. Returning ACCEPTED.", parent_hash);
+            // Check if parent hash is 0, which shouldn't happen except for genesis (handled above)
+            if parent_hash == B256::ZERO {
+                return Some(PayloadStatus {
+                    status: PayloadStatusEnum::Invalid { validation_error: "Parent hash is zero".to_string() },
+                    latest_valid_hash: None,
+                });
+            }
+
+            info!("[PayloadProcessor] Parent block {:?} not found in storage, tree, or payload cache. Returning ACCEPTED.", parent_hash);
             
             let registry = self.sync_registry.clone();
             let chain = self.chain.clone();

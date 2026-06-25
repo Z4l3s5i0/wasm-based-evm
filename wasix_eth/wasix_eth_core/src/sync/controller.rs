@@ -568,7 +568,7 @@ impl SyncProvider for SyncController {
         let txs = self.downloader.download_pooled_transactions(&peer_id, hashes_to_download).await
             .map_err(|e| wasix_eth_types::error::RpcError::Internal(format!("Failed to download pooled transactions: {}", e)))?;
         
-        info!("[Sync] Downloaded {} pooled transactions from {}", txs.len(), peer_id);
+        debug!("[Sync] Downloaded {} pooled transactions from {}", txs.len(), peer_id);
         self.process_pooled_transactions(txs).await
     }
 }

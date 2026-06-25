@@ -366,8 +366,13 @@ impl RPCEngine {
                 if self.chain.is_invalid(hash).await {
                     return Ok(None);
                 }
+                // 2. Check if it's a known built payload but not yet canonical
                 if let Some((payload_block, _, _)) = self.read_storage.get_payload_by_block_hash(hash) {
                     return Ok(Some(payload_block));
+                }
+                // 3. Check sidechain tracker/block tree
+                if let Some(sidechain_block) = self.chain.get_block(hash).await {
+                    return Ok(Some(sidechain_block));
                 }
             }
         }
@@ -385,9 +390,7 @@ impl RPCEngine {
     }
 
     pub async fn get_block_transaction_count(&self, id: BlockId) -> RpcResult<Option<u64>> {
-        let block = self.read_storage.block(id).map_err(|e| {
-            e.downcast_ref::<RpcError>().cloned().unwrap_or_else(|| RpcError::Internal(e.to_string()))
-        })?;
+        let block = self.get_block_by_id(id).await?;
         Ok(block.map(|b| b.body.transactions.len() as u64))
     }
 
@@ -439,10 +442,10 @@ impl RPCEngine {
     }
 
     pub async fn get_balance(&self, address: Address, block_id: BlockId) -> RpcResult<U256> {
-        let header = self.read_storage.header(block_id)
-            .map_err(|e| {
-                e.downcast_ref::<RpcError>().cloned().unwrap_or_else(|| RpcError::Internal(e.to_string()))
-            })?;
+        let header = match self.get_block_by_id(block_id).await? {
+            Some(b) => Some(b.header),
+            None => None,
+        };
         let state_root = header.map(|h| h.state_root);
 
         let account = self.read_storage.account(address, state_root)
@@ -452,20 +455,20 @@ impl RPCEngine {
     }
 
     pub async fn get_transaction_count(&self, address: Address, block_id: BlockId) -> RpcResult<u64> {
-        let header = self.read_storage.header(block_id)
-            .map_err(|e| {
-                e.downcast_ref::<RpcError>().cloned().unwrap_or_else(|| RpcError::Internal(e.to_string()))
-            })?;
+        let header = match self.get_block_by_id(block_id).await? {
+            Some(b) => Some(b.header),
+            None => None,
+        };
         let state_root = header.map(|h| h.state_root);
 
         self.read_storage.transaction_count(address, block_id, state_root).map_err(|e| RpcError::Internal(e.to_string()))
     }
 
     pub async fn get_code(&self, address: Address, block_id: BlockId) -> RpcResult<Bytes> {
-        let header = self.read_storage.header(block_id)
-            .map_err(|e| {
-                e.downcast_ref::<RpcError>().cloned().unwrap_or_else(|| RpcError::Internal(e.to_string()))
-            })?;
+        let header = match self.get_block_by_id(block_id).await? {
+            Some(b) => Some(b.header),
+            None => None,
+        };
         let state_root = header.map(|h| h.state_root);
 
         let account = self.read_storage.account(address, state_root).map_err(|e| RpcError::Internal(e.to_string()))?;
@@ -477,10 +480,10 @@ impl RPCEngine {
     }
 
     pub async fn get_storage_at(&self, address: Address, slot: B256, block_id: BlockId) -> RpcResult<B256> {
-        let header = self.read_storage.header(block_id)
-            .map_err(|e| {
-                e.downcast_ref::<RpcError>().cloned().unwrap_or_else(|| RpcError::Internal(e.to_string()))
-            })?;
+        let header = match self.get_block_by_id(block_id).await? {
+            Some(b) => Some(b.header),
+            None => None,
+        };
         let state_root = header.map(|h| h.state_root);
 
         let value = self.read_storage.storage(address, slot, state_root).map_err(|e| RpcError::Internal(e.to_string()))?;

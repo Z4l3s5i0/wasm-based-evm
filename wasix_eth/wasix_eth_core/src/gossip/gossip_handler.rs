@@ -64,13 +64,15 @@ impl GossipService {
 
             // 2. Check if parent exists
             let parent_exists = self.chain.has_block(block.header.parent_hash).await;
+            
+            // Check if we already have this block (storage, tree, or payload)
+            let has_block = self.chain.has_block(block_hash).await;
 
-            debug!("[Gossip] Received block via gossip: {:?} (number {})", block_hash, block.header.number);
+            debug!("[Gossip] Received block via gossip: {:?} (number {}) - has_block={}, parent_exists={}", 
+                block_hash, block.header.number, has_block, parent_exists);
             
             // Ingest block via sink
             if self.engine.ingest_block(block).await {
-                // Check if we have it in sync layer
-                let has_block = self.chain.has_block(block_hash).await;
                 if !has_block && !parent_exists {
                     // If we don't have it and don't have its parent, trigger sync to process it and its ancestors
                     info!("[Gossip] New block received via gossip with unknown parent, triggering sync: {:?}", block_hash);

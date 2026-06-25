@@ -75,17 +75,17 @@ impl SyncService {
     async fn handle_peer_gossip(&self, msg: GossipMessage) {
         match msg {
             GossipMessage::NewBlock(peer_id, m) => {
-                info!("[Sync Service] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), peer_id);
+                debug!("[Sync Service] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), peer_id);
                 let sync = self.sync.read().await;
                 let _ = sync.process_gossip_block(m.block, m.total_difficulty).await;
             }
             GossipMessage::Transactions(peer_id, m) => {
-                info!("[Sync Service] Received {} Transactions from {}", m.0.len(), peer_id);
+                debug!("[Sync Service] Received {} Transactions from {}", m.0.len(), peer_id);
                 let sync = self.sync.read().await;
                 let _ = sync.process_gossip_transactions(m.0).await;
             }
             GossipMessage::NewPooledTransactionHashes(peer_id, m) => {
-                info!("[Sync Service] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), peer_id);
+                debug!("[Sync Service] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), peer_id);
                 let sync = self.sync.read().await;
                 if let Err(e) = sync.handle_announced_pooled_transactions(peer_id, m.hashes).await {
                     error!("[Sync Service] Failed to handle announced pooled transactions: {}", e);

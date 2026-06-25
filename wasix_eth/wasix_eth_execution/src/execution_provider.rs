@@ -698,7 +698,6 @@ impl ExecutionProvider for EthExecutionProvider {
         let difficulty = if fork >= Hardfork::Paris {
             U256::ZERO
         } else {
-            // Simplified difficulty calculation for pre-Paris
             // In a real network this would use the parent's difficulty and timestamp
             parent_header.difficulty
         };

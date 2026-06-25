@@ -110,6 +110,11 @@ impl PayloadBuilder {
         // 1. Build initial empty payload
         self.build_empty_payload(head_block_hash, attr.clone(), id.clone()).await?;
 
+        // Verify it was persisted (for debugging and robustness)
+        if self.read_storage.get_payload(&id).is_none() {
+             error!("[PayloadBuilder] Empty payload was NOT persisted after build_empty_payload call!");
+        }
+
         // 2. Start continuous building background task
         let builder = self.clone();
         let token = CancellationToken::new();
@@ -286,15 +291,20 @@ impl PayloadBuilder {
         let execution = Arc::clone(&self.execution);
         let parent_header_clone = parent_block.header.clone();
         let attr_clone = attr.clone();
-        let (finalized_block, receipts) = tokio::task::spawn_blocking(move || {
+        let (finalized_block, receipts) = match tokio::task::spawn_blocking(move || {
             execution.execute_block_for_payload(
                 transactions,
                 &parent_header_clone,
                 &attr_clone,
                 base_fee_per_gas,
             )
-        }).await.map_err(|e| RpcError::Internal(format!("Payload rebuilding task panicked: {}", e)))?
-        .map_err(|e| RpcError::Internal(e.to_string()))?;
+        }).await.map_err(|e| RpcError::Internal(format!("Payload rebuilding task panicked: {}", e)))? {
+            Ok(res) => res,
+            Err(e) => {
+                debug!("[PayloadBuilder] Rebuilding execution failed (parent might have been reverted): {}", e);
+                return Ok(());
+            }
+        };
 
         // 5. Check if new block is better
         let new_value = self.calculate_block_value(&finalized_block, &receipts);

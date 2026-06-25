@@ -56,6 +56,9 @@ pub trait ChainManager: Send + Sync {
 
     /// Marks a branch as canonical in storage.
     async fn mark_branch_canonical(&self, blocks: &Vec<Block<Transaction>>) -> wasix_eth_types::Result<()>;
+
+    /// Gets a block from the block tree or sidechain tracker.
+    async fn get_block(&self, hash: B256) -> Option<Block<Transaction>>;
 }
 
 #[derive(Debug, Clone)]
@@ -266,6 +269,14 @@ impl ChainManager for ChainManagerImpl {
             };
         }
 
+        // Check block tree (orphan/sidechain blocks)
+        if self.block_tree.contains_block(head_block_hash).await {
+            return wasix_eth_types::PayloadStatus {
+                status: wasix_eth_types::PayloadStatusEnum::Valid,
+                latest_valid_hash: Some(head_block_hash),
+            };
+        }
+
         wasix_eth_types::PayloadStatus {
             status: wasix_eth_types::PayloadStatusEnum::Syncing,
             latest_valid_hash: None,
@@ -320,5 +331,9 @@ impl ChainManager for ChainManagerImpl {
 
     async fn mark_branch_canonical(&self, blocks: &Vec<Block<Transaction>>) -> wasix_eth_types::Result<()> {
         self.reorg_handler.mark_branch_canonical(blocks).await
+    }
+
+    async fn get_block(&self, hash: B256) -> Option<Block<Transaction>> {
+        self.block_tree.get_block(hash).await
     }
 }
