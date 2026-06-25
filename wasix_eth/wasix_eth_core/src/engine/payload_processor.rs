@@ -568,7 +568,7 @@ impl PayloadProcessor {
             Err(e) => {
                 error!("[PayloadProcessor] Execution failed for block {}: {}", block.header.number, e);
                 
-                // For execution errors (state dependent), we should be careful about blacklisting 
+                // For execution errors (state dependent), we should be careful about blacklisting
                 // if we might be on a side-branch or syncing.
                 // We mark it as invalid to preserve the parent hash and allow walk-back.
                 info!("[PayloadProcessor] Marking block {} as INVALID (execution failure)", actual_hash);

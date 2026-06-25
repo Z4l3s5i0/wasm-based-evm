@@ -539,8 +539,8 @@ impl Engine {
                                     .unwrap_or(0);
                                 
                                 info!("[Engine] Reorg detected! Reverting chain to height {} (common ancestor: {:?})", common_ancestor_height, context.common_ancestor_hash);
-                                
-                                // Physically roll back state to common ancestor
+
+                        // Physically roll back state to common ancestor
                         if let Err(e) = self.revert_to_height(common_ancestor_height).await {
                             error!("[Engine] Failed to revert to height {}: {}", common_ancestor_height, e);
                             // Rollback forkchoice if reorg fails

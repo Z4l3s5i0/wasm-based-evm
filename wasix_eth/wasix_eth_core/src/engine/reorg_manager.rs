@@ -153,33 +153,35 @@ impl ReorgHandler {
 
     pub async fn revert_to_height(&self, height: u64) -> wasix_eth_types::Result<()> {
         let (_, head_number) = self.canonical.get_head().await;
-        if height >= head_number {
-            return Ok(());
-        }
+        // if height >= head_number {
+        //     return Ok(());
+        // }
 
         info!("Reverting chain from {} to {}", head_number, height);
 
         // Revert state changes from head_number down to height + 1
         for h in (height + 1..=head_number).rev() {
+            // 1. Roll back account state changes (Balances, Nonces, etc.)
             if let Some(account_changes) = self.read_storage.account_change_set(h)? {
                 for (address, old_state) in account_changes {
                     if let Some(state) = old_state {
-                        self.write_storage.update_plain_state(address, state.clone())?;
-
-                        // Also update the Accounts table for consistency
+                        // Restore the account to its prior state
                         let mut buf = &state[..];
                         let trie_acc = TrieAccount::decode(&mut buf)
                             .map_err(|e| anyhow::anyhow!("Failed to decode TrieAccount for {}: {}", address, e))?;
+
                         self.write_storage.update_account(address, trie_acc)?;
+                        // Also update the plain state for consistency if your storage layer uses it
+                        self.write_storage.update_plain_state(address, state.clone())?;
                     } else {
-                        // Account was created in this block, so it didn't exist before.
-                        // We must remove it from the state.
-                        self.write_storage.remove_plain_state(address)?;
+                        // If the account didn't exist before this block, delete it
                         self.write_storage.remove_account(address)?;
+                        self.write_storage.remove_plain_state(address)?;
                     }
                 }
             }
 
+            // 2. Roll back storage changes
             if let Some(storage_changes) = self.read_storage.storage_change_set(h)? {
                 for (address, slot, old_value) in storage_changes {
                     self.write_storage.update_storage(address, slot, old_value)?;
@@ -188,16 +190,6 @@ impl ReorgHandler {
 
             // Clean up the change sets themselves
             self.write_storage.remove_change_set(h)?;
-
-            // Clean up HeaderNumbers mapping as well to prevent stale entries
-            // although they might be correct for that hash, removing them ensures
-            // a cleaner state during reorg transitions.
-            if let Ok(Some(hash)) = self.read_storage.block_hash(h) {
-                // There is no explicit remove_header_number, but we can potentially
-                // just let mark_branch_canonical overwrite it.
-                // For now, removing the canonical mapping is the most important part.
-                let _ = hash; // avoid unused warning
-            }
 
             // Remove from canonical heads
             self.write_storage.remove_canonical(h)?;
@@ -211,6 +203,15 @@ impl ReorgHandler {
 
         // Clear tracking maps to avoid polluting subsequent forward execution
         self.write_storage.clear_tracking();
+
+        // 3. Synchronize Trie - This is CRITICAL for re-orgs
+        let target_header = self.read_storage.header(wasix_eth_types::BlockId::Number(height.into()))?
+            .ok_or_else(|| anyhow::anyhow!("Header not found for height {}", height))?;
+
+        let calculated_root = self.write_storage.calculate_state_root(true, Some(target_header.state_root))?;
+        if calculated_root != target_header.state_root {
+             wasix_eth_utils::error!("[ReorgManager] State root mismatch after rollback to height {}! Expected: {}, Calculated: {}", height, target_header.state_root, calculated_root);
+        }
 
         Ok(())
     }
