@@ -158,6 +158,8 @@ impl Engine {
                 write_storage: write_storage.clone(),
                 execution: execution.clone(),
                 mempool: mempool.clone(),
+                event_tx: event_tx.clone(),
+                build_lock: Arc::new(tokio::sync::Mutex::new(())),
                 cancel_tokens: Arc::new(std::sync::RwLock::new(std::collections::HashMap::new())),
             },
             payload_processor: PayloadProcessor { 
@@ -524,7 +526,10 @@ impl Engine {
 
         // Update metrics and handle canonical chain events if VALID or SYNCING
         if status.status == PayloadStatusEnum::Valid || status.status == PayloadStatusEnum::Syncing {
-            if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))) {
+            let head_header = self.read_storage.header(BlockId::Hash(RpcBlockHash::from(forkchoice_state.head_block_hash))).ok().flatten()
+                .or_else(|| self.read_storage.get_payload_by_block_hash(forkchoice_state.head_block_hash).map(|(p, _, _)| p.header.clone()));
+
+            if let Some(header) = head_header {
                 if status.status == PayloadStatusEnum::Valid {
                     // 1. Identify newly canonical blocks and handle reorgs
                     match self.chain.resolve_reorg(old_head, forkchoice_state.head_block_hash).await {
@@ -562,6 +567,19 @@ impl Engine {
 
                             // 3. Mark the new branch as canonical SECOND
                             if !context.new_canonical_blocks.is_empty() {
+                                // 3.1. Ensure all blocks in context are in main storage and their state is committed
+                                for block in &context.new_canonical_blocks {
+                                    let hash = block.header.hash_slow();
+                                    if self.read_storage.block_body_by_hash(hash).ok().flatten().is_none() {
+                                        // Block is in Payloads but not in main storage.
+                                        // We MUST re-execute and COMMIT the state changes to the database
+                                        // so that subsequent transactions in the mempool see the correct nonces.
+                                        debug!("[Engine] Re-executing and committing block {} from Payloads", hash);
+                                        self.execution.execute_block_with_commit(block.clone(), true)
+                                            .map_err(|e| RpcError::Internal(format!("Failed to execute block from payload during promotion: {}", e)))?;
+                                    }
+                                }
+
                                 if let Err(e) = self.chain.mark_branch_canonical(&context.new_canonical_blocks).await {
                                     error!("[Engine] Failed to mark branch canonical: {}", e);
                                     return Err(RpcError::Internal(format!("Canonical marking failed: {}", e)));
@@ -918,14 +936,6 @@ impl Engine {
         // If the block is already officially imported in main storage, it's VALID.
         // This takes precedence over any SOFT invalidation (e.g. from a bad newPayload call).
         if self.read_storage.block_body_by_hash(head_block_hash).ok().flatten().is_some() {
-            return PayloadStatus {
-                status: PayloadStatusEnum::Valid,
-                latest_valid_hash: Some(head_block_hash),
-            };
-        }
-
-        // Check Payloads table
-        if self.read_storage.get_payload_by_block_hash(head_block_hash).is_some() {
             return PayloadStatus {
                 status: PayloadStatusEnum::Valid,
                 latest_valid_hash: Some(head_block_hash),

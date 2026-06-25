@@ -1,6 +1,7 @@
 use crate::mempool::mempool_provider::MempoolProvider;
-use crate::Consensus;
+use crate::{Consensus, EngineEvent};
 use std::sync::Arc;
+use tokio::sync::broadcast;
 use wasix_eth_execution::execution_provider::ExecutionProvider;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider};
@@ -55,6 +56,8 @@ pub struct PayloadBuilder {
     pub write_storage: DatabaseWriteProvider,
     pub execution: Arc<dyn ExecutionProvider>,
     pub mempool: Arc<dyn MempoolProvider>,
+    pub event_tx: broadcast::Sender<EngineEvent>,
+    pub build_lock: Arc<tokio::sync::Mutex<()>>,
     pub cancel_tokens: Arc<RwLock<HashMap<PayloadId, CancellationToken>>>,
 }
 
@@ -87,6 +90,21 @@ impl PayloadBuilder {
             return Ok(None);
         }
 
+        let id = self.generate_payload_id(&head_block_hash, &attr).await;
+
+        // 1. Initial check without lock
+        if self.read_storage.get_payload(&id).is_some() {
+            return Ok(Some(id));
+        }
+
+        // 2. Synchronize building initialization
+        let _guard = self.build_lock.lock().await;
+
+        // 3. Re-check after acquiring lock
+        if self.read_storage.get_payload(&id).is_some() {
+            return Ok(Some(id));
+        }
+
         // Validate attributes
         let parent_block = self.read_storage.block_by_hash(head_block_hash).map_err(|e| RpcError::Internal(e.to_string()))?
             .or_else(|| {
@@ -100,27 +118,23 @@ impl PayloadBuilder {
             return Err(RpcError::InvalidPayloadAttributes("Invalid timestamp".to_string()));
         }
 
-        let id = self.generate_payload_id(&head_block_hash, &attr).await;
-
-        // Comply with spec: SHOULD NOT restart if it already exists
-        if self.read_storage.get_payload(&id).is_some() {
-            return Ok(Some(id));
-        }
-
-        // 1. Build initial empty payload
+        // 4. Build initial empty payload
         self.build_empty_payload(head_block_hash, attr.clone(), id.clone()).await?;
 
-        // 2. Start continuous building background task
+        // 5. Perform immediate synchronous rebuild
+        let _ = self.maybe_rebuild_payload(id.clone()).await;
+
+        // 6. Start continuous building background task
         let builder = self.clone();
         let token = CancellationToken::new();
         {
             let mut tokens = self.cancel_tokens.write().unwrap();
             if let Some(old_token) = tokens.insert(id.clone(), token.clone()) {
-                let _ = old_token;
                 old_token.cancel();
             }
         }
 
+        let mut event_rx = self.event_tx.subscribe();
         tokio::spawn(async move {
             let start_time = std::time::Instant::now();
             let slot_duration = std::time::Duration::from_millis(12000); // SLOT_DURATION_MS
@@ -131,21 +145,30 @@ impl PayloadBuilder {
                     break;
                 }
 
-                if let Err(e) = builder.maybe_rebuild_payload(id.clone()).await {
-                    error!("[PayloadBuilder] Error during continuous building for {:?}: {:?}", id, e);
-                }
-
-                // Wait for a bit or until mempool change (simplified to 1s sleep for now)
+                // Wait for a bit or until mempool change
                 tokio::select! {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
+                    Ok(EngineEvent::NewTransaction(_)) = event_rx.recv() => {
+                        // Debounce: wait a bit for more transactions to arrive
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        // Drain extra events
+                        let mut count = 1;
+                        while let Ok(_) = event_rx.try_recv() {
+                            count += 1;
+                        }
+                        debug!("[PayloadBuilder] Triggering reactive rebuild for {:?} due to {} new transaction(s)", id, count);
+                    },
                     _ = token.cancelled() => break,
+                }
+
+                if let Err(e) = builder.maybe_rebuild_payload(id.clone()).await {
+                    error!("[PayloadBuilder] Error during continuous building for {:?}: {:?}", id, e);
                 }
             }
             
             let mut tokens = builder.cancel_tokens.write().unwrap();
             if let Some(t) = tokens.get(&id) {
-                let token_cancelled = t.is_cancelled();
-                if token_cancelled == token.is_cancelled() {
+                if t.is_cancelled() == token.is_cancelled() {
                     tokens.remove(&id);
                 }
             }
@@ -273,6 +296,20 @@ impl PayloadBuilder {
             blob_base_fee.map(U256::from),
             max_blobs_per_block
         ).await;
+
+        // Optimization: if transaction set is identical, skip rebuilding
+        if transactions.len() == payload_block.body.transactions.len() {
+            let mut identical = true;
+            for (new_tx, old_tx) in transactions.iter().zip(payload_block.body.transactions.iter()) {
+                if new_tx.hash() != old_tx.hash() {
+                    identical = false;
+                    break;
+                }
+            }
+            if identical {
+                return Ok(());
+            }
+        }
 
         if transactions.is_empty() && !payload_block.body.transactions.is_empty() {
              // Should not happen if we already have a payload with transactions, but good to be safe.

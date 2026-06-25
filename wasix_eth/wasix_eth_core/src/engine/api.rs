@@ -127,8 +127,26 @@ impl RPCEngine {
 
         // 1. Add to mempool synchronously to ensure consistency for block building
         let from = tx.recover_signer().unwrap_or_default();
-        let (head_hash, _) = self.canonical.get_head().await;
-        let current_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
+        let (head_hash, head_number) = self.canonical.get_head().await;
+        
+        // Robust nonce lookup: if head block is NOT yet in primary storage (e.g. just built/promoted),
+        // we might get a stale nonce from the database.
+        let mut current_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
+        
+        // Fallback: If current_nonce is 0, check if the head_hash is in Payloads (might have a higher nonce)
+        if current_nonce == 0 {
+            if let Some((_block, _, _)) = self.read_storage.get_payload_by_block_hash(head_hash) {
+                // If the sender is in this block, we can get its next nonce from the state root if we had an execution provider here,
+                // but for now let's try to get it from the latest canonical block in DB if the head is "detached".
+                if let Ok(Some(latest_num)) = self.read_storage.latest_block_number() {
+                    if latest_num < head_number {
+                        // Head has moved forward in CanonicalState but DB is still at latest_num.
+                        // Try to get nonce from latest_num.
+                        current_nonce = self.read_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Number(latest_num)), None).unwrap_or_default();
+                    }
+                }
+            }
+        }
         
         if self.mempool.add_transaction(tx.clone(), current_nonce).await {
             debug!("[Engine] Added transaction {:?} to mempool", hash);
