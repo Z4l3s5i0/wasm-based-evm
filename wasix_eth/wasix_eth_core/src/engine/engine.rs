@@ -927,17 +927,10 @@ impl Engine {
         self.chain.determine_payload_status(head_block_hash).await
     }
     
-    async fn validate_parent_block(&self, parent_hash: B256) -> Option<PayloadStatus> {
-        self.payload_processor.validate_parent_block(parent_hash).await
-    }
-
     pub async fn invalidate_descendants(&self, initial_invalid_hash: B256) {
         self.payload_processor.invalidate_descendants(initial_invalid_hash).await
     }
 
-    async fn revalidate_dependent_payloads(&self, initial_parent_hash: B256) {
-        self.payload_processor.revalidate_dependent_payloads(initial_parent_hash).await
-    }
 }
 
 

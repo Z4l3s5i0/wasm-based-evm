@@ -294,7 +294,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                 if self.stream.eth_version().as_ref().map(|v| v.supports_get_node_data()).unwrap_or(true) {
                     self.handle_get_node_data(payload).await
                 } else {
-                    info!("[P2P Session] Received GetNodeData from {}, but it's not supported in {:?}", self.peer_id, self.stream.eth_version());
+                    debug!("[P2P Session] Received GetNodeData from {}, but it's not supported in {:?}", self.peer_id, self.stream.eth_version());
                     true
                 }
             }
@@ -302,7 +302,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                 if self.stream.eth_version().as_ref().map(|v| v.supports_get_node_data()).unwrap_or(true) {
                     self.handle_node_data(payload).await
                 } else {
-                    info!("[P2P Session] Received NodeData from {}, but it's not supported in {:?}", self.peer_id, self.stream.eth_version());
+                    debug!("[P2P Session] Received NodeData from {}, but it's not supported in {:?}", self.peer_id, self.stream.eth_version());
                     true
                 }
             }
@@ -464,7 +464,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
             StatusMessage::Eth69(e) => (e.blockhash, alloy_primitives::U256::ZERO, Some(e.latest)),
         };
         
-        info!("[P2P Session] Received Status from {}: head={:?}, TD={}, height={:?}", self.peer_id, hash, td, height);
+        debug!("[P2P Session] Received Status from {}: head={:?}, TD={}, height={:?}", self.peer_id, hash, td, height);
         if let Some(h) = height {
             let mut h_guard = self.best_height.lock().await;
             if h > *h_guard {
@@ -478,7 +478,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
 
     async fn handle_new_block_hashes(&mut self, payload: Vec<u8>) -> bool {
         if let Ok(m) = NewBlockHashes::decode(&mut &payload[..]) {
-            info!("[P2P Session] Received {} NewBlockHashes from {}", m.0.len(), self.peer_id);
+            debug!("[P2P Session] Received {} NewBlockHashes from {}", m.0.len(), self.peer_id);
             let mut h_guard = self.best_height.lock().await;
             for h in &m.0 {
                 if h.number > *h_guard {
@@ -494,7 +494,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
 
     async fn handle_transactions(&mut self, payload: Vec<u8>) -> bool {
         if let (Some(tx), Ok(m)) = (&self.gossip_tx, Transactions::decode(&mut &payload[..])) {
-            info!("[P2P Session] Received {} Transactions from {}", m.0.len(), self.peer_id);
+            debug!("[P2P Session] Received {} Transactions from {}", m.0.len(), self.peer_id);
             let _ = tx.send(GossipMessage::Transactions(self.peer_id.clone(), m)).await;
         }
         true
@@ -516,7 +516,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
             }
         };
 
-        info!("[P2P Session] Received {} BlockHeaders from {}", headers.message.0.len(), self.peer_id);
+        debug!("[P2P Session] Received {} BlockHeaders from {}", headers.message.0.len(), self.peer_id);
         {
             let mut h_guard = self.best_height.lock().await;
             for h in &headers.message.0 {
@@ -547,7 +547,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
             }
         };
 
-        info!("[P2P Session] Received {} BlockBodies from {}", bodies.message.0.len(), self.peer_id);
+        debug!("[P2P Session] Received {} BlockBodies from {}", bodies.message.0.len(), self.peer_id);
         if let Some(tx) = self.pending_bodies.remove(&bodies.request_id) {
             let _ = tx.send(Ok(bodies));
         }
@@ -570,7 +570,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
             }
         };
 
-        info!("[P2P Session] Received {} PooledTransactions from {}", res.message.0.len(), self.peer_id);
+        debug!("[P2P Session] Received {} PooledTransactions from {}", res.message.0.len(), self.peer_id);
         if let Some(tx) = self.pending_pooled_txs.remove(&res.request_id) {
             let _ = tx.send(Ok(res));
         }
@@ -601,7 +601,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
             }
         };
 
-        info!("[P2P Session] Received {} Receipts from {}", res.message.0.len(), self.peer_id);
+        debug!("[P2P Session] Received {} Receipts from {}", res.message.0.len(), self.peer_id);
         if let Some(tx) = self.pending_receipts.remove(&res.request_id) {
             let _ = tx.send(Ok(res));
         }
@@ -624,7 +624,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
             }
         };
 
-        info!("[P2P Session] Received {} NodeData from {}", res.message.0.len(), self.peer_id);
+        debug!("[P2P Session] Received {} NodeData from {}", res.message.0.len(), self.peer_id);
         if let Some(tx) = self.pending_node_data.remove(&res.request_id) {
             let _ = tx.send(Ok(res));
         }
@@ -633,7 +633,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
 
     async fn handle_new_block(&mut self, payload: Vec<u8>) -> bool {
         if let Ok(m) = NewBlock::decode(&mut &payload[..]) {
-            info!("[P2P Session] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), self.peer_id);
+            debug!("[P2P Session] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), self.peer_id);
             let mut h_guard = self.best_height.lock().await;
             if m.block.header.number > *h_guard {
                 *h_guard = m.block.header.number;
@@ -666,7 +666,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
         };
 
         if let Some(tx) = &self.gossip_tx {
-            info!("[P2P Session] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), self.peer_id);
+            debug!("[P2P Session] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), self.peer_id);
             let _ = tx.send(GossipMessage::NewPooledTransactionHashes(self.peer_id.clone(), m)).await;
         }
         true
@@ -674,7 +674,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
 
     async fn handle_block_range_update(&mut self, payload: Vec<u8>) -> bool {
         if let Ok(m) = BlockRangeUpdate::decode(&mut &payload[..]) {
-            info!("[P2P Session] Received BlockRangeUpdate {:?} from {}", m, self.peer_id);
+            debug!("[P2P Session] Received BlockRangeUpdate {:?} from {}", m, self.peer_id);
             // In a real client we would update our peer's history range.
             // For now we just log it.
         }

@@ -123,16 +123,16 @@ impl MempoolInner {
             let min_replacement_price = old_gas_price + (old_gas_price / 10);
             
             if gas_price >= min_replacement_price {
-                info!("[Mempool] Replacing transaction {:?} (nonce: {}) with {:?} (price: {} -> {})", 
+                debug!("[Mempool] Replacing transaction {:?} (nonce: {}) with {:?} (price: {} -> {})",
                     queue[pos].hash(), nonce, hash, old_gas_price, gas_price);
                 queue[pos] = tx;
                 return true;
             }
-            info!("[Mempool] Rejecting replacement for {:?} (nonce: {}): gas price bump too low ({} < {})", 
+            debug!("[Mempool] Rejecting replacement for {:?} (nonce: {}): gas price bump too low ({} < {})",
                 hash, nonce, gas_price, min_replacement_price);
             return false;
         } else {
-            info!("[Mempool] Adding transaction {:?} (nonce: {}) to {} pool", 
+            debug!("[Mempool] Adding transaction {:?} (nonce: {}) to {} pool",
                 hash, nonce, if is_pending { "pending" } else { "queued" });
             queue.insert(pos, tx);
             

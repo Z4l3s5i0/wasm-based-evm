@@ -200,7 +200,6 @@ impl BatchWriter {
     }
 
     pub fn commit(self) -> Result<()> {
-        let start = std::time::Instant::now();
         self.wtx.commit()?;
         Ok(())
     }

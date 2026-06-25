@@ -205,7 +205,7 @@ impl ReorgHandler {
         self.write_storage.clear_tracking();
 
         // 3. Synchronize Trie - This is CRITICAL for re-orgs
-        let target_header = self.read_storage.header(wasix_eth_types::BlockId::Number(height.into()))?
+        let target_header = self.read_storage.header(BlockId::Number(height.into()))?
             .ok_or_else(|| anyhow::anyhow!("Header not found for height {}", height))?;
 
         let calculated_root = self.write_storage.calculate_state_root(true, Some(target_header.state_root))?;

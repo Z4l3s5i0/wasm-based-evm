@@ -85,7 +85,7 @@ impl<'a> TransactionExecutor<'a> {
         
         // Post-execution gas adjustments (EIP-7702, EIP-7623, etc)
         tx_gas_used = self.adjust_gas_post_execution(tx, tx_gas_used, *tx_hash, &backend_final);
-        println!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}", tx_hash, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used);
+        debug!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}", tx_hash, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used);
 
         *cumulative_gas_used += tx_gas_used;
 

@@ -371,7 +371,7 @@ impl GossipProvider for SyncService {
                         use alloy_rlp::Encodable;
                         let mut buf = Vec::new();
                         pooled.encode(&mut buf);
-                        info!("[Sync] Broadcasting stored pooled transaction {} length: {}", hash, buf.len());
+                        debug!("[Sync] Broadcasting stored pooled transaction {} length: {}", hash, buf.len());
                         if let TxPooledEnvelope::Eip4844(s) = &pooled {
                              let inner_tx = s.tx();
                              let sidecar = &inner_tx.sidecar;
