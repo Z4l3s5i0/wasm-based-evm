@@ -153,32 +153,60 @@ impl ChainManager for ChainManagerImpl {
     }
 
     async fn get_latest_valid_ancestor(&self, hash: B256) -> Option<B256> {
+        if hash == B256::ZERO {
+            return Some(B256::ZERO);
+        }
+
+        // Fast path: if it's canonical, it's valid
+        if let Ok(true) = self.read_storage.is_canonical(hash) {
+            return Some(hash);
+        }
+
         let mut current = hash;
         let mut visited = HashSet::new();
 
         // If the starting hash is not in invalid_blocks, check if it's valid itself.
-        // This is important for the recursive calls or when validate_parent_block calls this on a valid block.
-        if self.get_invalidation_reason(current).await.is_none() {
+        if self.block_tree.get_invalidation_reason(current).await.is_none() {
             if self.has_block(current).await {
                 return Some(current);
             }
-            // Check if it's genesis
             if let Ok(Some(genesis_hash)) = self.read_storage.block_hash(0) {
                 if current == genesis_hash {
                     return Some(current);
                 }
             }
-            if current == B256::ZERO {
-                return Some(B256::ZERO);
-            }
         }
 
         // Walk back through invalid blocks
-        while let Some(reason) = self.get_invalidation_reason(current).await {
+        while let Some(reason) = self.block_tree.get_invalidation_reason(current).await {
             debug!("[ChainManager] get_latest_valid_ancestor: walking back from invalid block {:?} (reason: {:?})", current, reason);
             if !visited.insert(current) {
                 warn!("Cycle detected in invalid_blocks at hash {:?}", current);
                 return None;
+            }
+
+            // if we can find the height of the current invalid block,
+            // we might be able to find a canonical ancestor faster.
+            let current_number = if let Some(block) = self.block_tree.get_block(current).await {
+                Some(block.header.number)
+            } else if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current.into())) {
+                Some(header.number)
+            } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
+                Some(payload.header.number)
+            } else {
+                None
+            };
+
+            if let Some(num) = current_number {
+                // Find the highest canonical block below this invalid block
+                // and check if it's an ancestor.
+                if let Ok(Some(canonical_hash)) = self.read_storage.block_hash(num.saturating_sub(1)) {
+                    // Check if this canonical block is an ancestor of 'current'
+                    if self.is_ancestor(current, canonical_hash).await {
+                         debug!("[ChainManager] get_latest_valid_ancestor: found canonical ancestor {:?} via is_ancestor check at height {}", canonical_hash, num.saturating_sub(1));
+                         return Some(canonical_hash);
+                    }
+                }
             }
 
             let mut parent_hash = self.block_tree.get_invalid_parent(current).await;
@@ -199,6 +227,13 @@ impl ChainManager for ChainManagerImpl {
                     warn!("Block {:?} is its own parent in invalid chain! Breaking.", current);
                     return None;
                 }
+                
+                // if parent is canonical, it MUST be valid and not invalid.
+                if let Ok(true) = self.read_storage.is_canonical(parent) {
+                    debug!("[ChainManager] get_latest_valid_ancestor: reached canonical block {:?} during walk", parent);
+                    return Some(parent);
+                }
+
                 current = parent;
             } else {
                 // We reached the end of the invalid chain but don't know the parent.
@@ -213,13 +248,12 @@ impl ChainManager for ChainManagerImpl {
         }
 
         // Now current is the first non-invalid block we found.
-        // It MUST be valid (known to the client) to be returned as latestValidHash.
         if self.has_block(current).await {
             debug!("[ChainManager] get_latest_valid_ancestor: found valid ancestor {:?}", current);
             return Some(current);
         }
 
-        // Fallback for genesis / PoW blocks
+        // Final fallbacks
         if let Ok(Some(genesis_hash)) = self.read_storage.block_hash(0) {
             if current == genesis_hash {
                 return Some(current);
