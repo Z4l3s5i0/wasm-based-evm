@@ -493,31 +493,21 @@ impl Engine {
         }
 
         // Save current forkchoice state for potential rollback
-        let (old_head, old_safe, old_finalized) = self.get_current_forkchoice_state().await?;
+        let (old_state, old_head_number) = self.canonical.get_state().await;
 
         // Update forkchoice in storage
         if head_number == 0 && forkchoice_state.head_block_hash != B256::ZERO {
              head_number = self.read_storage.block_number(forkchoice_state.head_block_hash).ok().flatten().unwrap_or(0);
         }
-        let _ = self.canonical.update_head(forkchoice_state.head_block_hash, head_number).await;
-        let _ = self.canonical.update_safe(forkchoice_state.safe_block_hash).await;
-        let _ = self.canonical.update_finalized(forkchoice_state.finalized_block_hash).await;
+
+        let _ = self.canonical.update_state(forkchoice_state, head_number).await;
 
         // 1. We already determined head_status above
         let status = head_status.clone();
 
         if status.status != PayloadStatusEnum::Valid && status.status != PayloadStatusEnum::Syncing {
              // Rollback forkchoice in storage if the new head is explicitly invalid
-             if let Some(oh) = old_head.into() {
-                 let oh_num = self.read_storage.block_number(oh).ok().flatten().unwrap_or(0);
-                 let _ = self.canonical.update_head(oh, oh_num).await;
-             }
-             if let Some(os) = old_safe {
-                 let _ = self.canonical.update_safe(os).await;
-             }
-             if let Some(of) = old_finalized {
-                 let _ = self.canonical.update_finalized(of).await;
-             }
+             let _ = self.canonical.update_state(old_state, old_head_number).await;
              return Ok(ForkchoiceUpdated {
                 payload_status: status,
                 payload_id: None,
@@ -532,7 +522,7 @@ impl Engine {
             if let Some(header) = head_header {
                 if status.status == PayloadStatusEnum::Valid {
                     // 1. Identify newly canonical blocks and handle reorgs
-                    match self.chain.resolve_reorg(old_head, forkchoice_state.head_block_hash).await {
+                    match self.chain.resolve_reorg(old_state.head_block_hash, forkchoice_state.head_block_hash).await {
                         Ok(context) => {
                             // 2. Handle reorgs FIRST: revert to common ancestor
                             if context.is_reorg {
@@ -549,20 +539,11 @@ impl Engine {
                         if let Err(e) = self.revert_to_height(common_ancestor_height).await {
                             error!("[Engine] Failed to revert to height {}: {}", common_ancestor_height, e);
                             // Rollback forkchoice if reorg fails
-                            if let Some(oh) = old_head.into() {
-                                let oh_num = self.read_storage.block_number(oh).ok().flatten().unwrap_or(0);
-                                let _ = self.canonical.update_head(oh, oh_num).await;
-                            }
-                            if let Some(os) = old_safe {
-                                let _ = self.canonical.update_safe(os).await;
-                            }
-                            if let Some(of) = old_finalized {
-                                let _ = self.canonical.update_finalized(of).await;
-                            }
+                            let _ = self.canonical.update_state(old_state, old_head_number).await;
                             return Err(RpcError::Internal(format!("Revert failed: {}", e)));
                         }
 
-                                self.handle_reorgs_for_mempool(forkchoice_state, old_head, context.common_ancestor_hash).await;
+                                self.handle_reorgs_for_mempool(forkchoice_state, old_state.head_block_hash, context.common_ancestor_hash).await;
                             }
 
                             // 3. Mark the new branch as canonical SECOND
@@ -589,14 +570,14 @@ impl Engine {
                                 for block in context.new_canonical_blocks {
                                     self.mempool_listener.handle_canonical_block(block).await;
                                 }
-                            } else if old_head != forkchoice_state.head_block_hash {
+                            } else if old_state.head_block_hash != forkchoice_state.head_block_hash {
                                 // Edge case: resolve_reorg returned empty blocks but heads differ
                                 // This can happen if the new head is already marked canonical somehow
-                                debug!("[Engine] Resolve reorg returned empty new blocks but heads differ ({:?} -> {:?})", old_head, forkchoice_state.head_block_hash);
+                                debug!("[Engine] Resolve reorg returned empty new blocks but heads differ ({:?} -> {:?})", old_state.head_block_hash, forkchoice_state.head_block_hash);
                             }
                         }
                         Err(e) => {
-                            error!("[Engine] Failed to resolve reorg from {:?} to {:?}: {}", old_head, forkchoice_state.head_block_hash, e);
+                            error!("[Engine] Failed to resolve reorg from {:?} to {:?}: {}", old_state.head_block_hash, forkchoice_state.head_block_hash, e);
                             return Err(RpcError::Internal(format!("Reorg resolution failed: {}", e)));
                         }
                     }
@@ -744,16 +725,15 @@ impl Engine {
     }
 
     async fn update_head_block(&self, forkchoice_state: ForkchoiceState, header: &Header) {
-        let _ = self.canonical.update_head(forkchoice_state.head_block_hash, header.number).await;
-        let _ = self.canonical.update_safe(forkchoice_state.safe_block_hash).await;
-        let _ = self.canonical.update_finalized(forkchoice_state.finalized_block_hash).await;
+        let _ = self.canonical.update_state(forkchoice_state, header.number).await;
         CURRENT_HEAD_BLOCK.set(header.number as f64);
     }
 
     async fn get_current_forkchoice_state(&self) -> Result<(B256, Option<B256>, Option<B256>), RpcError> {
-        let (head, _) = self.canonical.get_head().await;
-        let safe = self.canonical.get_safe().await;
-        let finalized = self.canonical.get_finalized().await;
+        let (state, _) = self.canonical.get_state().await;
+        let head = state.head_block_hash;
+        let safe = state.safe_block_hash;
+        let finalized = state.finalized_block_hash;
 
         if head == B256::ZERO {
             // Fallback to latest canonical block if forkchoice table is empty
