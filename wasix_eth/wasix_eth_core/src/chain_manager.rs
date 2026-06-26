@@ -279,30 +279,87 @@ impl ChainManager for ChainManagerImpl {
         if target == B256::ZERO {
             return true;
         }
+
+        // Get block numbers to optimize search
+        let head_number = if let Ok(Some(n)) = self.read_storage.block_number(head) {
+            Some(n)
+        } else if let Some(block) = self.block_tree.get_block(head).await {
+            Some(block.header.number)
+        } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(head) {
+            Some(payload.header.number)
+        } else {
+            None
+        };
+
+        let target_number = if let Ok(Some(n)) = self.read_storage.block_number(target) {
+            Some(n)
+        } else if let Some(block) = self.block_tree.get_block(target).await {
+            Some(block.header.number)
+        } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(target) {
+            Some(payload.header.number)
+        } else {
+            None
+        };
+
+        if let (Some(h_num), Some(t_num)) = (head_number, target_number) {
+            if t_num > h_num {
+                return false;
+            }
+
+            // Optimization: if target is canonical, we just check if head's ancestor at t_num is target
+            if let Ok(true) = self.read_storage.is_canonical(target) {
+                // If head is also canonical, it's an ancestor if head_number >= target_number
+                if let Ok(true) = self.read_storage.is_canonical(head) {
+                    return h_num >= t_num;
+                }
+                // If head is not canonical, we still need to check if its ancestor at t_num is target
+            }
+        }
+
         let mut current = head;
+        let mut current_number = head_number;
+
         // Search up to 2048 blocks back
         for _ in 0..2048 {
-            let parent_hash = if let Ok(Some(header)) = self.read_storage.header(wasix_eth_types::BlockId::Hash(current.into())) {
-                Some(header.parent_hash)
+            if current == target {
+                return true;
+            }
+            if current == B256::ZERO {
+                break;
+            }
+
+            // If we know both numbers and current is already below target, it's not an ancestor
+            if let (Some(c_num), Some(t_num)) = (current_number, target_number) {
+                if c_num < t_num {
+                    return false;
+                }
+                
+                // If current is canonical, we can do a fast check
+                if let Ok(true) = self.read_storage.is_canonical(current) {
+                    if let Ok(Some(canonical_hash_at_t_num)) = self.read_storage.block_hash(t_num) {
+                        return canonical_hash_at_t_num == target;
+                    }
+                }
+            }
+
+            let parent_info = if let Ok(Some(header)) = self.read_storage.header(wasix_eth_types::BlockId::Hash(current.into())) {
+                Some((header.parent_hash, header.number.saturating_sub(1)))
             } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
-                Some(payload.header.parent_hash)
+                Some((payload.header.parent_hash, payload.header.number.saturating_sub(1)))
+            } else if let Some(block) = self.block_tree.get_block(current).await {
+                Some((block.header.parent_hash, block.header.number.saturating_sub(1)))
             } else {
                 let genesis_hash = self.read_storage.block_hash(0).unwrap_or(None);
                 if Some(current) == genesis_hash {
-                    Some(B256::ZERO)
+                    Some((B256::ZERO, 0))
                 } else {
                     None
                 }
             };
 
-            if let Some(parent) = parent_hash {
-                if parent == target {
-                    return true;
-                }
-                if parent == B256::ZERO {
-                    break;
-                }
+            if let Some((parent, p_num)) = parent_info {
                 current = parent;
+                current_number = Some(p_num);
             } else {
                 break;
             }
