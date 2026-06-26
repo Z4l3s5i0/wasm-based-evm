@@ -217,7 +217,7 @@ impl SyncController {
             // Check if we should abort sync due to a reorg triggered by Engine API
             let (current_head_hash, _) = self.chain_manager.head_block().await;
             let active_fork = Hardfork::get_active_fork(&chain_config, block_num, block_timestamp);
-            if active_fork >= Hardfork::Shanghai && current_head_hash != B256::ZERO {
+            if active_fork >= Hardfork::Paris && current_head_hash != B256::ZERO {
                  // In post-merge, if the current canonical head is NOT an ancestor of what we are syncing,
                  // it might mean the CL shifted to a different branch.
                  // However, we are just "filling" the block tree/storage here, so we can continue
@@ -233,7 +233,7 @@ impl SyncController {
             // Post‑Merge rule: Do NOT alter canonical head from sync ranges.
             // In Paris/Shanghai and later, forkchoice is dictated by the CL via Engine API.
             let active_fork = Hardfork::get_active_fork(&chain_config, number, last_imported_timestamp);
-            if active_fork >= Hardfork::Shanghai {
+            if active_fork >= Hardfork::Paris {
                 debug!(
                     "[Sync] Synced post‑merge range up to block #{} ({}); head update deferred to Engine API",
                     number, hash
@@ -387,7 +387,7 @@ impl SyncController {
             // In Paris/Shanghai and later, forkchoice is dictated by the CL via Engine API.
             let active_fork =
                 Hardfork::get_active_fork(&chain_config, last_processed_num, last_processed_timestamp);
-            if active_fork >= Hardfork::Shanghai {
+            if active_fork >= Hardfork::Paris {
                 debug!(
                     "[Sync] Processed post‑merge ancestor block #{} ({}); head update deferred to Engine API",
                     last_processed_num, hash
@@ -468,7 +468,7 @@ impl SyncProvider for SyncController {
         // 3) Post‑Merge rule: Do NOT alter canonical head from P2P gossip
         //    In Paris/Shanghai and later, forkchoice is dictated by the CL via Engine API.
         let active_fork = Hardfork::get_active_fork(&chain_config, block_num, block_timestamp);
-        if active_fork >= Hardfork::Shanghai {
+        if active_fork >= Hardfork::Paris {
             // Keep database populated; wait for CL `forkchoiceUpdated` to move head.
             debug!(
                 "[Sync] Imported post‑merge gossip block #{} ({}); head update deferred to Engine API",
@@ -509,7 +509,7 @@ impl SyncProvider for SyncController {
         // Safe to update head in pre‑merge mode
         let state = ForkchoiceState {
             head_block_hash: block_hash,
-            safe_block_hash: block_hash,
+            safe_block_hash: B256::ZERO,
             finalized_block_hash: B256::ZERO,
         };
         let version = if active_fork >= Hardfork::Cancun { 3 } else { 2 };

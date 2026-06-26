@@ -164,9 +164,6 @@ impl ReorgHandler {
 
     pub async fn revert_to_height(&self, height: u64) -> wasix_eth_types::Result<()> {
         let (_, head_number) = self.canonical.get_head().await;
-        // if height >= head_number {
-        //     return Ok(());
-        // }
 
         info!("Reverting chain from {} to {}", head_number, height);
 
@@ -214,15 +211,6 @@ impl ReorgHandler {
 
         // Clear tracking maps to avoid polluting subsequent forward execution
         self.write_storage.clear_tracking();
-
-        // // 3. Synchronize Trie - This is CRITICAL for re-orgs
-        // let target_header = self.read_storage.header(BlockId::Number(height.into()))?
-        //     .ok_or_else(|| anyhow::anyhow!("Header not found for height {}", height))?;
-        //
-        // let calculated_root = self.write_storage.calculate_state_root(true, Some(target_header.state_root))?;
-        // if calculated_root != target_header.state_root {
-        //      wasix_eth_utils::error!("[ReorgManager] State root mismatch after rollback to height {}! Expected: {}, Calculated: {}", height, target_header.state_root, calculated_root);
-        // }
 
         Ok(())
     }

@@ -729,26 +729,6 @@ impl Engine {
         CURRENT_HEAD_BLOCK.set(header.number as f64);
     }
 
-    async fn get_current_forkchoice_state(&self) -> Result<(B256, Option<B256>, Option<B256>), RpcError> {
-        let (state, _) = self.canonical.get_state().await;
-        let head = state.head_block_hash;
-        let safe = state.safe_block_hash;
-        let finalized = state.finalized_block_hash;
-
-        if head == B256::ZERO {
-            // Fallback to latest canonical block if forkchoice table is empty
-            let latest = self.read_storage.latest_block_number().map_err(|e| RpcError::Internal(e.to_string()))?;
-            let head = if let Some(n) = latest {
-                self.read_storage.block_hash(n).map_err(|e| RpcError::Internal(e.to_string()))?.unwrap_or_default()
-            } else {
-                B256::ZERO
-            };
-            Ok((head, Some(head), Some(head)))
-        } else {
-            Ok((head, Some(safe), Some(finalized)))
-        }
-    }
-
     pub async fn import_block(&self, block: Block<Transaction>) -> wasix_eth_types::Result<()> {
         let block_hash = block.header.hash_slow();
         info!("[Engine] import_block (sync path) for block {} hash {}", block.header.number, block_hash);
