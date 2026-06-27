@@ -230,6 +230,10 @@ impl DiscoveryV4Service {
         enr.encode(&mut out);
         out
     }
+
+    pub fn identity(&self) -> &Identity {
+        &self.local_identity
+    }
 }
 
 pub fn now_u64() -> u64 {

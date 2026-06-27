@@ -56,7 +56,7 @@ impl NetworkPayload {
 
         let discovery_v4 = Arc::new(DiscoveryV4Service::new(
             identity.clone(),
-            &format!("{:?}:{}", config.ext_ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))), config.discovery_port),
+            &format!("0.0.0.0:{}", config.discovery_port),
             config.discovery_port,
             config.p2p_port,
             config.bootnodes.clone(),

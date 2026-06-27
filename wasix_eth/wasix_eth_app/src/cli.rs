@@ -84,6 +84,10 @@ pub struct CommonArgs {
     /// Path to a directory containing .rlp files to import
     #[arg(long)]
     pub import_blocks: Option<PathBuf>,
+
+    /// URL of the metrics server for auto-registration and bootstrap peer discovery
+    #[arg(long)]
+    pub bootstrap_registry: Option<String>,
 }
 
 #[derive(Subcommand, Debug, Clone)]

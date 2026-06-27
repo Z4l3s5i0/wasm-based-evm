@@ -62,9 +62,9 @@ https://hackmd.io/@danielrachi/engine_api
 * [ ] try diablo workloads on client
 * [ ] create contender script or workflow to spam diablo workloads
 * [ ] adjust experiment proposal
-* [ ] adjust METRICS exposed via prometheus 
+* [x] adjust METRICS exposed via prometheus 
 * [ ] adjust dashboards via grafana
-* [ ] create a storage system for prometheus metrics of different nodes for the experiments for analysis
+* [x] create a storage system for prometheus metrics of different nodes for the experiments for analysis
 * [x] adjust the client for passing last few HIVE tests in rust compiled client
   * [x] 226/226 passed for engine-cancun
   * [x] 129/129 passed for engine-api
