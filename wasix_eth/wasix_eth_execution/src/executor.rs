@@ -1,19 +1,18 @@
-use wasix_eth_types::*;
+use evm::backend::{InMemoryEnvironment, OverlayedBackend, OverlayedChangeSet, RuntimeBaseBackend};
+use evm::interpreter::etable::Chained;
+use evm::interpreter::runtime::RuntimeBackend;
+use evm::standard::{Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker, TransactArgs, TransactArgsCallCreate, TransactGasPrice, TransactValueCallCreate};
+use evm::uint::{H160, U256 as EvmU256};
 use wasix_eth_storage::read_traits::{AccountProvider, BytecodeProvider};
 use wasix_eth_storage::write::BatchWriter;
+use wasix_eth_types::*;
 use wasix_eth_utils::info;
-use wasix_eth_utils::metrics::{BLOCK_EXECUTION_TIME, BLOCK_GAS_UTILIZATION};
-use evm::backend::{OverlayedBackend, OverlayedChangeSet, InMemoryEnvironment, RuntimeBaseBackend};
-use evm::interpreter::runtime::RuntimeBackend;
-use evm::uint::{H160, U256 as EvmU256};
-use evm::standard::{Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker, TransactArgs, TransactArgsCallCreate, TransactGasPrice, TransactValueCallCreate};
-use evm::interpreter::etable::Chained;
 
 use crate::backend::SputnikBackend;
 use crate::state::StateApplier;
 use crate::transaction::TransactionExecutor;
-use std::collections::{HashMap, HashSet};
 use evm_precompile::StandardPrecompileSet;
+use std::collections::{HashMap, HashSet};
 
 #[derive(Debug, Clone)]
 pub struct SystemCallResult {

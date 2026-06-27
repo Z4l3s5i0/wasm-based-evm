@@ -7,7 +7,6 @@ use std::sync::Mutex;
 use std::sync::Arc;
 use crate::write_traits::{AccountWriter, BlockWriter, BytecodeWriter, ChangeSetWriter, HeaderWriter, MetadataWriter, PeerDiscoveryWriter, StateWriter, StorageWriter, TransactionWriter};
 use crate::read_traits::{AccountProvider, BytecodeProvider, StateProvider, StorageProvider, HeaderProvider};
-use wasix_eth_utils::info;
 use wasix_eth_utils::metrics::{STORAGE_WRITE_LATENCY, STORAGE_OPERATIONS, STORAGE_TRIE_COMPUTATION_TIME};
 use wasix_eth_types::BlockId;
 use crate::read::DatabaseReadProvider;

@@ -1,20 +1,20 @@
-use std::sync::Arc;
-use alloy_primitives::{B256, U256};
-use alloy_rpc_types::SyncInfo;
-use alloy_rpc_types::engine::ForkchoiceState;
-use wasix_eth_storage::read::DatabaseReadProvider;
-use wasix_eth_storage::HeaderProvider;
-use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
-use wasix_eth_types::sync::{SyncProvider, PeerProvider};
-use wasix_eth_types::{async_trait, SyncStatus, Transaction, Block, Hardfork, ChainConfig};
-use wasix_eth_utils::metrics::{SYNC_STATUS, CURRENT_HEAD_BLOCK, SYNC_TARGET_HEIGHT, SYNC_REMAINING_BLOCKS, CHAIN_HEAD_AGE, INVALID_BLOCKS_RECEIVED};
-use wasix_eth_utils::{debug, error, info};
 use crate::chain_manager::InvalidationReason;
-use crate::ChainManager;
 use crate::mempool::mempool_provider::MempoolProvider;
-use crate::sync::registry::SyncRegistry;
 use crate::sync::downloader::Downloader;
 use crate::sync::processor::BlockProcessor;
+use crate::sync::registry::SyncRegistry;
+use crate::ChainManager;
+use alloy_primitives::{B256, U256};
+use alloy_rpc_types::engine::ForkchoiceState;
+use alloy_rpc_types::SyncInfo;
+use std::sync::Arc;
+use wasix_eth_storage::read::DatabaseReadProvider;
+use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
+use wasix_eth_storage::HeaderProvider;
+use wasix_eth_types::sync::{PeerProvider, SyncProvider};
+use wasix_eth_types::{async_trait, Block, ChainConfig, Hardfork, SyncStatus, Transaction};
+use wasix_eth_utils::metrics::{CHAIN_HEAD_AGE, CURRENT_HEAD_BLOCK, SYNC_REMAINING_BLOCKS, SYNC_STATUS, SYNC_TARGET_HEIGHT};
+use wasix_eth_utils::{debug, error, info};
 
 pub struct SyncController {
     read_storage: DatabaseReadProvider,

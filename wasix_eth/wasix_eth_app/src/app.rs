@@ -50,18 +50,20 @@ impl App {
                 wasix_eth_utils::metrics::NODE_UPTIME.inc_by(15.0);
 
                 // Update Storage DB Size
-                if let Ok(metadata) = std::fs::metadata(&data_dir) {
-                    if metadata.is_dir() {
-                        // Simple recursive size check if possible, or just the dir size
-                        // In WASI/Wasix this might be limited, but let's try a basic estimate
-                        if let Ok(entries) = std::fs::read_dir(&data_dir) {
-                            let mut total_size = 0u64;
-                            for entry in entries.flatten() {
-                                if let Ok(meta) = entry.metadata() {
-                                    total_size += meta.len();
+                if let Some(ref path) = data_dir {
+                    if let Ok(metadata) = std::fs::metadata(path) {
+                        if metadata.is_dir() {
+                            // Simple recursive size check if possible, or just the dir size
+                            // In WASI/Wasix this might be limited, but let's try a basic estimate
+                            if let Ok(entries) = std::fs::read_dir(path) {
+                                let mut total_size = 0u64;
+                                for entry in entries.flatten() {
+                                    if let Ok(meta) = entry.metadata() {
+                                        total_size += meta.len();
+                                    }
                                 }
+                                wasix_eth_utils::metrics::STORAGE_DB_SIZE.set(total_size as f64);
                             }
-                            wasix_eth_utils::metrics::STORAGE_DB_SIZE.set(total_size as f64);
                         }
                     }
                 }

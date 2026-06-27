@@ -34,6 +34,7 @@ impl From<alloy_rlp::Error> for DecodeError {
     }
 }
 
+#[derive(Debug)]
 pub enum Packet {
     Ping(Ping),
     Pong(Pong),

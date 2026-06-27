@@ -93,7 +93,7 @@ impl<'a> TransactionExecutor<'a> {
         tx_gas_used = self.adjust_gas_post_execution(tx, tx_gas_used, *tx_hash, &backend_final);
         debug!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}", tx_hash, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used);
 
-        GAS_PROCESSED_TOTAL.inc_by(tx_gas_used);
+        GAS_PROCESSED_TOTAL.inc_by(tx_gas_used as f64);
         *cumulative_gas_used += tx_gas_used;
 
         let consensus_logs = self.process_logs(&changeset);

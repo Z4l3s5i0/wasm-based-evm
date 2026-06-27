@@ -1,16 +1,16 @@
+use super::types::SessionRequest;
+use crate::rlpx::RlpxStream;
+use alloy_primitives::Bytes;
+use alloy_rlp::Decodable;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use alloy_primitives::Bytes;
-use tokio::sync::{mpsc, oneshot, Mutex};
 use tokio::io::{AsyncRead, AsyncWrite};
-use anyhow::Result;
-use alloy_rlp::Decodable;
+use tokio::sync::{mpsc, oneshot, Mutex};
+use wasix_eth_types::p2p::{BlockBodies, BlockHeaders, BlockRangeUpdate, Disconnect, EthMessageID, GetBlockBodies, GetBlockHeaders, GetNodeData, GetPooledTransactions, GetReceipts, GossipMessage, NewBlock, NewBlockHashes, NewPooledTransactionHashes, NewPooledTransactionHashes66, NodeData, Ping, Pong, PooledTransactions, Receipts, RequestPair, Status, StatusEth69, StatusMessage, Transactions};
+use wasix_eth_utils::metrics::P2P_MESSAGES_RECEIVED;
 use wasix_eth_utils::{debug, error, info};
-use wasix_eth_utils::metrics::{P2P_MESSAGES_RECEIVED, P2P_MESSAGES_SENT_BYTES};
-use wasix_eth_types::p2p::{NewBlock, NewBlockHashes, NewPooledTransactionHashes, Transactions, BlockHeaders, BlockBodies, PooledTransactions, Receipts, NodeData, GetBlockHeaders, GetBlockBodies, GetPooledTransactions, GetReceipts, GetNodeData, RequestPair, EthMessageID, Disconnect, Ping, Pong, Status, StatusEth69, StatusMessage, GossipMessage, NewPooledTransactionHashes66, BlockRangeUpdate};
-use crate::rlpx::RlpxStream;
-use super::types::SessionRequest;
 
 pub struct SessionTask<S> {
     stream: RlpxStream<S>,

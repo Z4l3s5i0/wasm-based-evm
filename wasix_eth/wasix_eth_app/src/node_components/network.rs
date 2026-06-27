@@ -9,6 +9,7 @@ use std::sync::Arc;
 use std::error::Error;
 use std::path::PathBuf;
 use tokio::task::JoinHandle;
+use wasix_eth_utils::info;
 
 pub struct NetworkConfig {
     pub data_dir: PathBuf,
@@ -55,7 +56,7 @@ impl NetworkPayload {
 
         let discovery_v4 = Arc::new(DiscoveryV4Service::new(
             identity.clone(),
-            &format!("0.0.0.0:{}", config.discovery_port),
+            &format!("{:?}:{}", config.ext_ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0))), config.discovery_port),
             config.discovery_port,
             config.p2p_port,
             config.bootnodes.clone(),
@@ -88,9 +89,13 @@ impl NetworkPayload {
         let p2p_port = p2p_registry.p2p_port();
         let bind_ip = p2p_registry.ext_ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
         
+        info!("[P2P Server] Starting server task on {}:{}", bind_ip, p2p_port);
         tasks.push(tokio::spawn(async move {
+            info!("[P2P Server] Server task running");
             if let Ok(server) = P2pServer::new(&format!("{}:{}", bind_ip, p2p_port), p2p_registry).await {
                 server.run().await;
+            } else {
+                wasix_eth_utils::error!("[P2P Server] Failed to initialize server");
             }
         }));
 
