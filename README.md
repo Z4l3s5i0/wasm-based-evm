@@ -52,7 +52,7 @@ wasmer run . --enable-threads --net --http-client --enable-exceptions --volume .
 ### references
 for the [Ethereum Json-Rpc specification](https://ethereum.github.io/execution-apis/)
 for the [Ethereum Netwrok-layer specification (p2p)](https://ethereum.org/developers/docs/networking-layer/)
-
+for the [Ethereum Improvement Proposals](https://eips.ethereum.org/)
 for the [patched repos](https://wasix.org/docs/language-guide/rust/patched-repos)
 https://hackmd.io/@danielrachi/engine_api
 
@@ -64,11 +64,11 @@ https://hackmd.io/@danielrachi/engine_api
 * [ ] adjust experiment proposal
 * [ ] adjust METRICS exposed via prometheus and dashboards via grafana
 * [ ] create a storage system for prometheus metrics of different nodes for the experiments for analysis
-* [ ] adjust the client for passing last few HIVE tests
-  * [ ] 214/226 passed for engine-cancun
-  * [ ] 129/129 passed for engine-api
-  * [ ] 30/35 passed for engine-withdrawals
-  * [ ] 8/8 passed for engine-auth
+* [x] adjust the client for passing last few HIVE tests in rust compiled client
+  * [x] 226/226 passed for engine-cancun
+  * [x] 129/129 passed for engine-api
+  * [x] 35/35 passed for engine-withdrawals
+  * [x] 8/8 passed for engine-auth
   * [ ] 13/16 passed for discv4
-  * [ ] 0/2 passed for sync
-  *  --> 394/416
+  * [ ] 1/2 passed for sync
+  *  --> 412/416
