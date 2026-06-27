@@ -1,4 +1,4 @@
-use crate::model::{MetricSample, MetricRangeQuery, Node, Experiment, RpcObservation, CollectionError};
+use crate::model::{MetricSample, MetricRangeQuery, Node, Experiment, RpcObservation, CollectionError, NodeStatus};
 use crate::storage::MetricsStore;
 use anyhow::Result;
 use std::collections::HashMap;
@@ -34,6 +34,39 @@ impl MetricsStore for MemoryStore {
     fn upsert_node(&self, node: &Node) -> Result<()> {
         let mut nodes = self.nodes.write().unwrap();
         nodes.insert(node.id.clone(), node.clone());
+        Ok(())
+    }
+
+    fn get_node(&self, id: &str) -> Result<Option<Node>> {
+        let nodes = self.nodes.read().unwrap();
+        Ok(nodes.get(id).cloned())
+    }
+
+    fn delete_node(&self, id: &str) -> Result<()> {
+        let mut nodes = self.nodes.write().unwrap();
+        nodes.remove(id);
+        Ok(())
+    }
+
+    fn update_node_status(
+        &self,
+        id: &str,
+        status: NodeStatus,
+        last_seen_ms: Option<i64>,
+        last_successful_probe_ms: Option<i64>,
+        consecutive_failures: u32,
+    ) -> Result<()> {
+        let mut nodes = self.nodes.write().unwrap();
+        if let Some(node) = nodes.get_mut(id) {
+            node.status = status;
+            if last_seen_ms.is_some() {
+                node.last_seen_ms = last_seen_ms;
+            }
+            if last_successful_probe_ms.is_some() {
+                node.last_successful_probe_ms = last_successful_probe_ms;
+            }
+            node.consecutive_failures = consecutive_failures;
+        }
         Ok(())
     }
 

@@ -1,12 +1,11 @@
 use crate::ethereum::rpc_client::EthereumRpcClient;
 use crate::ethereum::types::{parse_hex_f64, syncing_to_numeric};
-use crate::model::{MetricSample, MetricSource, NodeConfig, RpcObservation};
+use crate::model::{MetricSample, MetricSource, Node, RpcObservation};
 use crate::storage::SharedStore;
 use crate::telemetry::registry::TelemetryRegistry;
 use crate::time::now_ms;
 use anyhow::Result;
 use std::time::{Duration, Instant};
-use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct RpcCollector {
@@ -31,7 +30,7 @@ impl RpcCollector {
         }
     }
 
-    pub async fn collect_node(&self, node: NodeConfig) -> Result<()> {
+    pub async fn collect_node(&self, node: Node) -> Result<()> {
         let client = EthereumRpcClient::new(node.rpc_url.clone(), self.timeout)?;
         
         let methods = [
@@ -109,7 +108,7 @@ impl RpcCollector {
         Ok(())
     }
 
-    fn emit_metrics_from_rpc(&self, node: &NodeConfig, method: &str, value: &serde_json::Value, timestamp: i64) -> Result<()> {
+    fn emit_metrics_from_rpc(&self, node: &Node, method: &str, value: &serde_json::Value, timestamp: i64) -> Result<()> {
         let metric_name = match method {
             "eth_chainId" => "ethereum_chain_id",
             "eth_blockNumber" => "ethereum_latest_block",

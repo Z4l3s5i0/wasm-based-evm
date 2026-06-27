@@ -42,6 +42,13 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
             client: node_config.client.clone(),
             rpc_url: node_config.rpc_url.clone(),
             metrics_url: node_config.metrics_url.clone(),
+            p2p_addr: None,
+            discovery_addr: None,
+            enode: None,
+            status: crate::model::NodeStatus::Active,
+            last_seen_ms: Some(now_ms()),
+            last_successful_probe_ms: None,
+            consecutive_failures: 0,
         };
         store.upsert_node(&node)?;
     }
@@ -62,6 +69,14 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     
     let (shutdown_tx, shutdown_rx) = watch::channel(false);
 
+    let prober = crate::bootstrap::prober::BootstrapProber::new(config.clone(), store.clone(), telemetry.clone());
+    let prober_rx = shutdown_rx.clone();
+    let prober_handle = tokio::spawn(async move {
+        if let Err(e) = prober.run(prober_rx).await {
+            error!("Bootstrap prober failed: {}", e);
+        }
+    });
+
     let scheduler = CollectorScheduler::new(config, store, telemetry);
     let scheduler_handle = tokio::spawn(async move {
         if let Err(e) = scheduler.run(shutdown_rx).await {
@@ -69,7 +84,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         }
     });
 
-    let server_handle = tokio::spawn(async move {
+    let _server_handle = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             error!("HTTP server failed: {}", e);
         }
@@ -84,6 +99,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
 
     // Wait for tasks to finish
     let _ = scheduler_handle.await;
+    let _ = prober_handle.await;
     // Axum serve doesn't have a simple graceful shutdown in this version without more boilerplate,
     // but the process will exit anyway.
 

@@ -1,6 +1,6 @@
 use crate::collector::rpc_collector::RpcCollector;
 use crate::collector::prometheus_scraper::PrometheusScraper;
-use crate::model::AppConfig;
+use crate::model::{AppConfig, NodeStatus};
 use crate::storage::SharedStore;
 use crate::telemetry::registry::TelemetryRegistry;
 use anyhow::Result;
@@ -48,8 +48,24 @@ impl CollectorScheduler {
                 _ = interval.tick() => {
                     self.telemetry.collection_ticks.with_label_values::<&str>(&[]).inc();
                     
-                    for node in self.config.nodes.clone() {
-                        let permit = semaphore.clone().acquire_owned().await?;
+                    let nodes = match self.store.list_nodes() {
+                        Ok(nodes) => nodes,
+                        Err(e) => {
+                            error!("Failed to list nodes from storage: {}", e);
+                            continue;
+                        }
+                    };
+
+                    for node in nodes {
+                        if node.status == NodeStatus::Disabled {
+                            continue;
+                        }
+
+                        let permit = match semaphore.clone().acquire_owned().await {
+                            Ok(permit) => permit,
+                            Err(_) => break, // Should not happen
+                        };
+
                         let rpc = rpc_collector.clone();
                         let scraper = prometheus_scraper.clone();
                         

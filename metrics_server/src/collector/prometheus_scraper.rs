@@ -1,7 +1,7 @@
-use crate::model::{MetricSample, MetricSource, NodeConfig, CollectionError};
+use crate::model::{MetricSample, MetricSource, Node, CollectionError};
 use crate::storage::SharedStore;
 use crate::time::now_ms;
-use anyhow::{Result, Context};
+use anyhow::Result;
 use std::time::Duration;
 use std::collections::HashMap;
 
@@ -17,7 +17,7 @@ impl PrometheusScraper {
         Self { store, timeout, experiment_id }
     }
 
-    pub async fn scrape_node(&self, node: NodeConfig) -> Result<()> {
+    pub async fn scrape_node(&self, node: Node) -> Result<()> {
         let url = match &node.metrics_url {
             Some(url) => url,
             None => return Ok(()),
@@ -60,7 +60,7 @@ impl PrometheusScraper {
         Ok(())
     }
 
-    fn parse_line(&self, line: &str, node: &NodeConfig, timestamp: i64) -> Option<MetricSample> {
+    fn parse_line(&self, line: &str, node: &Node, timestamp: i64) -> Option<MetricSample> {
         let parts: Vec<&str> = line.split_whitespace().collect();
         if parts.len() < 2 {
             return None;

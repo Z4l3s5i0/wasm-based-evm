@@ -1,0 +1,164 @@
+use crate::model::{AppConfig, Node, NodeStatus};
+use crate::storage::SharedStore;
+use crate::ethereum::rpc_client::EthereumRpcClient;
+use crate::ethereum::types::parse_hex_u64;
+use crate::telemetry::registry::TelemetryRegistry;
+use crate::time::now_ms;
+use anyhow::Result;
+use std::time::Duration;
+use tokio::sync::watch;
+use tracing::{info, error, debug};
+use std::collections::HashMap;
+
+pub struct BootstrapProber {
+    config: AppConfig,
+    store: SharedStore,
+    telemetry: TelemetryRegistry,
+}
+
+impl BootstrapProber {
+    pub fn new(config: AppConfig, store: SharedStore, telemetry: TelemetryRegistry) -> Self {
+        Self { config, store, telemetry }
+    }
+
+    pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<()> {
+        let bootstrap_config = match &self.config.bootstrap {
+            Some(c) if c.enabled => c,
+            _ => {
+                debug!("Bootstrap registry disabled, prober exiting");
+                return Ok(());
+            }
+        };
+
+        let interval_sec = bootstrap_config.probe_interval_seconds;
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_sec));
+        
+        info!("Starting bootstrap prober with {}s interval", interval_sec);
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    if let Err(e) = self.probe_all_nodes().await {
+                        error!("Error during bootstrap probing: {}", e);
+                    }
+                    self.update_node_counts().await;
+                }
+                _ = shutdown.changed() => {
+                    if *shutdown.borrow() {
+                        info!("Bootstrap prober received shutdown signal");
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    async fn probe_all_nodes(&self) -> Result<()> {
+        let nodes = self.store.list_nodes()?;
+        let timeout = Duration::from_millis(self.config.collection.timeout_ms);
+        let bootstrap_config = self.config.bootstrap.as_ref().unwrap();
+
+        for node in nodes {
+            if node.status == NodeStatus::Disabled {
+                continue;
+            }
+
+            let result = self.probe_node(&node, timeout).await;
+            self.handle_probe_result(node, result, bootstrap_config)?;
+        }
+
+        Ok(())
+    }
+
+    async fn probe_node(&self, node: &Node, timeout: Duration) -> Result<u64> {
+        let client = EthereumRpcClient::new(node.rpc_url.clone(), timeout)?;
+        let chain_id_hex = client.chain_id().await?;
+        let chain_id = parse_hex_u64(&chain_id_hex)?;
+        Ok(chain_id)
+    }
+
+    fn handle_probe_result(&self, node: Node, result: Result<u64>, bootstrap_config: &crate::model::BootstrapConfig) -> Result<()> {
+        let now = now_ms();
+        let mut status = node.status.clone();
+        let mut consecutive_failures = node.consecutive_failures;
+        let mut last_successful_probe_ms = node.last_successful_probe_ms;
+
+        match result {
+            Ok(chain_id) => {
+                let chain_match = if let Some(expected_chain_id) = bootstrap_config.chain_id {
+                    chain_id == expected_chain_id
+                } else {
+                    true
+                };
+
+                if chain_match {
+                    status = NodeStatus::Active;
+                    consecutive_failures = 0;
+                    last_successful_probe_ms = Some(now);
+                    self.telemetry.bootstrap_probe_total.with_label_values(&["success"]).inc();
+                } else {
+                    debug!("Node {} has wrong chain ID: {} (expected {:?})", node.id, chain_id, bootstrap_config.chain_id);
+                    consecutive_failures += 1;
+                    if consecutive_failures >= 3 {
+                        status = NodeStatus::Unhealthy;
+                    } else {
+                        status = NodeStatus::Stale;
+                    }
+                    self.telemetry.bootstrap_probe_total.with_label_values(&["wrong_chain"]).inc();
+                }
+            }
+            Err(e) => {
+                debug!("Probe failed for node {}: {}", node.id, e);
+                consecutive_failures += 1;
+                
+                // Transition logic
+                if consecutive_failures >= 3 {
+                    status = NodeStatus::Unhealthy;
+                } else {
+                    // Check if stale based on time
+                    if let Some(last_success) = last_successful_probe_ms {
+                        if (now - last_success) > (bootstrap_config.stale_after_seconds as i64 * 1000) {
+                            status = NodeStatus::Stale;
+                        }
+                    } else {
+                        status = NodeStatus::Stale;
+                    }
+                }
+                self.telemetry.bootstrap_probe_total.with_label_values(&["failure"]).inc();
+            }
+        }
+
+        self.store.update_node_status(
+            &node.id,
+            status,
+            Some(now),
+            last_successful_probe_ms,
+            consecutive_failures,
+        )?;
+
+        Ok(())
+    }
+
+    async fn update_node_counts(&self) {
+        if let Ok(nodes) = self.store.list_nodes() {
+            let mut counts: HashMap<(String, String), i64> = HashMap::new();
+            for node in nodes {
+                let status_str = match node.status {
+                    NodeStatus::Pending => "pending",
+                    NodeStatus::Active => "active",
+                    NodeStatus::Stale => "stale",
+                    NodeStatus::Unhealthy => "unhealthy",
+                    NodeStatus::Disabled => "disabled",
+                };
+                let key = (status_str.to_string(), node.network.clone());
+                *counts.entry(key).or_insert(0) += 1;
+            }
+
+            for ((status, network), count) in counts {
+                self.telemetry.bootstrap_nodes.with_label_values(&[&status, &network]).set(count as f64);
+            }
+        }
+    }
+}

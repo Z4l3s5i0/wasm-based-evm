@@ -39,8 +39,19 @@ pub fn validate_config(config: &AppConfig) -> anyhow::Result<()> {
         return Err(anyhow!("collection.max_concurrent_nodes must be > 0"));
     }
 
-    if config.nodes.is_empty() {
-        return Err(anyhow!("at least one node must be configured"));
+    if config.nodes.is_empty() && config.bootstrap.as_ref().map(|b| !b.enabled).unwrap_or(true) {
+        return Err(anyhow!("at least one node must be configured or bootstrap must be enabled"));
+    }
+
+    if let Some(bootstrap) = &config.bootstrap {
+        if bootstrap.enabled {
+            if bootstrap.probe_interval_seconds == 0 {
+                return Err(anyhow!("bootstrap.probe_interval_seconds must be > 0"));
+            }
+            if bootstrap.stale_after_seconds == 0 {
+                return Err(anyhow!("bootstrap.stale_after_seconds must be > 0"));
+            }
+        }
     }
 
     let mut node_ids = HashSet::new();

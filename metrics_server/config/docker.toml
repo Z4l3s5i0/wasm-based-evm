@@ -1,0 +1,28 @@
+[server]
+bind_addr = "0.0.0.0:9100"
+
+[storage]
+kind = "redb"
+path = "/app/data/metrics.redb"
+
+[collection]
+interval_seconds = 5
+timeout_ms = 2000
+max_concurrent_nodes = 16
+
+[bootstrap]
+enabled = true
+network = "devnet"
+registration_token = "dev-token-123"
+probe_interval_seconds = 15
+stale_after_seconds = 60
+max_bootstrap_nodes = 16
+allow_private_ips = true
+allow_loopback_ips = true
+
+# Nodes can be added here or registered dynamically
+# [[nodes]]
+# id = "node-static"
+# network = "devnet"
+# client = "wasix_eth"
+# rpc_url = "http://host.docker.internal:8545"

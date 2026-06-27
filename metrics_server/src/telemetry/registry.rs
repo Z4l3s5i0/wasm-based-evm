@@ -15,6 +15,9 @@ pub struct TelemetryRegistry {
     pub ethereum_peer_count: GaugeVec,
     pub ethereum_gas_price: GaugeVec,
     pub ethereum_syncing: GaugeVec,
+    pub bootstrap_nodes: GaugeVec,
+    pub bootstrap_registration_requests: IntCounterVec,
+    pub bootstrap_probe_total: IntCounterVec,
 }
 
 impl TelemetryRegistry {
@@ -65,6 +68,18 @@ impl TelemetryRegistry {
             prometheus::opts!("ethereum_syncing", "Ethereum syncing status"),
             &["node_id", "network", "client"]
         )?;
+        let bootstrap_nodes = GaugeVec::new(
+            prometheus::opts!("metrics_server_bootstrap_nodes", "Number of nodes in bootstrap registry"),
+            &["status", "network"]
+        )?;
+        let bootstrap_registration_requests = IntCounterVec::new(
+            prometheus::opts!("metrics_server_bootstrap_registration_requests_total", "Total number of registration requests"),
+            &["result"]
+        )?;
+        let bootstrap_probe_total = IntCounterVec::new(
+            prometheus::opts!("metrics_server_bootstrap_probe_total", "Total number of bootstrap probes"),
+            &["result"]
+        )?;
 
         registry.register(Box::new(collection_ticks.clone()))?;
         registry.register(Box::new(collection_errors.clone()))?;
@@ -77,6 +92,9 @@ impl TelemetryRegistry {
         registry.register(Box::new(ethereum_peer_count.clone()))?;
         registry.register(Box::new(ethereum_gas_price.clone()))?;
         registry.register(Box::new(ethereum_syncing.clone()))?;
+        registry.register(Box::new(bootstrap_nodes.clone()))?;
+        registry.register(Box::new(bootstrap_registration_requests.clone()))?;
+        registry.register(Box::new(bootstrap_probe_total.clone()))?;
 
         Ok(Self {
             registry,
@@ -91,6 +109,9 @@ impl TelemetryRegistry {
             ethereum_peer_count,
             ethereum_gas_price,
             ethereum_syncing,
+            bootstrap_nodes,
+            bootstrap_registration_requests,
+            bootstrap_probe_total,
         })
     }
 

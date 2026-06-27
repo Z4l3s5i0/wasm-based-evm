@@ -6,7 +6,21 @@ pub struct AppConfig {
     pub storage: StorageConfig,
     pub collection: CollectionConfig,
     pub experiment: Option<ExperimentConfig>,
+    pub bootstrap: Option<BootstrapConfig>,
     pub nodes: Vec<NodeConfig>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapConfig {
+    pub enabled: bool,
+    pub network: Option<String>,
+    pub chain_id: Option<u64>,
+    pub registration_token: Option<String>,
+    pub probe_interval_seconds: u64,
+    pub stale_after_seconds: u64,
+    pub max_bootstrap_nodes: usize,
+    pub allow_private_ips: bool,
+    pub allow_loopback_ips: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +75,61 @@ pub struct Node {
     pub client: String,
     pub rpc_url: String,
     pub metrics_url: Option<String>,
+
+    pub p2p_addr: Option<String>,
+    pub discovery_addr: Option<String>,
+    pub enode: Option<String>,
+
+    pub status: NodeStatus,
+    pub last_seen_ms: Option<i64>,
+    pub last_successful_probe_ms: Option<i64>,
+    pub consecutive_failures: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Default)]
+pub enum NodeStatus {
+    #[default]
+    Pending,
+    Active,
+    Stale,
+    Unhealthy,
+    Disabled,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RegisterNodeRequest {
+    pub id: String,
+    pub network: String,
+    pub client: String,
+    pub rpc_url: String,
+    pub metrics_url: Option<String>,
+    pub p2p_addr: Option<String>,
+    pub discovery_addr: Option<String>,
+    pub enode: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapNodesQuery {
+    pub network: Option<String>,
+    pub limit: Option<usize>,
+    pub include_self: Option<bool>,
+    pub exclude_id: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapNode {
+    pub id: String,
+    pub network: String,
+    pub client: String,
+    pub p2p_addr: Option<String>,
+    pub discovery_addr: Option<String>,
+    pub enode: Option<String>,
+    pub last_seen_ms: Option<i64>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BootstrapNodesResponse {
+    pub nodes: Vec<BootstrapNode>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

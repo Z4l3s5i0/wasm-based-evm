@@ -1,4 +1,4 @@
-use crate::model::{MetricSample, MetricRangeQuery, Node, Experiment, RpcObservation, CollectionError};
+use crate::model::{MetricSample, MetricRangeQuery, Node, Experiment, RpcObservation, CollectionError, NodeStatus};
 use crate::storage::MetricsStore;
 use anyhow::{Result, Context};
 use redb::{Database, TableDefinition, ReadableDatabase, ReadableTable};
@@ -71,6 +71,63 @@ impl MetricsStore for RedbStore {
             let mut table = write_txn.open_table(NODES_TABLE)?;
             let value = serde_json::to_string(node)?;
             table.insert(node.id.as_str(), value.as_str())?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    fn get_node(&self, id: &str) -> Result<Option<Node>> {
+        let read_txn = self.db.begin_read()?;
+        let table = read_txn.open_table(NODES_TABLE)?;
+        if let Some(value) = table.get(id)? {
+            let node: Node = serde_json::from_str(value.value())?;
+            Ok(Some(node))
+        } else {
+            Ok(None)
+        }
+    }
+
+    fn delete_node(&self, id: &str) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(NODES_TABLE)?;
+            table.remove(id)?;
+        }
+        write_txn.commit()?;
+        Ok(())
+    }
+
+    fn update_node_status(
+        &self,
+        id: &str,
+        status: NodeStatus,
+        last_seen_ms: Option<i64>,
+        last_successful_probe_ms: Option<i64>,
+        consecutive_failures: u32,
+    ) -> Result<()> {
+        let write_txn = self.db.begin_write()?;
+        {
+            let mut table = write_txn.open_table(NODES_TABLE)?;
+            let node = if let Some(existing_val) = table.get(id)? {
+                let node: Node = serde_json::from_str(existing_val.value())?;
+                Some(node)
+            } else {
+                None
+            };
+
+            if let Some(mut node) = node {
+                node.status = status;
+                if last_seen_ms.is_some() {
+                    node.last_seen_ms = last_seen_ms;
+                }
+                if last_successful_probe_ms.is_some() {
+                    node.last_successful_probe_ms = last_successful_probe_ms;
+                }
+                node.consecutive_failures = consecutive_failures;
+                
+                let value = serde_json::to_string(&node)?;
+                table.insert(id, value.as_str())?;
+            }
         }
         write_txn.commit()?;
         Ok(())

@@ -1,5 +1,6 @@
 mod api;
 mod app;
+mod bootstrap;
 mod cli;
 mod collector;
 mod config;
