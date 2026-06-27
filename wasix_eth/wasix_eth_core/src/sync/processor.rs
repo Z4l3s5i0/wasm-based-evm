@@ -2,7 +2,7 @@ use crate::Engine;
 use alloy_primitives::B256;
 use std::sync::Arc;
 use wasix_eth_types::{Block, Transaction};
-use wasix_eth_utils::info;
+use wasix_eth_utils::{info, metrics::INVALID_BLOCKS_RECEIVED};
 
 #[derive(Clone)]
 pub struct BlockProcessor {
@@ -26,6 +26,7 @@ impl BlockProcessor {
                 Ok(())
             }
             Err(e) => {
+                INVALID_BLOCKS_RECEIVED.inc();
                 Err(anyhow::anyhow!("Import failed for {}: {}", block_hash, e))
             }
         }

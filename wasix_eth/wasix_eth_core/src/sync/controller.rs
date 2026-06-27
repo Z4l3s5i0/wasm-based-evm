@@ -7,7 +7,7 @@ use wasix_eth_storage::HeaderProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
 use wasix_eth_types::sync::{SyncProvider, PeerProvider};
 use wasix_eth_types::{async_trait, SyncStatus, Transaction, Block, Hardfork, ChainConfig};
-use wasix_eth_utils::metrics::SYNC_STATUS;
+use wasix_eth_utils::metrics::{SYNC_STATUS, CURRENT_HEAD_BLOCK, SYNC_TARGET_HEIGHT, SYNC_REMAINING_BLOCKS, CHAIN_HEAD_AGE, INVALID_BLOCKS_RECEIVED};
 use wasix_eth_utils::{debug, error, info};
 use crate::chain_manager::InvalidationReason;
 use crate::ChainManager;
@@ -57,6 +57,20 @@ impl SyncController {
     }
 
     async fn sync_step(&self) -> anyhow::Result<()> {
+        let (_local_hash, local_height) = self.chain_manager.head_block().await;
+        let local_td = self.chain_manager.total_difficulty().await;
+
+        CURRENT_HEAD_BLOCK.set(local_height as f64);
+        
+        if let Some(h) = self.read_storage.header(wasix_eth_types::BlockId::Number(wasix_eth_types::BlockNumberOrTag::Number(local_height))).ok().flatten() {
+            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+            if now > h.timestamp {
+                CHAIN_HEAD_AGE.set((now - h.timestamp) as f64);
+            } else {
+                CHAIN_HEAD_AGE.set(0.0);
+            }
+        }
+
         let _lock = match self.sync_lock.try_lock() {
             Ok(lock) => lock,
             Err(_) => {
@@ -64,9 +78,6 @@ impl SyncController {
                 return Ok(());
             }
         };
-
-        let (_local_hash, local_height) = self.chain_manager.head_block().await;
-        let local_td = self.chain_manager.total_difficulty().await;
 
         if let Some((target_hash, affinity_peer)) = self.sync_registry.pop_target().await {
             debug!("[Sync] Attempting to sync specific target {:?} (affinity: {:?})", target_hash, affinity_peer);
@@ -118,10 +129,15 @@ impl SyncController {
                 debug!("[Sync] Found better peer {} with TD {} height {} (local TD: {}, height: {})", 
                     best_peer_id, best_td, best_height, local_td, local_height);
                 
+                SYNC_TARGET_HEIGHT.set(best_height as f64);
+                SYNC_REMAINING_BLOCKS.set((best_height.saturating_sub(local_height)) as f64);
+
                 self.sync_range(&best_peer_id, local_height + 1).await?;
             } else {
                 self.chain_manager.set_sync_status(SyncStatus::None).await;
                 SYNC_STATUS.set(1.0); // 1: synced
+                SYNC_TARGET_HEIGHT.set(local_height as f64);
+                SYNC_REMAINING_BLOCKS.set(0.0);
             }
         } else {
             debug!("[Sync] No peers found with better TD or height (local TD: {}, local height: {})", local_td, local_height);

@@ -8,6 +8,7 @@ use wasix_eth_storage::read_traits::PeerDiscoveryProvider;
 use wasix_eth_types::sync::P2pSession;
 use wasix_eth_types::PeerEntry;
 use wasix_eth_utils::{debug, error, info};
+use wasix_eth_utils::metrics::P2P_CONNECTION_ERRORS_TOTAL;
 use crate::peer::peer_registry::PeerRegistry;
 use crate::rlpx::RlpxStream;
 use crate::rlpx::handshake::Handshake;
@@ -115,6 +116,7 @@ impl PeerDialer {
                     pk
                 } else {
                     error!("[P2P Dialer] Cannot dial {} without remote public key", addr);
+                    P2P_CONNECTION_ERRORS_TOTAL.inc();
                     return;
                 };
 
@@ -180,6 +182,7 @@ impl PeerDialer {
                     }
                     Err(e) => {
                         error!("[P2P Dialer] Handshake failed with {}: {}", addr, e);
+                        P2P_CONNECTION_ERRORS_TOTAL.inc();
                         let err_str = e.to_string();
                         let is_eof = err_str.contains("early eof");
                         if is_eof {
@@ -199,6 +202,7 @@ impl PeerDialer {
             }
             Err(e) => {
                 error!("[P2P Dialer] Connection failed with {}: {}", addr, e);
+                P2P_CONNECTION_ERRORS_TOTAL.inc();
                 let is_eof = e.to_string().contains("early eof");
                 if is_eof {
                     let mut guard = self.dial_attempts.lock().await;

@@ -2,7 +2,7 @@ use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use wasix_eth_types::{Address, SignerRecoverable, ConsensusTransaction, B256, U256, Transaction, Blob, Bytes48, TxPooledEnvelope, Bytes};
-use wasix_eth_utils::{debug, info, metrics::{MEMPOOL_SIZE, MEMPOOL_REJECTED_TRANSACTIONS}};
+use wasix_eth_utils::{debug, info, metrics::{MEMPOOL_SIZE, MEMPOOL_REJECTED_TRANSACTIONS, MEMPOOL_PENDING_TRANSACTIONS, MEMPOOL_QUEUED_TRANSACTIONS}};
 
 #[derive(Debug, Default, Clone)]
 pub struct Mempool {
@@ -89,6 +89,8 @@ impl MempoolInner {
 
         if added {
             MEMPOOL_SIZE.set(self.len() as f64);
+            MEMPOOL_PENDING_TRANSACTIONS.set(self.pending_transactions.values().map(|v| v.len()).sum::<usize>() as f64);
+            MEMPOOL_QUEUED_TRANSACTIONS.set(self.queued_transactions.values().map(|v| v.len()).sum::<usize>() as f64);
         } else {
             MEMPOOL_REJECTED_TRANSACTIONS.inc();
         }
@@ -211,6 +213,8 @@ impl MempoolInner {
         self.queued_transactions.retain(|_, queue| !queue.is_empty());
         
         MEMPOOL_SIZE.set(self.len() as f64);
+        MEMPOOL_PENDING_TRANSACTIONS.set(self.pending_transactions.values().map(|v| v.len()).sum::<usize>() as f64);
+        MEMPOOL_QUEUED_TRANSACTIONS.set(self.queued_transactions.values().map(|v| v.len()).sum::<usize>() as f64);
     }
 
     /// Peek at best transactions from the mempool for block building without removing them.

@@ -25,6 +25,7 @@ use crate::trie::MyTrieNode;
 use anyhow::Error;
 use wasix_eth_types::error::RpcError;
 use wasix_eth_utils::info;
+use wasix_eth_utils::metrics::{STORAGE_READ_LATENCY, STORAGE_OPERATIONS};
 use crate::read_traits::{AccountProvider, BlockProvider, BytecodeProvider, ChainProvider, ChangeSetProvider, HeaderProvider, LogProvider, MetadataProvider, PeerDiscoveryProvider, StateProvider, StorageProvider, TransactionProvider};
 use crate::write_traits::StateWriter;
 use crate::trie::EthTrie;
@@ -91,6 +92,8 @@ impl HeaderProvider for DatabaseReadProvider {
             _ => return Ok(None),
         };
 
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(Headers::definition())?;
         let value = table.get(hash)?;
@@ -98,6 +101,8 @@ impl HeaderProvider for DatabaseReadProvider {
     }
 
     fn header_td(&self, hash: B256) -> Result<Option<U256>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(HeaderTD::definition())?;
         let value = table.get(hash)?;
@@ -131,6 +136,8 @@ impl BlockProvider for DatabaseReadProvider {
     }
 
     fn block_hash(&self, number: u64) -> Result<Option<B256>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(CanonicalHeads::definition())?;
         let value = table.get(number)?;
@@ -138,6 +145,8 @@ impl BlockProvider for DatabaseReadProvider {
     }
 
     fn block_number(&self, hash: B256) -> Result<Option<u64>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(HeaderNumbers::definition())?;
         let value = table.get(hash)?;
@@ -152,6 +161,8 @@ impl BlockProvider for DatabaseReadProvider {
     }
 
     fn block_body_by_hash(&self, hash: B256) -> Result<Option<BlockBody<Transaction>>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(BlockBodies::definition())?;
         let value = table.get(hash)?;
@@ -200,6 +211,8 @@ impl BlockProvider for DatabaseReadProvider {
     }
 
     fn latest_block_number(&self) -> Result<Option<u64>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(CanonicalHeads::definition())?;
         let last = table.iter()?.rev().next();
@@ -240,6 +253,8 @@ impl BlockProvider for DatabaseReadProvider {
 
 impl TransactionProvider for DatabaseReadProvider {
     fn transaction(&self, hash: B256) -> Result<Option<Transaction>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(Transactions::definition())?;
         let value = table.get(hash)?;
@@ -255,6 +270,8 @@ impl TransactionProvider for DatabaseReadProvider {
     }
 
     fn receipt(&self, block_hash: B256, index: u64) -> Result<Option<Receipt>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(Receipts::definition())?;
         let value = table.get((block_hash, index))?;
@@ -262,6 +279,8 @@ impl TransactionProvider for DatabaseReadProvider {
     }
 
     fn transaction_lookup(&self, hash: B256) -> Result<Option<(B256, u64)>> {
+        STORAGE_OPERATIONS.inc();
+        let _timer = STORAGE_READ_LATENCY.start_timer();
         let tx = self.db.begin_read()?;
         let table = tx.open_table(TransactionLookup::definition())?;
         let value = table.get(hash)?;

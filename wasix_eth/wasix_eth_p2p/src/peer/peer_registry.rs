@@ -7,7 +7,7 @@ use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::PeerDiscoveryWriter;
 use wasix_eth_types::{async_trait, ChainConfig, PeerEntry, BlockId};
 use wasix_eth_utils::identity::Identity;
-use wasix_eth_utils::metrics::CONNECTED_PEERS;
+use wasix_eth_utils::metrics::{CONNECTED_PEERS, P2P_PEERS_CONNECTED, P2P_PEERS_DISCONNECTED};
 use wasix_eth_utils::{debug, info};
 
 use wasix_eth_types::p2p::{DisconnectReason, StatusMessage};
@@ -101,8 +101,10 @@ impl PeerRegistry {
             while let Some(peer_id) = disconnect_rx.recv().await {
                 info!("[P2P] Peer disconnected: {}", peer_id);
                 let mut sessions = registry_for_disconnect.active_sessions.lock().await;
-                sessions.remove(&peer_id);
-                CONNECTED_PEERS.set(sessions.len() as f64);
+                if sessions.remove(&peer_id).is_some() {
+                    CONNECTED_PEERS.set(sessions.len() as f64);
+                    P2P_PEERS_DISCONNECTED.inc();
+                }
                 let _ = registry_for_disconnect.write_provider.remove_peer(peer_id);
             }
         });
@@ -206,6 +208,7 @@ impl PeerRegistry {
         
         sessions.insert(peer_id, session);
         CONNECTED_PEERS.set(sessions.len() as f64);
+        P2P_PEERS_CONNECTED.inc();
     }
 
     pub async fn cleanup_stale_peers(&self) {

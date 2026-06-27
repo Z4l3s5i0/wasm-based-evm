@@ -3,6 +3,7 @@ use wasix_eth_types::{Address, BlockId, Bytes, Filter, Log, RpcBlock, RpcTransac
 use wasix_eth_types::error::{parse_strict_hex, RpcError, RpcResult};
 use wasix_eth_types::eth::EthRpcServer;
 use wasix_eth_utils::debug;
+use wasix_eth_utils::metrics::{RPC_REQUESTS_TOTAL, RPC_REQUEST_DURATION, RPC_ERRORS_TOTAL};
 use wasix_eth_utils::transaction_mapper::TransactionMapper;
 use crate::EthService;
 
@@ -14,55 +15,94 @@ pub struct EthController {
 impl EthRpcServer for EthController {
     async fn gas_price(&self) -> RpcResult<U256> {
         debug!("[RPC] eth_gasPrice");
-        let price = self.service.gas_price().await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let price = self.service.gas_price().await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_gasPrice result: {}", price);
         Ok(U256::try_from(price).unwrap())
     }
 
     async fn accounts(&self) -> RpcResult<Vec<Address>> {
         debug!("[RPC] eth_accounts");
-        let accounts = self.service.accounts().await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let accounts = self.service.accounts().await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_accounts result count: {}", accounts.len());
         Ok(accounts)
     }
 
     async fn syncing(&self) -> RpcResult<SyncStatus> {
         debug!("[RPC] eth_syncing");
-        let status = self.service.syncing().await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let status = self.service.syncing().await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_syncing result: {:?}", status);
         Ok(status)
     }
 
     async fn mining(&self) -> RpcResult<bool> {
         debug!("[RPC] eth_mining");
+        RPC_REQUESTS_TOTAL.inc();
         Ok(false)
     }
 
     async fn send_transaction(&self, request: TransactionRequest) -> RpcResult<B256> {
         debug!("[RPC] eth_sendTransaction: request={:?}", request);
-        let hash = self.service.send_transaction(request).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let hash = self.service.send_transaction(request).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_sendTransaction result: {}", hash);
         Ok(hash)
     }
 
     async fn send_raw_transaction(&self, data: String) -> RpcResult<B256> {
         debug!("[RPC] eth_sendRawTransaction: data_len={}", data.len());
-        let hash = self.service.send_raw_transaction(data).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let hash = self.service.send_raw_transaction(data).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_sendRawTransaction result: {}", hash);
         Ok(hash)
     }
 
     async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<Bytes> {
         debug!("[RPC] eth_signTransaction: request={:?}", request);
-        let signed_tx_rlp = self.service.sign_transaction(request).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let signed_tx_rlp = self.service.sign_transaction(request).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_signTransaction result size: {}", signed_tx_rlp.len());
         Ok(signed_tx_rlp)
     }
 
     async fn sign(&self, address: String, message: String) -> RpcResult<Bytes> {
         debug!("[RPC] eth_sign: address={}, message_len={}", address, message.len());
-        let addr = TransactionMapper::parse_address(&address)?;
-        let signature = self.service.sign(addr, message).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let addr = TransactionMapper::parse_address(&address).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
+        let signature = self.service.sign(addr, message).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         let result = Bytes::from(signature.as_bytes().to_vec());
         debug!("[RPC] eth_sign result size: {}", result.len());
         Ok(result)
@@ -70,22 +110,38 @@ impl EthRpcServer for EthController {
 
     async fn call(&self, request: TransactionRequest, block_id: Option<serde_json::Value>) -> RpcResult<Bytes> {
         debug!("[RPC] eth_call: request={:?}, block_id={:?}", request, block_id);
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
         let block_id: Option<BlockId> = match block_id {
-            Some(v) => Some(serde_json::from_value(v).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?),
+            Some(v) => Some(serde_json::from_value(v).map_err(|e| {
+                RPC_ERRORS_TOTAL.inc();
+                RpcError::InvalidParamsCode(e.to_string())
+            })?),
             None => None,
         };
-        let result_bytes = self.service.call(request, block_id).await?;
+        let result_bytes = self.service.call(request, block_id).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_call result size: {}", result_bytes.len());
         Ok(result_bytes)
     }
 
     async fn estimate_gas(&self, request: TransactionRequest, block_id: Option<serde_json::Value>) -> RpcResult<U256> {
         debug!("[RPC] eth_estimateGas: request={:?}, block_id={:?}", request, block_id);
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
         let block_id: Option<BlockId> = match block_id {
-            Some(v) => Some(serde_json::from_value(v).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?),
+            Some(v) => Some(serde_json::from_value(v).map_err(|e| {
+                RPC_ERRORS_TOTAL.inc();
+                RpcError::InvalidParamsCode(e.to_string())
+            })?),
             None => None,
         };
-        let gas = self.service.estimate_gas(request, block_id).await?;
+        let gas = self.service.estimate_gas(request, block_id).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_estimateGas result: {}", gas);
         Ok(gas)
     }
@@ -93,129 +149,243 @@ impl EthRpcServer for EthController {
 
     async fn get_block_by_number(&self, num: serde_json::Value, full: bool) -> RpcResult<Option<RpcBlock>> {
         debug!("[RPC] eth_getBlockByNumber: num={:?}, full={}", num, full);
-        let num: BlockId = serde_json::from_value(num).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?;
-        let result = self.service.get_block_by_id(num, full).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let num: BlockId = serde_json::from_value(num).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            RpcError::InvalidParamsCode(e.to_string())
+        })?;
+        let result = self.service.get_block_by_id(num, full).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getBlockByNumber result: {}", if result.is_some() { "found" } else { "not found" });
         Ok(result)
     }
 
     async fn get_block_by_hash(&self, hash: serde_json::Value, full: bool) -> RpcResult<Option<RpcBlock>> {
         debug!("[RPC] eth_getBlockByHash: hash={:?}, full={}", hash, full);
-        let hash: B256 = parse_strict_hex(hash)?;
-        let result = self.service.get_block_by_id(BlockId::hash(hash), full).await.map_err(|e| e.into())?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
+        let result = self.service.get_block_by_id(BlockId::hash(hash), full).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e.into()
+        })?;
         debug!("[RPC] eth_getBlockByHash result: {}", if result.is_some() { "found" } else { "not found" });
         Ok(result)
     }
 
     async fn block_number(&self) -> RpcResult<U256> {
         debug!("[RPC] eth_blockNumber");
-        let num = self.service.latest_block_number().await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let num = self.service.latest_block_number().await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_blockNumber result: {}", num);
         Ok(U256::from(num))
     }
 
     async fn chain_id(&self) -> RpcResult<U256> {
         debug!("[RPC] eth_chainId");
-        let id = self.service.chain_id().await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let id = self.service.chain_id().await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_chainId result: {}", id);
         Ok(U256::from(id))
     }
 
     async fn get_block_transaction_count_by_number(&self, num: serde_json::Value) -> RpcResult<Option<U256>> {
         debug!("[RPC] eth_getBlockTransactionCountByNumber: num={:?}", num);
-        let num: BlockId = serde_json::from_value(num).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?;
-        let count = self.service.get_block_transaction_count(num).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let num: BlockId = serde_json::from_value(num).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            RpcError::InvalidParamsCode(e.to_string())
+        })?;
+        let count = self.service.get_block_transaction_count(num).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getBlockTransactionCountByNumber result: {:?}", count);
         Ok(count.map(U256::from))
     }
 
     async fn get_block_transaction_count_by_hash(&self, hash: serde_json::Value) -> RpcResult<Option<U256>> {
         debug!("[RPC] eth_getBlockTransactionCountByHash: hash={:?}", hash);
-        let hash: B256 = parse_strict_hex(hash)?;
-        let count = self.service.get_block_transaction_count(BlockId::hash(hash)).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
+        let count = self.service.get_block_transaction_count(BlockId::hash(hash)).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getBlockTransactionCountByHash result: {:?}", count);
         Ok(count.map(U256::from))
     }
 
     async fn get_logs(&self, filter: Filter) -> RpcResult<Vec<Log>> {
         debug!("[RPC] eth_getLogs: filter={:?}", filter);
-        let result = self.service.get_logs(filter).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let result = self.service.get_logs(filter).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getLogs result count: {}", result.len());
         Ok(result)
     }
+
     async fn get_transaction_by_hash(&self, hash: serde_json::Value) -> RpcResult<Option<RpcTransaction>> {
         debug!("[RPC] eth_getTransactionByHash: hash={:?}", hash);
-        let hash: B256 = parse_strict_hex(hash)?;
-        let result = self.service.get_transaction_by_hash(hash).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
+        let result = self.service.get_transaction_by_hash(hash).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getTransactionByHash result: {}", if result.is_some() { "found" } else { "not found" });
         Ok(result)
     }
 
     async fn get_transaction_receipt(&self, hash: serde_json::Value) -> RpcResult<Option<RpcTransactionReceipt>> {
         debug!("[RPC] eth_getTransactionReceipt: hash={:?}", hash);
-        let hash: B256 = parse_strict_hex(hash)?;
-        let result = self.service.get_transaction_receipt(hash).await?;
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
+        let result = self.service.get_transaction_receipt(hash).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getTransactionReceipt result: {}", if result.is_some() { "found" } else { "not found" });
         Ok(result)
     }
 
     async fn get_balance(&self, address: Address, block_id: Option<serde_json::Value>) -> RpcResult<U256> {
         debug!("[RPC] eth_getBalance: address={}, block_id={:?}", address, block_id);
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
         let block_id: BlockId = match block_id {
-            Some(v) => serde_json::from_value(v).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?,
+            Some(v) => serde_json::from_value(v).map_err(|e| {
+                RPC_ERRORS_TOTAL.inc();
+                RpcError::InvalidParamsCode(e.to_string())
+            })?,
             None => BlockId::latest(),
         };
-        let balance = self.service.get_balance(address, block_id).await?;
+        let balance = self.service.get_balance(address, block_id).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getBalance result: {}", balance);
         Ok(balance)
     }
 
     async fn get_transaction_count(&self, address: Address, block_id: Option<serde_json::Value>) -> RpcResult<U256> {
         debug!("[RPC] eth_getTransactionCount: address={}, block_id={:?}", address, block_id);
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
         let block_id: BlockId = match block_id {
-            Some(v) => serde_json::from_value(v).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?,
+            Some(v) => serde_json::from_value(v).map_err(|e| {
+                RPC_ERRORS_TOTAL.inc();
+                RpcError::InvalidParamsCode(e.to_string())
+            })?,
             None => BlockId::latest(),
         };
-        let count = self.service.get_transaction_count(address, block_id).await?;
+        let count = self.service.get_transaction_count(address, block_id).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getTransactionCount result: {}", count);
         Ok(U256::from(count))
     }
 
     async fn get_code(&self, address: Address, block_id: Option<serde_json::Value>) -> RpcResult<Bytes> {
         debug!("[RPC] eth_getCode: address={}, block_id={:?}", address, block_id);
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
         let block_id: BlockId = match block_id {
-            Some(v) => serde_json::from_value(v).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?,
+            Some(v) => serde_json::from_value(v).map_err(|e| {
+                RPC_ERRORS_TOTAL.inc();
+                RpcError::InvalidParamsCode(e.to_string())
+            })?,
             None => BlockId::latest(),
         };
-        let result = self.service.get_code(address, block_id).await?;
+        let result = self.service.get_code(address, block_id).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getCode result size: {}", result.len());
         Ok(result)
     }
 
     async fn get_storage_at(&self, address: Address, slot: B256, block_id: Option<serde_json::Value>) -> RpcResult<B256> {
         debug!("[RPC] eth_getStorageAt: address={}, slot={}, block_id={:?}", address, slot, block_id);
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
         let block_id: BlockId = match block_id {
-            Some(v) => serde_json::from_value(v).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?,
+            Some(v) => serde_json::from_value(v).map_err(|e| {
+                RPC_ERRORS_TOTAL.inc();
+                RpcError::InvalidParamsCode(e.to_string())
+            })?,
             None => BlockId::latest(),
         };
-        let value = self.service.get_storage_at(address, slot, block_id).await?;
+        let value = self.service.get_storage_at(address, slot, block_id).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })?;
         debug!("[RPC] eth_getStorageAt result: {}", value);
         Ok(value)
     }
 
     async fn get_block_receipts(&self, block_id: serde_json::Value) -> RpcResult<Option<Vec<RpcTransactionReceipt>>> {
         debug!("[RPC] eth_getBlockReceipts: block_id={:?}", block_id);
-        let block_id: BlockId = serde_json::from_value(block_id).map_err(|e| RpcError::InvalidParamsCode(e.to_string()))?;
-        self.service.get_block_receipts(block_id).await
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        let block_id: BlockId = serde_json::from_value(block_id).map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            RpcError::InvalidParamsCode(e.to_string())
+        })?;
+        self.service.get_block_receipts(block_id).await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })
     }
 
     async fn blob_base_fee(&self) -> RpcResult<U256> {
         debug!("[RPC] eth_blobBaseFee");
-        Ok(self.service.blob_base_fee().await?)
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        self.service.blob_base_fee().await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })
     }
 
     async fn max_priority_fee_per_gas(&self) -> RpcResult<U256> {
         debug!("[RPC] eth_maxPriorityFeePerGas");
-        Ok(self.service.max_priority_fee_per_gas().await?)
+        RPC_REQUESTS_TOTAL.inc();
+        let _timer = RPC_REQUEST_DURATION.start_timer();
+        self.service.max_priority_fee_per_gas().await.map_err(|e| {
+            RPC_ERRORS_TOTAL.inc();
+            e
+        })
     }
 }

@@ -4,6 +4,7 @@ use wasix_eth_storage::write::BatchWriter;
 use wasix_eth_storage::read_traits::AccountProvider;
 use wasix_eth_storage::write_traits::AccountWriter;
 use wasix_eth_utils::debug;
+use wasix_eth_utils::metrics::{TRANSACTION_EXECUTION_TIME, GAS_PROCESSED_TOTAL, EXECUTION_VALIDATION_ERRORS};
 use evm::backend::{OverlayedBackend, OverlayedChangeSet, InMemoryEnvironment, RuntimeBaseBackend, RuntimeEnvironment, RuntimeBackend};
 use evm::uint::{H160, H256, U256 as EvmU256};
 use evm::standard::{AuthorizationItem, Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker, TransactArgs, TransactArgsCallCreate, TransactGasPrice, TransactValue, TransactValueCallCreate};
@@ -42,7 +43,12 @@ impl<'a> TransactionExecutor<'a> {
         cumulative_gas_used: &mut u64,
         state_root: Option<B256>,
     ) -> Result<TransactionExecutionResult> {
-        self.validate_transaction(tx)?;
+        if let Err(e) = self.validate_transaction(tx) {
+            EXECUTION_VALIDATION_ERRORS.inc();
+            return Err(e);
+        }
+
+        let _timer = TRANSACTION_EXECUTION_TIME.start_timer();
 
         let recovered = tx.clone().try_into_recovered().map_err(|e| anyhow::anyhow!("Failed to recover signer: {}", e))?;
         let sender = recovered.signer();
@@ -87,6 +93,7 @@ impl<'a> TransactionExecutor<'a> {
         tx_gas_used = self.adjust_gas_post_execution(tx, tx_gas_used, *tx_hash, &backend_final);
         debug!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}", tx_hash, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used);
 
+        GAS_PROCESSED_TOTAL.inc_by(tx_gas_used);
         *cumulative_gas_used += tx_gas_used;
 
         let consensus_logs = self.process_logs(&changeset);

@@ -7,6 +7,7 @@ use tokio::io::{AsyncRead, AsyncWrite};
 use anyhow::Result;
 use alloy_rlp::Decodable;
 use wasix_eth_utils::{debug, error, info};
+use wasix_eth_utils::metrics::{P2P_MESSAGES_RECEIVED, P2P_MESSAGES_SENT_BYTES};
 use wasix_eth_types::p2p::{NewBlock, NewBlockHashes, NewPooledTransactionHashes, Transactions, BlockHeaders, BlockBodies, PooledTransactions, Receipts, NodeData, GetBlockHeaders, GetBlockBodies, GetPooledTransactions, GetReceipts, GetNodeData, RequestPair, EthMessageID, Disconnect, Ping, Pong, Status, StatusEth69, StatusMessage, GossipMessage, NewPooledTransactionHashes66, BlockRangeUpdate};
 use crate::rlpx::RlpxStream;
 use super::types::SessionRequest;
@@ -86,6 +87,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                     }
                     match res {
                         Ok(Ok((id, payload))) => {
+                            P2P_MESSAGES_RECEIVED.inc();
                             if !self.handle_message(id, payload).await {
                                 info!("[P2P Session] Protocol requested disconnect for {}", self.peer_id);
                                 self.notify_disconnect().await;

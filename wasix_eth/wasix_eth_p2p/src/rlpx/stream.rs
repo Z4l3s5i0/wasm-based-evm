@@ -135,6 +135,7 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         let codec = self.codec.as_mut().ok_or_else(|| anyhow!("Codec not initialized"))?;
         let frame = codec.write_frame(id, payload);
         
+        wasix_eth_utils::metrics::P2P_MESSAGES_SENT_BYTES.inc_by(frame.len() as u64);
         self.inner.write_all(&frame).await?;
         Ok(())
     }

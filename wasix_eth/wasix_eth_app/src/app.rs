@@ -41,6 +41,43 @@ impl App {
         info!("Setup complete...");
         info!("Starting servers...");
 
+        // Spawn metrics collection task
+        let data_dir = self.args.common.data_dir.clone();
+        tokio::spawn(async move {
+            info!("[App] Starting metrics collection task");
+            loop {
+                // Update Node Uptime
+                wasix_eth_utils::metrics::NODE_UPTIME.inc_by(15.0);
+
+                // Update Storage DB Size
+                if let Ok(metadata) = std::fs::metadata(&data_dir) {
+                    if metadata.is_dir() {
+                        // Simple recursive size check if possible, or just the dir size
+                        // In WASI/Wasix this might be limited, but let's try a basic estimate
+                        if let Ok(entries) = std::fs::read_dir(&data_dir) {
+                            let mut total_size = 0u64;
+                            for entry in entries.flatten() {
+                                if let Ok(meta) = entry.metadata() {
+                                    total_size += meta.len();
+                                }
+                            }
+                            wasix_eth_utils::metrics::STORAGE_DB_SIZE.set(total_size as f64);
+                        }
+                    }
+                }
+
+                // WASM Memory Usage (if running in WASM environment)
+                // In Wasix/WASI, we can check current memory size
+                #[cfg(target_family = "wasm")]
+                {
+                    let mem = core::arch::wasm32::memory_size(0);
+                    wasix_eth_utils::metrics::WASM_MEMORY_USAGE.set((mem * 64 * 1024) as f64);
+                }
+
+                tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+            }
+        });
+
         let node = self.node.as_mut().ok_or("Node not initialized")?;
         node.start(&self.args).await;
 
@@ -103,6 +140,7 @@ impl AppBuilder {
             _ => LogLevel::Debug,
         };
         logging::set_log_level(level);
+        wasix_eth_utils::metrics::init_metrics();
     }
 
     pub fn setup_jwt_secret(&self, args: &Args, data_dir: &PathBuf, storage_name_from_id: &str) -> Result<Option<[u8; 32]>, Box<dyn std::error::Error>> {

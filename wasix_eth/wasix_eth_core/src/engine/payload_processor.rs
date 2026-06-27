@@ -14,7 +14,7 @@ use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::{BlockWriter, HeaderWriter, TransactionWriter};
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::{Block, BlockId, ChainConfig, PayloadStatus, PayloadStatusEnum, Transaction, B256, U256, proofs, Header, Hardfork};
-use wasix_eth_utils::{debug, error, info};
+use wasix_eth_utils::{debug, error, info, metrics::{BLOCK_EXECUTION_TIME, BLOCK_GAS_UTILIZATION}};
 use crate::engine::engine::EngineEvent;
 
 #[derive(Clone)]
@@ -561,9 +561,17 @@ impl PayloadProcessor {
         let parent_state_root = parent_header.as_ref().map(|h| h.state_root);
         let execution = Arc::clone(&self.execution);
         let block_clone = block.clone();
+        
+        let _timer = BLOCK_EXECUTION_TIME.start_timer();
         let exec_result = tokio::task::spawn_blocking(move || {
             execution.execute_block_with_state_root(block_clone, true, parent_state_root)
         }).await.map_err(|e| RpcError::Internal(format!("Execution task panicked: {}", e)))?;
+
+        if let Ok((ref final_block, _)) = exec_result {
+            if final_block.header.gas_limit > 0 {
+                BLOCK_GAS_UTILIZATION.set(final_block.header.gas_used as f64 / final_block.header.gas_limit as f64);
+            }
+        }
         
         let (final_block, receipts) = match exec_result {
             Ok(res) => res,
