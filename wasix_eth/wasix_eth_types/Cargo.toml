@@ -18,6 +18,7 @@ alloy-eips = {workspace = true}
 alloy-genesis = {workspace = true}
 alloy-rpc-types = {workspace = true}
 alloy-rlp = {workspace = true}
+alloy-tx-macros = {workspace = true}
 crc = { workspace = true }
 anyhow = {workspace = true}
 async-trait = {workspace = true}
