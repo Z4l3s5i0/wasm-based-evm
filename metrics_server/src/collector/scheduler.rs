@@ -1,0 +1,78 @@
+use crate::collector::rpc_collector::RpcCollector;
+use crate::collector::prometheus_scraper::PrometheusScraper;
+use crate::model::AppConfig;
+use crate::storage::SharedStore;
+use crate::telemetry::registry::TelemetryRegistry;
+use anyhow::Result;
+use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::{watch, Semaphore};
+use tracing::{info, error};
+
+pub struct CollectorScheduler {
+    config: AppConfig,
+    store: SharedStore,
+    telemetry: TelemetryRegistry,
+}
+
+impl CollectorScheduler {
+    pub fn new(config: AppConfig, store: SharedStore, telemetry: TelemetryRegistry) -> Self {
+        Self { config, store, telemetry }
+    }
+
+    pub async fn run(self, mut shutdown: watch::Receiver<bool>) -> Result<()> {
+        let interval_sec = self.config.collection.interval_seconds;
+        let mut interval = tokio::time::interval(Duration::from_secs(interval_sec));
+        
+        let semaphore = Arc::new(Semaphore::new(self.config.collection.max_concurrent_nodes));
+        let timeout = Duration::from_millis(self.config.collection.timeout_ms);
+        let experiment_id = self.config.experiment.as_ref().map(|e| e.id.clone());
+
+        let rpc_collector = RpcCollector::new(
+            self.store.clone(),
+            self.telemetry.clone(),
+            timeout,
+            experiment_id.clone(),
+        );
+
+        let prometheus_scraper = PrometheusScraper::new(
+            self.store.clone(),
+            timeout,
+            experiment_id,
+        );
+
+        info!("Starting collector scheduler with {}s interval", interval_sec);
+
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {
+                    self.telemetry.collection_ticks.with_label_values::<&str>(&[]).inc();
+                    
+                    for node in self.config.nodes.clone() {
+                        let permit = semaphore.clone().acquire_owned().await?;
+                        let rpc = rpc_collector.clone();
+                        let scraper = prometheus_scraper.clone();
+                        
+                        tokio::spawn(async move {
+                            let _permit = permit;
+                            if let Err(e) = rpc.collect_node(node.clone()).await {
+                                error!("RPC collection failed for node {}: {}", node.id, e);
+                            }
+                            if let Err(e) = scraper.scrape_node(node.clone()).await {
+                                error!("Prometheus scrape failed for node {}: {}", node.id, e);
+                            }
+                        });
+                    }
+                }
+                _ = shutdown.changed() => {
+                    if *shutdown.borrow() {
+                        info!("Collector scheduler received shutdown signal");
+                        break;
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+}

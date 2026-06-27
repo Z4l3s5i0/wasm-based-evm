@@ -25,16 +25,16 @@ pub struct CommonArgs {
     #[arg(long, default_value_t = 1)]
     pub verbose: u8,
 
-    /// Descriptive name for the node, used in storage filenames
-    #[arg(long)]
+    /// Descripive name for the node, used in storage filenames
+    #[arg(long, default_value = "wasix-eth")]
     pub peer_name: Option<String>,
 
     /// UDP port for discovery
-    #[arg(long, default_value_t = 9001)]
+    #[arg(long, default_value_t = 30303)]
     pub discovery_port: u16,
 
     /// TCP port for P2P (gossip, blocks)
-    #[arg(long, default_value_t = 9002)]
+    #[arg(long, default_value_t = 30304)]
     pub p2p_port: u16,
 
     /// TCP port for Eth JSON-RPC

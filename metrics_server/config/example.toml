@@ -1,0 +1,31 @@
+[server]
+bind_addr = "0.0.0.0:9100"
+
+[storage]
+kind = "redb"
+path = "metrics_server/data/metrics.redb"
+
+[collection]
+interval_seconds = 5
+timeout_ms = 2000
+max_concurrent_nodes = 16
+
+[experiment]
+id = "exp-local-devnet-001"
+name = "Local devnet metrics test"
+description = "Collecting metrics from local Ethereum-compatible nodes"
+tags = ["local", "devnet"]
+
+[[nodes]]
+id = "node-1"
+network = "devnet"
+client = "wasix_eth"
+rpc_url = "http://127.0.0.1:8545"
+metrics_url = "http://127.0.0.1:9050/metrics"
+
+[[nodes]]
+id = "node-2"
+network = "devnet"
+client = "wasix_eth"
+rpc_url = "http://127.0.0.1:18545"
+metrics_url = "http://127.0.0.1:19050/metrics"

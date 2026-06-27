@@ -1,0 +1,155 @@
+use crate::ethereum::rpc_client::EthereumRpcClient;
+use crate::ethereum::types::{parse_hex_f64, syncing_to_numeric};
+use crate::model::{MetricSample, MetricSource, NodeConfig, RpcObservation};
+use crate::storage::SharedStore;
+use crate::telemetry::registry::TelemetryRegistry;
+use crate::time::now_ms;
+use anyhow::Result;
+use std::time::{Duration, Instant};
+use std::sync::Arc;
+
+#[derive(Clone)]
+pub struct RpcCollector {
+    store: SharedStore,
+    telemetry: TelemetryRegistry,
+    timeout: Duration,
+    experiment_id: Option<String>,
+}
+
+impl RpcCollector {
+    pub fn new(
+        store: SharedStore,
+        telemetry: TelemetryRegistry,
+        timeout: Duration,
+        experiment_id: Option<String>,
+    ) -> Self {
+        Self {
+            store,
+            telemetry,
+            timeout,
+            experiment_id,
+        }
+    }
+
+    pub async fn collect_node(&self, node: NodeConfig) -> Result<()> {
+        let client = EthereumRpcClient::new(node.rpc_url.clone(), self.timeout)?;
+        
+        let methods = [
+            "eth_chainId",
+            "eth_blockNumber",
+            "eth_syncing",
+            "eth_gasPrice",
+            "net_peerCount",
+            "web3_clientVersion",
+        ];
+
+        let mut success_count = 0;
+
+        for method in methods {
+            let start = Instant::now();
+            self.telemetry.rpc_requests.with_label_values(&[node.id.as_str(), method]).inc();
+            
+            let result = match method {
+                "eth_chainId" => client.chain_id().await.map(|v| serde_json::to_value(v).unwrap()),
+                "eth_blockNumber" => client.block_number().await.map(|v| serde_json::to_value(v).unwrap()),
+                "eth_syncing" => client.syncing().await,
+                "eth_gasPrice" => client.gas_price().await.map(|v| serde_json::to_value(v).unwrap()),
+                "net_peerCount" => client.peer_count().await.map(|v| serde_json::to_value(v).unwrap()),
+                "web3_clientVersion" => client.client_version().await.map(|v| serde_json::to_value(v).unwrap()),
+                _ => unreachable!(),
+            };
+
+            let latency = start.elapsed().as_millis() as u64;
+            let timestamp = now_ms();
+            
+            self.telemetry.rpc_latency.with_label_values(&[node.id.as_str(), method]).set(latency as f64);
+
+            match result {
+                Ok(value) => {
+                    success_count += 1;
+                    let observation = RpcObservation {
+                        timestamp_ms: timestamp,
+                        experiment_id: self.experiment_id.clone(),
+                        node_id: node.id.clone(),
+                        network: node.network.clone(),
+                        client: node.client.clone(),
+                        method: method.to_string(),
+                        success: true,
+                        latency_ms: latency,
+                        value_json: Some(value.to_string()),
+                        error: None,
+                    };
+                    self.store.insert_rpc_observation(&observation)?;
+
+                    // Emit metrics
+                    self.emit_metrics_from_rpc(&node, method, &value, timestamp)?;
+                }
+                Err(e) => {
+                    self.telemetry.rpc_errors.with_label_values(&[node.id.as_str(), method]).inc();
+                    let observation = RpcObservation {
+                        timestamp_ms: timestamp,
+                        experiment_id: self.experiment_id.clone(),
+                        node_id: node.id.clone(),
+                        network: node.network.clone(),
+                        client: node.client.clone(),
+                        method: method.to_string(),
+                        success: false,
+                        latency_ms: latency,
+                        value_json: None,
+                        error: Some(e.to_string()),
+                    };
+                    self.store.insert_rpc_observation(&observation)?;
+                }
+            }
+        }
+
+        let up = if success_count > 0 { 1.0 } else { 0.0 };
+        self.telemetry.ethereum_rpc_up.with_label_values(&[node.id.as_str(), node.network.as_str(), node.client.as_str()]).set(up);
+
+        Ok(())
+    }
+
+    fn emit_metrics_from_rpc(&self, node: &NodeConfig, method: &str, value: &serde_json::Value, timestamp: i64) -> Result<()> {
+        let metric_name = match method {
+            "eth_chainId" => "ethereum_chain_id",
+            "eth_blockNumber" => "ethereum_latest_block",
+            "eth_syncing" => "ethereum_syncing",
+            "eth_gasPrice" => "ethereum_gas_price",
+            "net_peerCount" => "ethereum_peer_count",
+            _ => return Ok(()),
+        };
+
+        let val = if method == "eth_syncing" {
+            syncing_to_numeric(value)
+        } else if let Some(s) = value.as_str() {
+            parse_hex_f64(s).unwrap_or(0.0)
+        } else {
+            0.0
+        };
+
+        // Update telemetry
+        match metric_name {
+            "ethereum_chain_id" => self.telemetry.ethereum_chain_id.with_label_values(&[node.id.as_str(), node.network.as_str(), node.client.as_str()]).set(val),
+            "ethereum_latest_block" => self.telemetry.ethereum_latest_block.with_label_values(&[node.id.as_str(), node.network.as_str(), node.client.as_str()]).set(val),
+            "ethereum_syncing" => self.telemetry.ethereum_syncing.with_label_values(&[node.id.as_str(), node.network.as_str(), node.client.as_str()]).set(val),
+            "ethereum_gas_price" => self.telemetry.ethereum_gas_price.with_label_values(&[node.id.as_str(), node.network.as_str(), node.client.as_str()]).set(val),
+            "ethereum_peer_count" => self.telemetry.ethereum_peer_count.with_label_values(&[node.id.as_str(), node.network.as_str(), node.client.as_str()]).set(val),
+            _ => {}
+        }
+
+        let sample = MetricSample {
+            timestamp_ms: timestamp,
+            experiment_id: self.experiment_id.clone(),
+            node_id: node.id.clone(),
+            network: node.network.clone(),
+            client: node.client.clone(),
+            source: MetricSource::JsonRpc,
+            name: metric_name.to_string(),
+            value: val,
+            labels_json: None,
+        };
+        self.store.insert_metric_sample(&sample)?;
+
+        Ok(())
+    }
+}
