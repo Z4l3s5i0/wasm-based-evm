@@ -253,6 +253,24 @@ impl MetricsStore for RedbStore {
             if let Some(exp_id) = &query.experiment_id {
                 if sample.experiment_id.as_ref() != Some(exp_id) { continue; }
             }
+
+            // Label filtering
+            if let Some(query_labels) = &query.labels {
+                let sample_labels: std::collections::HashMap<String, serde_json::Value> = sample
+                    .labels_json
+                    .as_ref()
+                    .and_then(|j| serde_json::from_str(j).ok())
+                    .unwrap_or_default();
+                
+                let mut matches = true;
+                for (k, v) in query_labels {
+                    if sample_labels.get(k) != Some(v) {
+                        matches = false;
+                        break;
+                    }
+                }
+                if !matches { continue; }
+            }
             
             samples.push(sample);
         }

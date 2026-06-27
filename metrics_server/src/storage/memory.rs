@@ -133,6 +133,22 @@ impl MetricsStore for MemoryStore {
             if s.timestamp_ms < query.from_ms || s.timestamp_ms > query.to_ms {
                 return false;
             }
+
+            // Label filtering
+            if let Some(query_labels) = &query.labels {
+                let sample_labels: std::collections::HashMap<String, serde_json::Value> = s
+                    .labels_json
+                    .as_ref()
+                    .and_then(|j| serde_json::from_str(j).ok())
+                    .unwrap_or_default();
+                
+                for (k, v) in query_labels {
+                    if sample_labels.get(k) != Some(v) {
+                        return false;
+                    }
+                }
+            }
+
             true
         }).cloned().collect();
 

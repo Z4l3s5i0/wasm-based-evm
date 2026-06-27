@@ -28,7 +28,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary from the builder stage
-COPY --from=builder /usr/src/metrics_server/target/release/metrics_server /app/metrics_server
+COPY --from=builder /usr/src/metrics_server/target/release/metrics_server /app
 
 # Copy the default config
 COPY config /app/config

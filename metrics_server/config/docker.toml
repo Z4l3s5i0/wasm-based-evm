@@ -1,9 +1,8 @@
 [server]
 bind_addr = "0.0.0.0:9100"
-
 [storage]
 kind = "redb"
-path = "/app/data/metrics.redb"
+path = "data/metrics.redb"
 
 [collection]
 interval_seconds = 5
@@ -13,16 +12,29 @@ max_concurrent_nodes = 16
 [bootstrap]
 enabled = true
 network = "devnet"
-registration_token = "dev-token-123"
+chain_id = 31133
+registration_token = "<REGISTRATION_TOKEN>"
 probe_interval_seconds = 15
 stale_after_seconds = 60
-max_bootstrap_nodes = 16
+max_bootstrap_nodes = 32
 allow_private_ips = true
 allow_loopback_ips = true
 
-# Nodes can be added here or registered dynamically
-# [[nodes]]
-# id = "node-static"
-# network = "devnet"
-# client = "wasix_eth"
-# rpc_url = "http://host.docker.internal:8545"
+[experiment]
+id = "exp-local-devnet-001"
+name = "Local devnet metrics test"
+description = "Collecting metrics from local Ethereum-compatible nodes"
+tags = ["local", "devnet"]
+
+
+
+## Nodes can be added here or registered dynamically
+#[[nodes]]
+#id = "node-1"
+#network = "devnet"
+#client = "wasix_eth"
+#rpc_url = "http://host.docker.internal:8545"
+#metrics_url = "http://host.docker.internal:9050/metrics"
+#p2p_addr = "host.docker.internal:30304"
+#discovery_addr = "host.docker.internal:30303"
+#enode = "enode://00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff@127.0.0.1:30303"

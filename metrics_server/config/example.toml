@@ -3,12 +3,23 @@ bind_addr = "0.0.0.0:9100"
 
 [storage]
 kind = "redb"
-path = "metrics_server/data/metrics.redb"
+path = "data/metrics.redb"
 
 [collection]
 interval_seconds = 5
 timeout_ms = 2000
 max_concurrent_nodes = 16
+
+[bootstrap]
+enabled = true
+network = "devnet"
+chain_id = 31133
+registration_token = "<REGISTRATION_TOKEN>"
+probe_interval_seconds = 15
+stale_after_seconds = 60
+max_bootstrap_nodes = 32
+allow_private_ips = true
+allow_loopback_ips = true
 
 [experiment]
 id = "exp-local-devnet-001"
@@ -22,10 +33,7 @@ network = "devnet"
 client = "wasix_eth"
 rpc_url = "http://127.0.0.1:8545"
 metrics_url = "http://127.0.0.1:9050/metrics"
+p2p_addr = "127.0.0.1:30303"
+discovery_addr = "127.0.0.1:30303"
+enode = "enode://00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff00112233445566778899aabbccddeeff@127.0.0.1:30303"
 
-[[nodes]]
-id = "node-2"
-network = "devnet"
-client = "wasix_eth"
-rpc_url = "http://127.0.0.1:18545"
-metrics_url = "http://127.0.0.1:19050/metrics"

@@ -9,6 +9,7 @@ use std::time::Duration;
 use tokio::sync::watch;
 use tracing::{info, error, debug};
 use std::collections::HashMap;
+use std::sync::Arc;
 
 pub struct BootstrapProber {
     config: AppConfig,
@@ -60,26 +61,51 @@ impl BootstrapProber {
         let timeout = Duration::from_millis(self.config.collection.timeout_ms);
         let bootstrap_config = self.config.bootstrap.as_ref().unwrap();
 
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(self.config.collection.max_concurrent_nodes));
+        let mut futures = Vec::new();
+
         for node in nodes {
             if node.status == NodeStatus::Disabled {
                 continue;
             }
 
-            let result = self.probe_node(&node, timeout).await;
-            self.handle_probe_result(node, result, bootstrap_config)?;
+            let sem = semaphore.clone();
+            let store = self.store.clone();
+            let telemetry = self.telemetry.clone();
+            let b_config = bootstrap_config.clone();
+
+            futures.push(tokio::spawn(async move {
+                let _permit = sem.acquire().await.unwrap();
+                let result = Self::probe_node_internal(&node, timeout).await;
+                Self::handle_probe_result_internal(store, telemetry, node, result, &b_config)
+            }));
+        }
+
+        for f in futures {
+            match f.await {
+                Ok(Ok(_)) => {},
+                Ok(Err(e)) => error!("Probe task error: {}", e),
+                Err(e) => error!("Probe task panicked: {}", e),
+            }
         }
 
         Ok(())
     }
 
-    async fn probe_node(&self, node: &Node, timeout: Duration) -> Result<u64> {
+    pub async fn probe_node_internal(node: &Node, timeout: Duration) -> Result<u64> {
         let client = EthereumRpcClient::new(node.rpc_url.clone(), timeout)?;
         let chain_id_hex = client.chain_id().await?;
         let chain_id = parse_hex_u64(&chain_id_hex)?;
         Ok(chain_id)
     }
 
-    fn handle_probe_result(&self, node: Node, result: Result<u64>, bootstrap_config: &crate::model::BootstrapConfig) -> Result<()> {
+    pub fn handle_probe_result_internal(
+        store: SharedStore,
+        telemetry: TelemetryRegistry,
+        node: Node, 
+        result: Result<u64>, 
+        bootstrap_config: &crate::model::BootstrapConfig
+    ) -> Result<()> {
         let now = now_ms();
         let mut status = node.status.clone();
         let mut consecutive_failures = node.consecutive_failures;
@@ -97,7 +123,7 @@ impl BootstrapProber {
                     status = NodeStatus::Active;
                     consecutive_failures = 0;
                     last_successful_probe_ms = Some(now);
-                    self.telemetry.bootstrap_probe_total.with_label_values(&["success"]).inc();
+                    telemetry.bootstrap_probe_total.with_label_values(&["success"]).inc();
                 } else {
                     debug!("Node {} has wrong chain ID: {} (expected {:?})", node.id, chain_id, bootstrap_config.chain_id);
                     consecutive_failures += 1;
@@ -106,7 +132,7 @@ impl BootstrapProber {
                     } else {
                         status = NodeStatus::Stale;
                     }
-                    self.telemetry.bootstrap_probe_total.with_label_values(&["wrong_chain"]).inc();
+                    telemetry.bootstrap_probe_total.with_label_values(&["wrong_chain"]).inc();
                 }
             }
             Err(e) => {
@@ -126,11 +152,11 @@ impl BootstrapProber {
                         status = NodeStatus::Stale;
                     }
                 }
-                self.telemetry.bootstrap_probe_total.with_label_values(&["failure"]).inc();
+                telemetry.bootstrap_probe_total.with_label_values(&["failure"]).inc();
             }
         }
 
-        self.store.update_node_status(
+        store.update_node_status(
             &node.id,
             status,
             Some(now),

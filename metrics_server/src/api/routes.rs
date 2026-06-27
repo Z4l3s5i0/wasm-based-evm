@@ -1,4 +1,4 @@
-use axum::{routing::{get, post}, Router};
+use axum::{routing::{get, post}, Router, extract::DefaultBodyLimit};
 use crate::api::{ApiState, handlers};
 
 pub fn router(state: ApiState) -> Router {
@@ -8,8 +8,10 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/nodes", get(handlers::nodes_handler))
         .route("/api/nodes/register", post(handlers::register_node_handler))
         .route("/api/bootstrap/nodes", get(handlers::bootstrap_nodes_handler))
+        .route("/api/bootstrap/status", get(handlers::bootstrap_status_handler))
         .route("/api/experiments", get(handlers::experiments_handler))
         .route("/api/metrics/latest", get(handlers::latest_metrics_handler))
         .route("/api/metrics/range", get(handlers::range_metrics_handler))
+        .layer(DefaultBodyLimit::max(1024 * 64)) // 64KB limit for all requests
         .with_state(state)
 }

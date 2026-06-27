@@ -14,7 +14,9 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     let config = config::load_config(&config_path)?;
     config::validate_config(&config)?;
 
-    tracing_subscriber::fmt::init();
+    if let Err(e) = tracing_subscriber::fmt::try_init() {
+        eprintln!("Failed to initialize tracing: {}", e);
+    }
     info!("Starting metrics_server with config: {:?}", config_path);
 
     let store: SharedStore = match config.storage.kind.as_str() {
@@ -42,9 +44,9 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
             client: node_config.client.clone(),
             rpc_url: node_config.rpc_url.clone(),
             metrics_url: node_config.metrics_url.clone(),
-            p2p_addr: None,
-            discovery_addr: None,
-            enode: None,
+            p2p_addr: node_config.p2p_addr.clone(),
+            discovery_addr: node_config.discovery_addr.clone(),
+            enode: node_config.enode.clone(),
             status: crate::model::NodeStatus::Active,
             last_seen_ms: Some(now_ms()),
             last_successful_probe_ms: None,
@@ -84,24 +86,29 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
         }
     });
 
-    let _server_handle = tokio::spawn(async move {
+    let server_handle = tokio::spawn(async move {
         if let Err(e) = axum::serve(listener, app).await {
             error!("HTTP server failed: {}", e);
         }
     });
 
     tokio::select! {
-        _ = tokio::signal::ctrl_c() => {
-            info!("Received Ctrl+C, shutting down");
+        res = tokio::signal::ctrl_c() => {
+            if let Err(e) = res {
+                error!("Failed to listen for ctrl_c: {}", e);
+            } else {
+                info!("Received Ctrl+C, shutting down");
+            }
             let _ = shutdown_tx.send(true);
+        }
+        _ = server_handle => {
+            error!("HTTP server task exited unexpectedly");
         }
     }
 
     // Wait for tasks to finish
     let _ = scheduler_handle.await;
     let _ = prober_handle.await;
-    // Axum serve doesn't have a simple graceful shutdown in this version without more boilerplate,
-    // but the process will exit anyway.
 
     Ok(())
 }

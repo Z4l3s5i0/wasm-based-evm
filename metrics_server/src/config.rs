@@ -4,6 +4,23 @@ use std::collections::HashSet;
 use std::net::SocketAddr;
 use std::path::Path;
 
+fn validate_socket_addr(addr: &str) -> bool {
+    // Try SocketAddr first (IP:port)
+    if addr.parse::<SocketAddr>().is_ok() {
+        return true;
+    }
+    // Try host:port by seeing if it has exactly one colon and the part after it is a u16
+    let parts: Vec<&str> = addr.split(':').collect();
+    if parts.len() == 2 {
+        if let Ok(_port) = parts[1].parse::<u16>() {
+            // We don't want to actually resolve it during config check, 
+            // just check if it's a plausible host:port
+            return !parts[0].is_empty();
+        }
+    }
+    false
+}
+
 pub fn load_config(path: &Path) -> anyhow::Result<AppConfig> {
     let content = std::fs::read_to_string(path)
         .with_context(|| format!("failed to read config file: {:?}", path))?;
@@ -39,9 +56,9 @@ pub fn validate_config(config: &AppConfig) -> anyhow::Result<()> {
         return Err(anyhow!("collection.max_concurrent_nodes must be > 0"));
     }
 
-    if config.nodes.is_empty() && config.bootstrap.as_ref().map(|b| !b.enabled).unwrap_or(true) {
-        return Err(anyhow!("at least one node must be configured or bootstrap must be enabled"));
-    }
+    // We allow starting without any static nodes because they can be registered dynamically via API.
+    // However, if no nodes are provided and bootstrap is disabled, the server will just sit idle
+    // until someone registers a node. This is a valid use case.
 
     if let Some(bootstrap) = &config.bootstrap {
         if bootstrap.enabled {
@@ -77,6 +94,21 @@ pub fn validate_config(config: &AppConfig) -> anyhow::Result<()> {
         if let Some(metrics_url) = &node.metrics_url {
             if !metrics_url.starts_with("http://") && !metrics_url.starts_with("https://") {
                 return Err(anyhow!("node metrics_url must start with http:// or https:// for node {}", node.id));
+            }
+        }
+        if let Some(p2p_addr) = &node.p2p_addr {
+            if !validate_socket_addr(p2p_addr) {
+                return Err(anyhow!("invalid p2p_addr for node {}: {} (expected IP:port or host:port)", node.id, p2p_addr));
+            }
+        }
+        if let Some(discovery_addr) = &node.discovery_addr {
+            if !validate_socket_addr(discovery_addr) {
+                return Err(anyhow!("invalid discovery_addr for node {}: {} (expected IP:port or host:port)", node.id, discovery_addr));
+            }
+        }
+        if let Some(enode) = &node.enode {
+            if !enode.starts_with("enode://") {
+                return Err(anyhow!("node enode must start with enode:// for node {}", node.id));
             }
         }
     }

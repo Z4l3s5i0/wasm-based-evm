@@ -1,0 +1,15 @@
+[server]
+bind_addr = "127.0.0.1:9100"
+
+[storage]
+kind = "memory"
+
+[collection]
+interval_seconds = 5
+timeout_ms = 2000
+max_concurrent_nodes = 16
+
+[bootstrap]
+enabled = false
+
+# No nodes defined here

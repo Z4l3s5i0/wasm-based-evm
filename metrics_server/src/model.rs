@@ -7,6 +7,7 @@ pub struct AppConfig {
     pub collection: CollectionConfig,
     pub experiment: Option<ExperimentConfig>,
     pub bootstrap: Option<BootstrapConfig>,
+    #[serde(default)]
     pub nodes: Vec<NodeConfig>,
 }
 
@@ -56,6 +57,9 @@ pub struct NodeConfig {
     pub client: String,
     pub rpc_url: String,
     pub metrics_url: Option<String>,
+    pub p2p_addr: Option<String>,
+    pub discovery_addr: Option<String>,
+    pub enode: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -112,7 +116,6 @@ pub struct RegisterNodeRequest {
 pub struct BootstrapNodesQuery {
     pub network: Option<String>,
     pub limit: Option<usize>,
-    pub include_self: Option<bool>,
     pub exclude_id: Option<String>,
 }
 
@@ -184,6 +187,7 @@ pub struct MetricRangeQuery {
     pub experiment_id: Option<String>,
     pub from_ms: i64,
     pub to_ms: i64,
+    pub labels: Option<std::collections::HashMap<String, serde_json::Value>>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
