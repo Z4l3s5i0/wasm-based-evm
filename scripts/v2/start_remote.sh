@@ -9,6 +9,8 @@ HOSTS_FILE="hosts.ini"
 CHAIN_ID=12345
 METRICS_SERVER_URL="http://localhost:9100"
 SETUP_REMOTE=false
+REGISTRY=""
+TAG="latest"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -17,6 +19,8 @@ usage() {
     echo "  --chain-id ID     Unique chain ID (default: 12345)"
     echo "  --metrics URL     URL of the metrics server"
     echo "  --setup           Run setup.sh on each host before deployment"
+    echo "  --registry URL    Docker registry to pull images from (optional)"
+    echo "  --tag TAG         Image tag to use (default: latest)"
     exit 1
 }
 
@@ -26,6 +30,8 @@ while [[ "$#" -gt 0 ]]; do
         --chain-id) CHAIN_ID="$2"; shift ;;
         --metrics) METRICS_SERVER_URL="$2"; shift ;;
         --setup) SETUP_REMOTE=true ;;
+        --registry) REGISTRY="$2"; shift ;;
+        --tag) TAG="$2"; shift ;;
         *) usage ;;
     esac
     shift
@@ -81,11 +87,17 @@ for i in "${!nodes[@]}"; do
     fi
     
     # Start the stack on remote host (assuming Docker is installed)
+    IMAGE_NAME="wasm-based-evm-$type"
+    if [ -n "$REGISTRY" ]; then
+        IMAGE_NAME="${REGISTRY}/wasix-eth-$type:${TAG}"
+        ssh "$host" "docker pull $IMAGE_NAME"
+    fi
+
     ssh "$host" "cd blockchain && \
       docker run -d --name el-node \
         -v \$(pwd)/startup:/app/startup \
         -p 8545:8545 -p 8551:8551 -p 30303:30303 -p 30303:30303/udp \
-        wasm-based-evm-$type \
+        $IMAGE_NAME \
         run --data-dir /app/data --genesis-path /app/startup/genesis.json --peer-name node-$i --auth-rpc-jwt-path /app/startup/jwt.hex --bootstrap-registry $METRICS_SERVER_URL && \
       docker run -d --name cl-node \
         -v \$(pwd)/startup:/app/startup \

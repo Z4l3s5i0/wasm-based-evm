@@ -72,7 +72,30 @@ Once the network is started, you can monitor it via Grafana:
 1. Open `http://localhost:3000` (or your metrics server IP).
 2. Use the provided dashboards to view network health, execution efficiency, and consensus status.
 
-## 5. Troubleshooting
+## 5. Docker Registry Support (Optional)
+
+Instead of building images locally on every deployment, you can build them once, push them to a registry, and have all nodes pull them.
+
+### Building and Pushing Images
+Use the `push_images.sh` script:
+```bash
+./scripts/v2/push_images.sh --registry your-username --tag v1.0
+```
+
+### Deploying from Registry
+Use the `--registry` and `--tag` flags in the deployment scripts:
+
+**Local:**
+```bash
+./scripts/v2/start_local.sh --nodes 4 --registry your-username --tag v1.0
+```
+
+**Remote:**
+```bash
+./scripts/v2/start_remote.sh --hosts hosts.ini --registry your-username --tag v1.0
+```
+
+## 6. Troubleshooting
 
 - **Port Conflicts**: Ensure the ports used by the scripts (8545+, 9002+, etc.) are not occupied.
 - **Logs**: Check `docker logs <container_id>` or the `.log` files in the `scripts` directory on remote hosts.

@@ -1,30 +1,5 @@
 # Dockerfile.windows
-# Using a Linux-based image to cross-compile for Windows using cargo-xwin
-FROM rust:1.80-bookworm AS builder
-
-# Install cross-compilation tools
-RUN apt-get update && apt-get install -y \
-    clang \
-    cmake \
-    libxml2-dev \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Install cargo-xwin
-RUN cargo install cargo-xwin
-
-# Add Windows target
-RUN rustup target add x86_64-pc-windows-msvc
-
-WORKDIR /usr/src/wasix_eth
-
-# Copy the entire workspace
-COPY . .
-
-# Build for Windows
-RUN cargo xwin build --release -p wasix_eth_app --target x86_64-pc-windows-msvc
-
-# Runtime stage using Wine
+# Assuming binary is already built at wasix_eth/target/release/wasix_eth.exe
 FROM debian:bookworm-slim
 
 WORKDIR /app
@@ -35,8 +10,8 @@ RUN dpkg --add-architecture i386 && \
     apt-get install -y --no-install-recommends wine wine32 wine64 libwine libwine:i386 fonts-wine && \
     rm -rf /var/lib/apt/lists/*
 
-# Copy the binary from the builder stage
-COPY --from=builder /usr/src/wasix_eth/target/x86_64-pc-windows-msvc/release/wasix_eth_app.exe /app/wasix_eth.exe
+# Copy the pre-built binary
+COPY target/release/wasix_eth.exe /app/wasix_eth.exe
 
 # Set the entrypoint to run with Wine
 ENTRYPOINT ["wine", "/app/wasix_eth.exe"]

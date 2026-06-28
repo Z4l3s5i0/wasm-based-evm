@@ -12,6 +12,8 @@ WASIX_RATIO=25
 CHAIN_ID=12345
 CLEANUP=false
 SETUP=false
+REGISTRY=""
+TAG="latest"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -23,6 +25,8 @@ usage() {
     echo "  --chain-id ID     Unique chain ID (default: 12345)"
     echo "  --cleanup         Remove existing data before starting"
     echo "  --setup           Run setup.sh locally before starting"
+    echo "  --registry URL    Docker registry to pull images from (optional)"
+    echo "  --tag TAG         Image tag to use (default: latest)"
     exit 1
 }
 
@@ -35,6 +39,8 @@ while [[ "$#" -gt 0 ]]; do
         --chain-id) CHAIN_ID="$2"; shift ;;
         --cleanup) CLEANUP=true ;;
         --setup) SETUP=true ;;
+        --registry) REGISTRY="$2"; shift ;;
+        --tag) TAG="$2"; shift ;;
         *) usage ;;
     esac
     shift
@@ -60,7 +66,23 @@ echo "Node counts: Linux=$c_linux, Windows=$c_windows, Wasix=$c_wasix"
 
 # 3. Generate docker-compose.yml
 COMPOSE_FILE="docker-compose.v2.yml"
-cp "$(dirname "$0")/templates/docker-compose.yml.template" "$COMPOSE_FILE"
+
+# Prepare variables for template replacement
+if [ -n "$REGISTRY" ]; then
+    export METRICS_IMAGE="${REGISTRY}/wasix-eth-metrics:${TAG}"
+    export METRICS_BUILD_SECTION="# Registry image used"
+else
+    export METRICS_IMAGE="wasix-eth-metrics:latest"
+    export METRICS_BUILD_SECTION="build:
+      context: ./metrics_server
+      dockerfile: Dockerfile"
+fi
+
+# Use envsubst if available, otherwise just copy and manual replace (simplified for script)
+# Using sed for compatibility
+sed -e "s|\${METRICS_IMAGE:-wasix-eth-metrics:latest}|$METRICS_IMAGE|g" \
+    -e "s|\${METRICS_BUILD_SECTION:-# No build section}|$METRICS_BUILD_SECTION|g" \
+    "$(dirname "$0")/templates/docker-compose.yml.template" > "$COMPOSE_FILE"
 
 # Track assigned types
 node_types=()
@@ -86,11 +108,20 @@ for i in $(seq 0 $((NODES - 1))); do
     mkdir -p "$DATA_DIR/el" "$DATA_DIR/cl"
 
     # Append Execution Client
+    if [ -n "$REGISTRY" ]; then
+        IMAGE_STR="image: ${REGISTRY}/wasix-eth-${TYPE}:${TAG}"
+        BUILD_STR="# Using registry image"
+    else
+        IMAGE_STR="image: wasix-eth-${TYPE}:latest"
+        BUILD_STR="build:
+      context: ./wasix_eth
+      dockerfile: Dockerfile.$TYPE"
+    fi
+
     cat <<EOF >> "$COMPOSE_FILE"
   el-node-$i:
-    build:
-      context: ./wasix_eth
-      dockerfile: Dockerfile.$TYPE
+    $IMAGE_STR
+    $BUILD_STR
     volumes:
       - $DATA_DIR/el:/app/data
       - ./startup_v2:/app/startup

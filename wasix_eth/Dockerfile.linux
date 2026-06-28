@@ -1,23 +1,5 @@
 # Dockerfile.linux
-FROM rust:1.80-slim-bookworm AS builder
-
-WORKDIR /usr/src/wasix_eth
-
-# Install build dependencies
-RUN apt-get update && apt-get install -y \
-    pkg-config \
-    libssl-dev \
-    git \
-    && rm -rf /var/lib/apt/lists/*
-
-# Copy the entire workspace
-COPY . .
-
-# Build the application
-# We build the wasix_eth_app which is the main entry point
-RUN cargo build --release -p wasix_eth_app
-
-# Runtime stage
+# Assuming binary is already built at wasix_eth/target/x86_64-unknown-linux-gnu/release/wasix_eth
 FROM debian:bookworm-slim
 
 WORKDIR /app
@@ -28,8 +10,8 @@ RUN apt-get update && apt-get install -y \
     ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy the binary from the builder stage
-COPY --from=builder /usr/src/wasix_eth/target/release/wasix_eth_app /app/wasix_eth
+# Copy the pre-built binary
+COPY target/x86_64-unknown-linux-gnu/release/wasix_eth /app/wasix_eth
 
 # Set the entrypoint
 ENTRYPOINT ["/app/wasix_eth"]

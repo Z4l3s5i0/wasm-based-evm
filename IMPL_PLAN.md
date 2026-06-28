@@ -68,7 +68,10 @@ We will move from static scripts to a more parameterized approach.
 5. Phase 5: Automated Installation & Setup Integration ✓
     - [✓] Create scripts/v2/setup.sh for environment preparation.
     - [✓] Integrate --setup flag into start scripts.
-6. Phase 6: Documentation & Validation *
+6. Phase 6: Docker Registry Integration ✓
+    - [✓] Create scripts/v2/push_images.sh for image pushing.
+    - [✓] Update deployment scripts to support --registry and --tag.
+7. Phase 7: Documentation & Validation *
     - [✓] Finalize USER_GUIDE.md.
     - [ ] Test local deployment with 4 nodes (2 Linux, 1 Windows, 1 Wasix).
     - [ ] Test validator distribution.
@@ -82,6 +85,8 @@ scripts/
     start_remote.sh
     common.sh (shared logic for ratios/ports)
     templates/
-      docker-compose.j2 (or similar)
+      docker-compose.yml.template
+    push_images.sh
+    setup.sh
 `
 

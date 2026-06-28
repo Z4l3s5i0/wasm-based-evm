@@ -1,9 +1,9 @@
 services:
   # Metrics Server
   metrics-server:
-    build:
-      context: ./metrics_server
-      dockerfile: Dockerfile
+    image: ${METRICS_IMAGE:-wasix-eth-metrics:latest}
+    # Fallback to build if image not found or requested
+    ${METRICS_BUILD_SECTION:-# No build section}
     ports:
       - "9100:9100"
     volumes:
