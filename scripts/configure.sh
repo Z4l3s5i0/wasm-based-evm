@@ -155,6 +155,8 @@ openssl rand -hex 32 > startup/jwt_node1.hex
 cp startup/jwt_node1.hex startup/jwt_node2.hex
 
 # 5. Run ethstaker deposit command
+# Note: We run this as a docker container to ensure consistent environment.
+# We use -u "$(id -u):$(id -g)" to ensure the generated files are owned by the current user.
 echo "Running ethstaker deposit command..."
 # Ensure validator_keys directory exists
 STARTUP_DIR="startup"
@@ -163,13 +165,23 @@ if [ ! -d "$VALIDATORS_DIR" ]; then
     echo "Creating missing validator directory..."
     mkdir -p "$VALIDATORS_DIR"
 fi
- printf "no\n" | deposit --non_interactive --ignore_connectivity existing-mnemonic --mnemonic "$MNEMONIC" --validator_start_index "$NUMBER" \
---num_validators 1 --chain mainnet --folder startup/validator_keys --amount 1000 --keystore_password "$KEYSTORE_PW" \
---withdrawal_address 0x0000000000000000000000000000000000000001
+# We pipe the password and index twice to handle confirmation prompts.
+printf "%s\n%s\n%s\n%s\n" "$KEYSTORE_PW" "$KEYSTORE_PW" "$NUMBER" "$NUMBER" | \
+docker run --rm -i -u "$(id -u):$(id -g)" -v "$(pwd)/startup:/data" ghcr.io/ethstaker/ethstaker-deposit-cli:latest --language English existing-mnemonic \
+  --mnemonic "$MNEMONIC" \
+  --validator_start_index "$NUMBER" \
+  --num_validators 1 \
+  --chain mainnet \
+  --folder /data/validator_keys \
+  --amount 1000 \
+  --keystore_password "$KEYSTORE_PW" \
+  --withdrawal_address 0x0000000000000000000000000000000000000001
 #--devnet_chain_setting { network_name: , genesis_fork_version: , exit_fork_version: , genesis_validator_root: , multiplier: , min_activation_amount: , min_deposit_amount: }
 
 # 6. Run lighthouse validator to create validator key and deposit file
 echo "Creating validator keys with lighthouse..."
+# Fix permissions just in case, though docker -u should have handled it
+chmod -R 755 startup/validator_keys
 lighthouse account validator import --directory startup/validator_keys/ --testnet-dir ./startup --datadir /home/wasm/.lighthouse/node1
 
 echo "Configuration complete!"

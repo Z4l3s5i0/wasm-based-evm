@@ -7,6 +7,9 @@ set -e
 echo "Starting system setup..."
 
 # 1. Update system and install basic tools
+echo "Enabling 32-bit architecture for Wine..."
+sudo dpkg --add-architecture i386
+
 echo "Updating package list..."
 sudo apt-get update -y
 
@@ -19,7 +22,13 @@ sudo apt-get install -y \
     ca-certificates \
     gnupg \
     lsb-release \
-    openssl
+    openssl \
+    wine \
+    wine32 \
+    wine64 \
+    libwine \
+    libwine:i386 \
+    fonts-wine
 
 # 2. Install Docker if not present
 if ! command -v docker &> /dev/null; then
@@ -54,5 +63,6 @@ fi
 echo "Pre-pulling common Docker images..."
 docker pull ethpandaops/ethereum-genesis-generator:master
 docker pull sigp/lighthouse:latest
+docker pull ghcr.io/ethstaker/ethstaker-deposit-cli:latest
 
 echo "Setup complete!"

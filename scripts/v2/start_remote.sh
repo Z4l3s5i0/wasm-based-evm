@@ -81,13 +81,14 @@ for i in "${!nodes[@]}"; do
     
     # Synchronize validator keys if needed
     if [ "$validator" = "true" ]; then
-        # This is a bit simplified, we need to send the correct keys for this node
-        # Lighthouse mk-test-net puts keys in node_0, node_1, etc.
-        scp -r "startup_v2/validators/node_$i" "$host:blockchain/startup/validators"
+        ssh "$host" "mkdir -p blockchain/startup/validators"
+        scp -r "startup_v2/validators/node_$i" "$host:blockchain/startup/validators/"
     fi
     
     # Start the stack on remote host (assuming Docker is installed)
     IMAGE_NAME="wasm-based-evm-$type"
+    COMMAND_ARGS="run --data-dir /app/data --genesis-path /app/startup/genesis.json --peer-name node-$i --auth-rpc-jwt-path /app/startup/jwt.hex --bootstrap-registry $METRICS_SERVER_URL"
+
     if [ -n "$REGISTRY" ]; then
         IMAGE_NAME="${REGISTRY}/wasix-eth-$type:${TAG}"
         ssh "$host" "docker pull $IMAGE_NAME"
@@ -98,7 +99,7 @@ for i in "${!nodes[@]}"; do
         -v \$(pwd)/startup:/app/startup \
         -p 8545:8545 -p 8551:8551 -p 30303:30303 -p 30303:30303/udp \
         $IMAGE_NAME \
-        run --data-dir /app/data --genesis-path /app/startup/genesis.json --peer-name node-$i --auth-rpc-jwt-path /app/startup/jwt.hex --bootstrap-registry $METRICS_SERVER_URL && \
+        $COMMAND_ARGS && \
       docker run -d --name cl-node \
         -v \$(pwd)/startup:/app/startup \
         -p 5052:5052 -p 9000:9000 \
@@ -111,10 +112,9 @@ for i in "${!nodes[@]}"; do
         ssh "$host" "cd blockchain && \
           docker run -d --name vc-node \
             -v \$(pwd)/startup:/app/startup \
-            sigp/lighthouse lighthouse vc \
-            --beacon-nodes http://localhost:5052 \
-            --testnet-dir /app/startup \
-            --suggested-fee-recipient 0x0000000000000000000000000000000000000000"
+            --entrypoint sh \
+            sigp/lighthouse -c \"lighthouse --testnet-dir /app/startup account validator import --directory /app/startup/validators/node_$i --password-file /app/startup/validators/node_$i/password.txt --datadir /root/.lighthouse --reuse-password && \
+            lighthouse vc --beacon-nodes http://localhost:5052 --testnet-dir /app/startup --suggested-fee-recipient 0x0000000000000000000000000000000000000000\""
     fi
     
     # Registration is now handled by the node itself via --bootstrap-registry

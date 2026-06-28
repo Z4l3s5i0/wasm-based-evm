@@ -13,7 +13,22 @@ done
 
 echo "Updating system..."
 sudo apt-get update
-sudo apt-get install -y curl wget git jq build-essential docker.io docker-compose
+sudo dpkg --add-architecture i386
+sudo apt-get update
+sudo apt-get install -y \
+    curl \
+    wget \
+    git \
+    jq \
+    build-essential \
+    docker.io \
+    docker-compose-plugin \
+    wine \
+    wine32 \
+    wine64 \
+    libwine \
+    libwine:i386 \
+    fonts-wine
 
 # 1. Install Wasmer CLI if flag provided
 if [ "$INSTALL_WASM" = true ] ; then

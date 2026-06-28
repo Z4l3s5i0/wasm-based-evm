@@ -53,7 +53,14 @@ fi
 
 if [ "$CLEANUP" = true ]; then
     echo "Cleaning up old data..."
-    rm -rf startup_v2 data_v2
+  # Stop running containers first to release file locks
+    COMPOSE_CMD=$(get_compose_cmd)
+    if [ -f "$COMPOSE_FILE" ]; then
+        $COMPOSE_CMD -f "$COMPOSE_FILE" down --volumes --remove-orphans || true
+    fi
+
+    # Use sudo to force-remove files owned by root
+    sudo rm -rf startup_v2 data_v2fi
 fi
 
 # 1. Generate Configuration
@@ -108,6 +115,16 @@ for i in $(seq 0 $((NODES - 1))); do
     mkdir -p "$DATA_DIR/el" "$DATA_DIR/cl"
 
     # Append Execution Client
+    COMMAND_STR="command: [\"run\", \"--data-dir\", \"/app/data\", \"--genesis-path\", \"/app/startup/genesis.json\", \"--peer-name\", \"$PEER_NAME\", \"--eth-rpc-port\", \"$ETH_PORT\", \"--auth-rpc-port\", \"$AUTH_PORT\", \"--p2p-port\", \"$P2P_PORT\", \"--discovery-port\", \"$DISC_PORT\", \"--frontend-port\", \"$FE_PORT\", \"--metrics-port\", \"$METRICS_PORT\", \"--auth-rpc-jwt-path\", \"/app/startup/jwt_$i.hex\", \"--bootstrap-registry\", \"http://metrics-server:9100\"]"
+
+    if [ "$TYPE" = "windows" ]; then
+        # Ensure we always use the full path to wine in the command if it's being overridden or used as argument
+        # Actually, since it's an argument to the ENTRYPOINT, it should NOT include wine again.
+        # But if for some reason ENTRYPOINT is bypassed, we might have issues.
+        # We'll stick to the args and ensure the ENTRYPOINT is correct in the Dockerfile.
+        :
+    fi
+
     if [ -n "$REGISTRY" ]; then
         IMAGE_STR="image: ${REGISTRY}/wasix-eth-${TYPE}:${TAG}"
         BUILD_STR="# Using registry image"
@@ -134,7 +151,7 @@ for i in $(seq 0 $((NODES - 1))); do
       - "$METRICS_PORT:$METRICS_PORT"
     networks:
       - blockchain-net
-    command: ["run", "--data-dir", "/app/data", "--genesis-path", "/app/startup/genesis.json", "--peer-name", "$PEER_NAME", "--rpc-port", "$ETH_PORT", "--auth-rpc-port", "$AUTH_PORT", "--p2p-port", "$P2P_PORT", "--discovery-port", "$DISC_PORT", "--frontend-port", "$FE_PORT", "--metrics-port", "$METRICS_PORT", "--auth-rpc-jwt-path", "/app/startup/jwt_$i.hex", "--bootstrap-registry", "http://metrics-server:9100"]
+    $COMMAND_STR
 
 EOF
 
@@ -180,21 +197,19 @@ EOF
       - blockchain-net
     depends_on:
       - cl-node-$i
-    command: >
-      lighthouse vc
-      --beacon-nodes http://cl-node-$i:5052
-      --testnet-dir /app/startup
-      --datadir /root/.lighthouse
-      --debug-level info
-      --suggested-fee-recipient 0x0000000000000000000000000000000000000000
-      --init-slashing-protection
-
+    entrypoint:
+      - sh
+      - -c
+      - |
+        lighthouse --testnet-dir /app/startup account validator import --directory /app/startup/validators/node_$i --password-file /app/startup/validators/node_$i/password.txt --datadir /root/.lighthouse --reuse-password &&
+        lighthouse vc --beacon-nodes http://cl-node-$i:5052 --testnet-dir /app/startup --datadir /root/.lighthouse --debug-level info --suggested-fee-recipient 0x0000000000000000000000000000000000000000 --init-slashing-protection
 EOF
     fi
 done
 
 echo "Generated $COMPOSE_FILE"
-echo "Starting network..."
-docker-compose -f "$COMPOSE_FILE" up -d
+echo "Starting network (forcing rebuild)..."
+COMPOSE_CMD=$(get_compose_cmd)
+$COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build
 
-echo "Network started. Use 'docker-compose -f $COMPOSE_FILE logs -f' to see logs."
+echo "Network started. Use '$COMPOSE_CMD -f $COMPOSE_FILE logs -f' to see logs."

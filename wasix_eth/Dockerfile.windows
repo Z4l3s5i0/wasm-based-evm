@@ -14,4 +14,7 @@ RUN dpkg --add-architecture i386 && \
 COPY target/release/wasix_eth.exe /app/wasix_eth.exe
 
 # Set the entrypoint to run with Wine
-ENTRYPOINT ["wine", "/app/wasix_eth.exe"]
+# We use /usr/bin/wine directly. Some systems might need wine64 or wine.
+# We also set WINEDEBUG=-all to reduce noise.
+ENV WINEDEBUG=-all
+ENTRYPOINT ["/usr/bin/wine", "/app/wasix_eth.exe"]

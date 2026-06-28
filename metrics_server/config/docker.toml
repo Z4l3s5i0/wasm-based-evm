@@ -12,8 +12,8 @@ max_concurrent_nodes = 16
 [bootstrap]
 enabled = true
 network = "devnet"
-chain_id = 31133
-registration_token = "<REGISTRATION_TOKEN>"
+chain_id = 12345
+registration_token = ""
 probe_interval_seconds = 15
 stale_after_seconds = 60
 max_bootstrap_nodes = 32

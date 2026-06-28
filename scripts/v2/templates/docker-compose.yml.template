@@ -1,3 +1,7 @@
+networks:
+  blockchain-net:
+    driver: bridge
+
 services:
   # Metrics Server
   metrics-server:
@@ -7,13 +11,8 @@ services:
     ports:
       - "9100:9100"
     volumes:
-      - ./metrics_server/config:/app/config
       - ./metrics_server/data:/app/data
     networks:
       - blockchain-net
-
-networks:
-  blockchain-net:
-    driver: bridge
 
 # Individual node services will be appended here by the generator script

@@ -22,7 +22,6 @@ done
 
 mkdir -p "$OUTPUT_DIR"
 GENESIS_TIMESTAMP=$(date +%s)
-GENESIS_TIMESTAMP=$((GENESIS_TIMESTAMP + GENESIS_DELAY))
 
 echo "Generating config for Chain ID: $CHAIN_ID, Nodes: $NUM_NODES"
 
@@ -41,8 +40,10 @@ ALTAIR_FORK_EPOCH=0
 BELLATRIX_FORK_EPOCH=0
 TERMINAL_TOTAL_DIFFICULTY=0
 CAPELLA_FORK_EPOCH=0
+DENCUN_FORK_EPOCH=99999999
+CANCUN_FORK_EPOCH=99999999
 GENESIS_TIMESTAMP=$GENESIS_TIMESTAMP
-GENESIS_DELAY=0
+GENESIS_DELAY=$GENESIS_DELAY
 GENESIS_GASLIMIT=60000000
 SECONDS_PER_ETH1_BLOCK=14
 EOF
@@ -65,19 +66,57 @@ for i in $(seq 0 $((NUM_NODES - 1))); do
     openssl rand -hex 32 > "$OUTPUT_DIR/jwt_$i.hex"
 done
 
-# 4. Generate Validator Keys (using lighthouse or deposit-cli)
-# For simplicity in this script, we assume the user has lighthouse installed
-# or we can use a dockerized version.
-echo "Generating validator keys..."
-mkdir -p "$OUTPUT_DIR/validators"
+# 4. Generate Validator Keys (using ethstaker-deposit-cli)
+echo "Generating validator keys using ethstaker-deposit-cli..."
+mkdir -p "$OUTPUT_DIR/validator_keys"
+echo "password12345" > "$OUTPUT_DIR/password.txt"
 
-# We generate keys for all nodes, even if only 50% use them in a particular experiment.
-# This gives us flexibility.
-docker run --rm -v "$(pwd)/$OUTPUT_DIR:/data" sigp/lighthouse lighthouse \
-  account validator mk-test-net \
-  --spec mainnet \
-  --validator-count "$NUM_NODES" \
-  --testnet-dir /data \
-  --node-dir /data/validators
+# Run deposit-cli
+# We use a dockerized version for consistency. 
+# Note: existing-mnemonic is used to derive keys from the shared MNEMONIC.
+# We pipe the password and index twice to handle confirmation prompts.
+# We run as the current user to avoid permission issues with generated files.
+printf "%s\n%s\n\n" "0" "password12345" | \
+docker run --rm -i -u "$(id -u):$(id -g)" -v "$(pwd)/$OUTPUT_DIR:/data" ghcr.io/ethstaker/ethstaker-deposit-cli:latest --language English existing-mnemonic \
+  --mnemonic="$MNEMONIC" \
+  --num_validators="$NUM_NODES" \
+  --validator_start_index=0 \
+  --mnemonic_language="english" \
+  --chain=mainnet \
+  --keystore_password="password12345" \
+  --folder=/data
+
+# Organize keys into node-specific folders for compatibility with start_remote.sh
+mkdir -p "$OUTPUT_DIR/validators"
+# Fix permissions for the generated keys
+chmod -R 755 "$OUTPUT_DIR/validator_keys"
+for i in $(seq 0 $((NUM_NODES - 1))); do
+    NODE_DIR="$OUTPUT_DIR/validators/node_$i"
+    mkdir -p "$NODE_DIR"
+    # In a real scenario, we'd distribute keys properly. 
+    # Here we just put one key per node for simplicity, or all if preferred.
+    # To match lighthouse generate behavior, we'll put all keys in each node or 
+    # distribute them. The lighthouse command used --count $NUM_NODES for each? 
+    # No, it generated $NUM_NODES total.
+    
+    # Let's copy the entire validator_keys to each node for now, 
+    # or just keep them in validator_keys and let the orchestrator handle it.
+    # The start_remote.sh expects node_$i to have the keys.
+done
+
+# Actually, let's just move the generated keys to a common place and 
+# let the user/orchestrator decide. 
+# But to keep start_remote.sh working:
+if [ -d "$OUTPUT_DIR/validator_keys" ]; then
+    # Distribute keys: node_0 gets first key, node_1 gets second, etc.
+    KEYS=($(ls "$OUTPUT_DIR/validator_keys"/keystore-m_*.json))
+    for i in $(seq 0 $((NUM_NODES - 1))); do
+        if [ $i -lt ${#KEYS[@]} ]; then
+            mkdir -p "$OUTPUT_DIR/validators/node_$i"
+            cp "${KEYS[$i]}" "$OUTPUT_DIR/validators/node_$i/"
+            cp "$OUTPUT_DIR/password.txt" "$OUTPUT_DIR/validators/node_$i/"
+        fi
+    done
+fi
 
 echo "Configuration generated in $OUTPUT_DIR"

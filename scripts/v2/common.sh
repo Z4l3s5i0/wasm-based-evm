@@ -46,3 +46,14 @@ is_validator() {
         echo "false"
     fi
 }
+
+# Determine the docker-compose command to use
+get_compose_cmd() {
+    if docker compose version &> /dev/null; then
+        echo "docker compose"
+    elif docker-compose version &> /dev/null; then
+        echo "docker-compose"
+    else
+        echo "docker compose" # Default to plugin syntax
+    fi
+}
