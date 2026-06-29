@@ -54,6 +54,7 @@ pub struct ExperimentConfig {
 pub struct NodeConfig {
     pub id: String,
     pub network: String,
+    pub chain_id: Option<u64>,
     pub client: String,
     pub rpc_url: String,
     pub metrics_url: Option<String>,
@@ -76,6 +77,7 @@ pub struct Experiment {
 pub struct Node {
     pub id: String,
     pub network: String,
+    pub chain_id: Option<u64>,
     pub client: String,
     pub rpc_url: String,
     pub metrics_url: Option<String>,
@@ -104,6 +106,7 @@ pub enum NodeStatus {
 pub struct RegisterNodeRequest {
     pub id: String,
     pub network: String,
+    pub chain_id: Option<u64>,
     pub client: String,
     pub rpc_url: String,
     pub metrics_url: Option<String>,
@@ -115,6 +118,7 @@ pub struct RegisterNodeRequest {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct BootstrapNodesQuery {
     pub network: Option<String>,
+    pub chain_id: Option<u64>,
     pub limit: Option<usize>,
     pub exclude_id: Option<String>,
 }
@@ -123,6 +127,7 @@ pub struct BootstrapNodesQuery {
 pub struct BootstrapNode {
     pub id: String,
     pub network: String,
+    pub chain_id: Option<u64>,
     pub client: String,
     pub p2p_addr: Option<String>,
     pub discovery_addr: Option<String>,

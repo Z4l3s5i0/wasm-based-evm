@@ -23,6 +23,7 @@ use serde::{Deserialize, Serialize};
 struct RegisterNodeRequest {
     pub id: String,
     pub network: String,
+    pub chain_id: Option<u64>,
     pub client: String,
     pub rpc_url: String,
     pub metrics_url: Option<String>,
@@ -34,6 +35,8 @@ struct RegisterNodeRequest {
 #[derive(Serialize, Deserialize, Debug)]
 struct BootstrapNode {
     pub id: String,
+    pub network: String,
+    pub chain_id: Option<u64>,
     pub enode: Option<String>,
     pub p2p_addr: Option<String>,
     pub discovery_addr: Option<String>,
@@ -192,6 +195,7 @@ impl App {
         let register_req = RegisterNodeRequest {
             id: node_id.to_string(),
             network: format!("{}", chain_id),
+            chain_id: Some(chain_id),
             client: "wasix-eth".to_string(),
             rpc_url,
             metrics_url: Some(format!("http://{}:{}", 
@@ -220,9 +224,10 @@ impl App {
 
         // 2. Fetch bootstrap nodes
         info!("[Bootstrap] Fetching bootstrap nodes from registry...");
-        let fetch_url = format!("{}/api/bootstrap/nodes?network={}&exclude_id={}", 
+        let fetch_url = format!("{}/api/bootstrap/nodes?network={}&chain_id={}&exclude_id={}", 
             registry_url.trim_end_matches('/'),
             register_req.network,
+            chain_id,
             node_id);
 
         match client.get(&fetch_url).send().await {

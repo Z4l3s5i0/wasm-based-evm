@@ -52,10 +52,11 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     }
 
     for node_config in &config.nodes {
-        info!("Adding static node: {} (network={}, rpc={})", node_config.id, node_config.network, node_config.rpc_url);
+        info!("Adding static node: {} (network={}, chain_id={:?}, rpc={})", node_config.id, node_config.network, node_config.chain_id, node_config.rpc_url);
         let node = Node {
             id: node_config.id.clone(),
             network: node_config.network.clone(),
+            chain_id: node_config.chain_id,
             client: node_config.client.clone(),
             rpc_url: node_config.rpc_url.clone(),
             metrics_url: node_config.metrics_url.clone(),

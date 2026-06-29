@@ -22,14 +22,18 @@ pub async fn register_node_handler(
 ) -> impl IntoResponse {
 
     if payload.id.is_empty() || payload.network.is_empty() || payload.rpc_url.is_empty() {
+        tracing::warn!("Registration request missing required fields: {:?}", payload);
         state.telemetry.bootstrap_registration_requests.with_label_values(&["bad_request"]).inc();
         return (StatusCode::BAD_REQUEST, "id, network, and rpc_url are required").into_response();
     }
+
+    info!(node_id = payload.id, network = payload.network, "Received registration request");
 
     if let Some(bootstrap) = &state.config.bootstrap {
         // Enforce network if configured
         if let Some(expected_network) = &bootstrap.network {
             if &payload.network != expected_network {
+                tracing::warn!(node_id = payload.id, got = payload.network, expected = expected_network, "Network mismatch during registration");
                 state.telemetry.bootstrap_registration_requests.with_label_values(&["bad_request"]).inc();
                 return (StatusCode::BAD_REQUEST, format!("Invalid network. Expected: {}", expected_network)).into_response();
             }
@@ -60,10 +64,12 @@ pub async fn register_node_handler(
             };
 
             if !check_url(&payload.rpc_url) {
+                tracing::warn!(node_id = payload.id, url = payload.rpc_url, "Loopback or private IP rejected for rpc_url");
                 return (StatusCode::BAD_REQUEST, "Loopback or private IPs not allowed for rpc_url").into_response();
             }
             if let Some(m_url) = &payload.metrics_url {
                 if !check_url(m_url) {
+                    tracing::warn!(node_id = payload.id, url = m_url, "Loopback or private IP rejected for metrics_url");
                     return (StatusCode::BAD_REQUEST, "Loopback or private IPs not allowed for metrics_url").into_response();
                 }
             }
@@ -87,11 +93,13 @@ pub async fn register_node_handler(
 
             if let Some(p2p) = &payload.p2p_addr {
                 if !check_socket(p2p) {
+                    tracing::warn!(node_id = payload.id, addr = p2p, "Loopback or private IP rejected for p2p_addr");
                     return (StatusCode::BAD_REQUEST, "Loopback or private IPs not allowed for p2p_addr").into_response();
                 }
             }
             if let Some(disc) = &payload.discovery_addr {
                 if !check_socket(disc) {
+                    tracing::warn!(node_id = payload.id, addr = disc, "Loopback or private IP rejected for discovery_addr");
                     return (StatusCode::BAD_REQUEST, "Loopback or private IPs not allowed for discovery_addr").into_response();
                 }
             }
@@ -99,6 +107,7 @@ pub async fn register_node_handler(
     }
 
     if !payload.rpc_url.starts_with("http://") && !payload.rpc_url.starts_with("https://") {
+        tracing::warn!(node_id = payload.id, rpc_url = payload.rpc_url, "rpc_url missing protocol");
         state.telemetry.bootstrap_registration_requests.with_label_values(&["bad_request"]).inc();
         return (StatusCode::BAD_REQUEST, "rpc_url must start with http:// or https://").into_response();
     }
@@ -106,6 +115,7 @@ pub async fn register_node_handler(
     let node = Node {
         id: payload.id.clone(),
         network: payload.network,
+        chain_id: payload.chain_id,
         client: payload.client,
         rpc_url: payload.rpc_url,
         metrics_url: payload.metrics_url,
@@ -158,6 +168,7 @@ pub async fn bootstrap_nodes_handler(
 ) -> impl IntoResponse {
     info!(
         network = ?query.network,
+        chain_id = ?query.chain_id,
         exclude_id = ?query.exclude_id,
         "Fetching bootstrap nodes"
     );
@@ -171,6 +182,11 @@ pub async fn bootstrap_nodes_handler(
                     }
                     if let Some(network) = &query.network {
                         if &n.network != network {
+                            return false;
+                        }
+                    }
+                    if let Some(chain_id) = query.chain_id {
+                        if n.chain_id != Some(chain_id) {
                             return false;
                         }
                     }
@@ -206,6 +222,7 @@ pub async fn bootstrap_nodes_handler(
                 .map(|n| BootstrapNode {
                     id: n.id,
                     network: n.network,
+                    chain_id: n.chain_id,
                     client: n.client,
                     p2p_addr: n.p2p_addr,
                     discovery_addr: n.discovery_addr,

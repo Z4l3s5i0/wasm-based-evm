@@ -11,8 +11,8 @@ max_concurrent_nodes = 16
 
 [bootstrap]
 enabled = true
-network = "devnet"
-chain_id = 12345
+# network = "12345" # Comment out to allow any network for local dev
+# chain_id = 12345
 registration_token = ""
 probe_interval_seconds = 15
 stale_after_seconds = 60
