@@ -4,6 +4,7 @@ use anyhow::{Result, Context};
 use redb::{Database, TableDefinition, ReadableDatabase, ReadableTable};
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
+use tracing::debug;
 
 const EXPERIMENTS_TABLE: TableDefinition<&str, &str> = TableDefinition::new("experiments");
 const NODES_TABLE: TableDefinition<&str, &str> = TableDefinition::new("nodes");
@@ -55,6 +56,7 @@ impl RedbStore {
 
 impl MetricsStore for RedbStore {
     fn upsert_experiment(&self, experiment: &Experiment) -> Result<()> {
+        debug!(id = %experiment.id, "Upserting experiment in redb");
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(EXPERIMENTS_TABLE)?;
@@ -66,6 +68,7 @@ impl MetricsStore for RedbStore {
     }
 
     fn upsert_node(&self, node: &Node) -> Result<()> {
+        debug!(id = %node.id, "Upserting node in redb");
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(NODES_TABLE)?;
@@ -105,6 +108,7 @@ impl MetricsStore for RedbStore {
         last_successful_probe_ms: Option<i64>,
         consecutive_failures: u32,
     ) -> Result<()> {
+        debug!(id = %id, status = ?status, "Updating node status in redb");
         let write_txn = self.db.begin_write()?;
         {
             let mut table = write_txn.open_table(NODES_TABLE)?;

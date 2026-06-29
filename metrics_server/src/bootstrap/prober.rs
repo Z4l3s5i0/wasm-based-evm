@@ -7,7 +7,7 @@ use crate::time::now_ms;
 use anyhow::Result;
 use std::time::Duration;
 use tokio::sync::watch;
-use tracing::{info, error, debug};
+use tracing::{info, error, warn, debug};
 use std::collections::HashMap;
 use std::sync::Arc;
 
@@ -120,14 +120,20 @@ impl BootstrapProber {
                 };
 
                 if chain_match {
+                    if status != NodeStatus::Active {
+                        info!(node_id = node.id, "Node is now ACTIVE");
+                    }
                     status = NodeStatus::Active;
                     consecutive_failures = 0;
                     last_successful_probe_ms = Some(now);
                     telemetry.bootstrap_probe_total.with_label_values(&["success"]).inc();
                 } else {
-                    debug!("Node {} has wrong chain ID: {} (expected {:?})", node.id, chain_id, bootstrap_config.chain_id);
+                    warn!(node_id = node.id, chain_id, expected = ?bootstrap_config.chain_id, "Node has wrong chain ID");
                     consecutive_failures += 1;
                     if consecutive_failures >= 3 {
+                        if status != NodeStatus::Unhealthy {
+                             info!(node_id = node.id, "Node is now UNHEALTHY (wrong chain id)");
+                        }
                         status = NodeStatus::Unhealthy;
                     } else {
                         status = NodeStatus::Stale;
@@ -141,11 +147,17 @@ impl BootstrapProber {
                 
                 // Transition logic
                 if consecutive_failures >= 3 {
+                    if status != NodeStatus::Unhealthy {
+                        info!(node_id = node.id, error = %e, "Node is now UNHEALTHY (probe failed)");
+                    }
                     status = NodeStatus::Unhealthy;
                 } else {
                     // Check if stale based on time
                     if let Some(last_success) = last_successful_probe_ms {
                         if (now - last_success) > (bootstrap_config.stale_after_seconds as i64 * 1000) {
+                            if status != NodeStatus::Stale {
+                                info!(node_id = node.id, "Node is now STALE (timeout)");
+                            }
                             status = NodeStatus::Stale;
                         }
                     } else {

@@ -56,8 +56,11 @@ impl CollectorScheduler {
                         }
                     };
 
+                    info!("Tick: starting collection for {} nodes", nodes.len());
+
                     for node in nodes {
                         if node.status == NodeStatus::Disabled {
+                            info!(node_id = node.id, "Skipping disabled node");
                             continue;
                         }
 
@@ -68,15 +71,18 @@ impl CollectorScheduler {
 
                         let rpc = rpc_collector.clone();
                         let scraper = prometheus_scraper.clone();
+                        let node_id = node.id.clone();
                         
                         tokio::spawn(async move {
                             let _permit = permit;
+                            info!(node_id = %node_id, "Collecting node metrics");
                             if let Err(e) = rpc.collect_node(node.clone()).await {
                                 error!("RPC collection failed for node {}: {}", node.id, e);
                             }
                             if let Err(e) = scraper.scrape_node(node.clone()).await {
                                 error!("Prometheus scrape failed for node {}: {}", node.id, e);
                             }
+                            info!(node_id = %node_id, "Node metrics collection finished");
                         });
                     }
                 }

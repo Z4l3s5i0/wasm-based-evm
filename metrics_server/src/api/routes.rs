@@ -1,4 +1,5 @@
 use axum::{routing::{get, post}, Router, extract::DefaultBodyLimit};
+use tower_http::trace::TraceLayer;
 use crate::api::{ApiState, handlers};
 
 pub fn router(state: ApiState) -> Router {
@@ -13,5 +14,6 @@ pub fn router(state: ApiState) -> Router {
         .route("/api/metrics/latest", get(handlers::latest_metrics_handler))
         .route("/api/metrics/range", get(handlers::range_metrics_handler))
         .layer(DefaultBodyLimit::max(1024 * 64)) // 64KB limit for all requests
+        .layer(TraceLayer::new_for_http())
         .with_state(state)
 }

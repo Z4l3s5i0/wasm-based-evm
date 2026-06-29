@@ -3,6 +3,7 @@ use crate::storage::MetricsStore;
 use anyhow::Result;
 use std::collections::HashMap;
 use std::sync::RwLock;
+use tracing::debug;
 
 pub struct MemoryStore {
     experiments: RwLock<HashMap<String, Experiment>>,
@@ -26,12 +27,14 @@ impl MemoryStore {
 
 impl MetricsStore for MemoryStore {
     fn upsert_experiment(&self, experiment: &Experiment) -> Result<()> {
+        debug!(id = %experiment.id, "Upserting experiment");
         let mut experiments = self.experiments.write().unwrap();
         experiments.insert(experiment.id.clone(), experiment.clone());
         Ok(())
     }
 
     fn upsert_node(&self, node: &Node) -> Result<()> {
+        debug!(id = %node.id, "Upserting node");
         let mut nodes = self.nodes.write().unwrap();
         nodes.insert(node.id.clone(), node.clone());
         Ok(())
@@ -56,6 +59,7 @@ impl MetricsStore for MemoryStore {
         last_successful_probe_ms: Option<i64>,
         consecutive_failures: u32,
     ) -> Result<()> {
+        debug!(id = %id, status = ?status, "Updating node status");
         let mut nodes = self.nodes.write().unwrap();
         if let Some(node) = nodes.get_mut(id) {
             node.status = status;

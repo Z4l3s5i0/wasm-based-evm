@@ -18,7 +18,7 @@ FROM debian:bookworm-slim
 WORKDIR /app
 
 # Install runtime dependencies
-RUN apt-get update && apt-get install -y libssl3 ca-certificates && rm -rf /var/lib/apt/lists/*
+RUN apt-get update && apt-get install -y libssl3 ca-certificates curl && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary from the builder stage
 COPY --from=builder /app/target/release/metrics_server /app/metrics_server
@@ -32,6 +32,9 @@ RUN mkdir -p /app/data
 
 # Expose the API port
 EXPOSE 9100
+
+# Default logging level
+ENV RUST_LOG=info
 
 # Set the entrypoint
 ENTRYPOINT ["/app/metrics_server"]

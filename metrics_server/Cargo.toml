@@ -16,8 +16,8 @@ reqwest = { version = "0.11.8", features = ["json", "serde_json"] }
 prometheus = "0.14.0"
 redb = "4.1.0"
 md5 = "0.7"
-tower = "0.5.3"
-tower-http = "0.5.2"
+tower = { version = "0.5.3", features = ["full"] }
+tower-http = { version = "0.5.2", features = ["trace"] }
 
 axum = "0.8"
 toml = "0.9"

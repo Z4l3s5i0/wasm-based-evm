@@ -5,33 +5,21 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use tracing::info;
 use crate::api::ApiState;
 use crate::model::{MetricRangeQuery, MetricRangeResponse, MetricPoint, RegisterNodeRequest, Node, NodeStatus, BootstrapNodesQuery, BootstrapNode, BootstrapNodesResponse};
 use serde_json::json;
 use crate::time::now_ms;
 
 pub async fn health_handler() -> impl IntoResponse {
+    info!("Health check requested");
     Json(json!({"status": "ok"}))
 }
 
 pub async fn register_node_handler(
     State(state): State<ApiState>,
-    headers: axum::http::HeaderMap,
     Json(payload): Json<RegisterNodeRequest>,
 ) -> impl IntoResponse {
-    if let Some(bootstrap) = &state.config.bootstrap {
-        if let Some(token) = &bootstrap.registration_token {
-            let auth_ok = headers.get("Authorization")
-                .and_then(|h| h.to_str().ok())
-                .map(|s| s.starts_with("Bearer ") && &s[7..] == token)
-                .unwrap_or(false);
-            
-            if !auth_ok {
-                state.telemetry.bootstrap_registration_requests.with_label_values(&["unauthorized"]).inc();
-                return (StatusCode::UNAUTHORIZED, "Invalid registration token").into_response();
-            }
-        }
-    }
 
     if payload.id.is_empty() || payload.network.is_empty() || payload.rpc_url.is_empty() {
         state.telemetry.bootstrap_registration_requests.with_label_values(&["bad_request"]).inc();
@@ -130,6 +118,8 @@ pub async fn register_node_handler(
         consecutive_failures: 0,
     };
 
+    info!(node_id = node.id, network = node.network, "Registering node");
+
     match state.store.upsert_node(&node) {
         Ok(_) => {
             state.telemetry.bootstrap_registration_requests.with_label_values(&["accepted"]).inc();
@@ -166,6 +156,11 @@ pub async fn bootstrap_nodes_handler(
     State(state): State<ApiState>,
     Query(query): Query<BootstrapNodesQuery>,
 ) -> impl IntoResponse {
+    info!(
+        network = ?query.network,
+        exclude_id = ?query.exclude_id,
+        "Fetching bootstrap nodes"
+    );
     match state.store.list_nodes() {
         Ok(nodes) => {
             let mut filtered: Vec<Node> = nodes
@@ -226,6 +221,7 @@ pub async fn bootstrap_nodes_handler(
 }
 
 pub async fn metrics_handler(State(state): State<ApiState>) -> impl IntoResponse {
+    info!("Internal metrics requested");
     match state.telemetry.gather_text() {
         Ok(text) => (
             StatusCode::OK,
@@ -240,6 +236,7 @@ pub async fn metrics_handler(State(state): State<ApiState>) -> impl IntoResponse
 }
 
 pub async fn nodes_handler(State(state): State<ApiState>) -> impl IntoResponse {
+    info!("Listing all nodes requested");
     match state.store.list_nodes() {
         Ok(nodes) => Json(nodes).into_response(),
         Err(e) => (
@@ -250,6 +247,7 @@ pub async fn nodes_handler(State(state): State<ApiState>) -> impl IntoResponse {
 }
 
 pub async fn bootstrap_status_handler(State(state): State<ApiState>) -> impl IntoResponse {
+    info!("Bootstrap status requested");
     match state.store.list_nodes() {
         Ok(nodes) => {
             let mut counts = json!({
@@ -285,6 +283,7 @@ pub async fn bootstrap_status_handler(State(state): State<ApiState>) -> impl Int
 }
 
 pub async fn experiments_handler(State(state): State<ApiState>) -> impl IntoResponse {
+    info!("Listing experiments requested");
     match state.store.list_experiments() {
         Ok(exps) => Json(exps).into_response(),
         Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, format!("Failed to list experiments: {}", e)).into_response(),

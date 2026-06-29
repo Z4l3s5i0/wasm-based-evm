@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 use anyhow::{Result, anyhow};
 use std::time::Duration;
+use tracing::{debug, error};
 
 #[derive(Clone)]
 pub struct EthereumRpcClient {
@@ -27,20 +28,29 @@ impl EthereumRpcClient {
             "id": 1
         });
 
+        debug!(method = method, url = %self.rpc_url, "Sending RPC request");
+
         let response = self.http.post(&self.rpc_url)
             .json(&body)
             .send()
             .await?;
 
+        if !response.status().is_success() {
+            error!(method = method, status = %response.status(), "RPC request failed with HTTP error");
+            return Err(anyhow!("HTTP error: {}", response.status()));
+        }
+
         let res_json: Value = response.json().await?;
         
         if let Some(error) = res_json.get("error") {
+            error!(method = method, error = %error, "RPC returned error");
             return Err(anyhow!("RPC error: {}", error));
         }
 
         let result = res_json.get("result")
             .ok_or_else(|| anyhow!("missing 'result' in RPC response"))?;
 
+        debug!(method = method, "RPC request successful");
         Ok(serde_json::from_value(result.clone())?)
     }
 

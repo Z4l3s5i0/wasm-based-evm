@@ -11,21 +11,35 @@ use tokio::sync::watch;
 use tracing::{info, error};
 
 pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
-    let config = config::load_config(&config_path)?;
-    config::validate_config(&config)?;
-
     if let Err(e) = tracing_subscriber::fmt::try_init() {
         eprintln!("Failed to initialize tracing: {}", e);
     }
+
+    let config = config::load_config(&config_path)?;
+    config::validate_config(&config)?;
+
     info!("Starting metrics_server with config: {:?}", config_path);
+    info!("Storage configuration: {:?}", config.storage);
+    info!("Collection configuration: interval={}s, timeout={}ms, max_concurrent={}", 
+        config.collection.interval_seconds, 
+        config.collection.timeout_ms, 
+        config.collection.max_concurrent_nodes
+    );
 
     let store: SharedStore = match config.storage.kind.as_str() {
-        "memory" => Arc::new(MemoryStore::new()),
-        "redb" => Arc::new(RedbStore::new(&config.storage.path)?),
+        "memory" => {
+            info!("Using memory storage");
+            Arc::new(MemoryStore::new())
+        },
+        "redb" => {
+            info!("Using redb storage at {}", config.storage.path);
+            Arc::new(RedbStore::new(&config.storage.path)?)
+        },
         _ => unreachable!(),
     };
 
     if let Some(exp_config) = &config.experiment {
+        info!("Experiment configured: {} ({})", exp_config.name, exp_config.id);
         let experiment = Experiment {
             id: exp_config.id.clone(),
             name: exp_config.name.clone(),
@@ -38,6 +52,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     }
 
     for node_config in &config.nodes {
+        info!("Adding static node: {} (network={}, rpc={})", node_config.id, node_config.network, node_config.rpc_url);
         let node = Node {
             id: node_config.id.clone(),
             network: node_config.network.clone(),
@@ -66,7 +81,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     let app = routes::router(state);
     let addr: std::net::SocketAddr = config.server.bind_addr.parse()?;
     
-    info!("HTTP API listening on {}", addr);
+    info!("HTTP API listening on http://{}", addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     
     let (shutdown_tx, shutdown_rx) = watch::channel(false);

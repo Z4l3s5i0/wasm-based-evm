@@ -76,20 +76,56 @@ COMPOSE_FILE="docker-compose.v2.yml"
 
 # Prepare variables for template replacement
 if [ -n "$REGISTRY" ]; then
-    export METRICS_IMAGE="${REGISTRY}/wasix-eth-metrics:${TAG}"
-    export METRICS_BUILD_SECTION="# Registry image used"
+    METRICS_IMAGE="${REGISTRY}/wasix-eth-metrics:${TAG}"
+    METRICS_BUILD_SECTION="# Registry image used"
 else
-    export METRICS_IMAGE="wasix-eth-metrics:latest"
-    export METRICS_BUILD_SECTION="build:
-      context: ./metrics_server
-      dockerfile: Dockerfile"
+    METRICS_IMAGE="wasix-eth-metrics:latest"
+    METRICS_BUILD_SECTION="build:\n      context: ./metrics_server\n      dockerfile: Dockerfile"
 fi
 
-# Use envsubst if available, otherwise just copy and manual replace (simplified for script)
-# Using sed for compatibility
-sed -e "s|\${METRICS_IMAGE:-wasix-eth-metrics:latest}|$METRICS_IMAGE|g" \
-    -e "s|\${METRICS_BUILD_SECTION:-# No build section}|$METRICS_BUILD_SECTION|g" \
-    "$(dirname "$0")/templates/docker-compose.yml.template" > "$COMPOSE_FILE"
+    # Use sed to replace placeholders
+    # We use a literal newline replacement for METRICS_BUILD_SECTION
+    # Use a temporary file for sed operations to avoid issues with complex replacements
+    cp "$(dirname "$0")/templates/docker-compose.yml.template" "$COMPOSE_FILE"
+    
+    # Use a robust way to replace placeholders including multi-line ones
+    # We'll use a temporary script to perform the replacement to avoid escaping hell
+    # Use python3 or python depending on what's available
+    PYTHON_CMD="python3"
+    if ! command -v python3 &> /dev/null; then
+        PYTHON_CMD="python"
+    fi
+    
+    # We use a literal EOF to prevent shell variable expansion inside the python script
+    # except for the ones we explicitly want to pass in.
+    # Actually, it's easier to pass them as environment variables.
+    export METRICS_IMAGE_ESC="$METRICS_IMAGE"
+    export METRICS_BUILD_SECTION_ESC="$METRICS_BUILD_SECTION"
+    export COMPOSE_FILE_ESC="$COMPOSE_FILE"
+
+    cat <<'EOF_PY' > replace_placeholders.py
+import os
+import sys
+
+compose_file = os.environ.get("COMPOSE_FILE_ESC")
+metrics_image = os.environ.get("METRICS_IMAGE_ESC")
+metrics_build = os.environ.get("METRICS_BUILD_SECTION_ESC")
+
+with open(compose_file, "r") as f:
+    content = f.read()
+
+content = content.replace("${METRICS_IMAGE:-wasix-eth-metrics:latest}", metrics_image)
+# Handle the literal \n in METRICS_BUILD_SECTION if it came from the shell
+content = content.replace("${METRICS_BUILD_SECTION:-# No build section}", metrics_build.replace("\\n", "\n"))
+
+with open(compose_file, "w") as f:
+    f.write(content)
+EOF_PY
+    $PYTHON_CMD replace_placeholders.py
+    rm replace_placeholders.py
+
+    # Clear trailing whitespace or artifacts from replacements
+    sed -i 's/[[:space:]]*$//' "$COMPOSE_FILE"
 
 # Track assigned types
 node_types=()
@@ -115,7 +151,15 @@ for i in $(seq 0 $((NODES - 1))); do
     mkdir -p "$DATA_DIR/el" "$DATA_DIR/cl"
 
     # Append Execution Client
+    COMMAND_STR="command: [\"run\", \"--config\", \"config/docker.toml\"]"
+    # Actually, we want to override the command for el-node to register to metrics-server
+    # But el-node command is different. 
+    # Wait, el-node-i command:
     COMMAND_STR="command: [\"run\", \"--data-dir\", \"/app/data\", \"--genesis-path\", \"/app/startup/genesis.json\", \"--peer-name\", \"$PEER_NAME\", \"--eth-rpc-port\", \"$ETH_PORT\", \"--auth-rpc-port\", \"$AUTH_PORT\", \"--p2p-port\", \"$P2P_PORT\", \"--discovery-port\", \"$DISC_PORT\", \"--frontend-port\", \"$FE_PORT\", \"--metrics-port\", \"$METRICS_PORT\", \"--auth-rpc-jwt-path\", \"/app/startup/jwt_$i.hex\", \"--bootstrap-registry\", \"http://metrics-server:9100\"]"
+
+    DEPENDS_ON="depends_on:
+      metrics-server:
+        condition: service_started"
 
     if [ "$TYPE" = "windows" ]; then
         # Ensure we always use the full path to wine in the command if it's being overridden or used as argument
@@ -152,6 +196,7 @@ for i in $(seq 0 $((NODES - 1))); do
     networks:
       - blockchain-net
     $COMMAND_STR
+    $DEPENDS_ON
 
 EOF
 
