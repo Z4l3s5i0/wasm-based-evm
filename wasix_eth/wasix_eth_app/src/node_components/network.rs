@@ -54,9 +54,10 @@ impl NetworkPayload {
             chain_config,
         ));
 
+        let bind_ip = config.ext_ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
         let discovery_v4 = Arc::new(DiscoveryV4Service::new(
             identity.clone(),
-            &format!("0.0.0.0:{}", config.discovery_port),
+            &format!("{}:{}", bind_ip, config.discovery_port),
             config.discovery_port,
             config.p2p_port,
             config.bootnodes.clone(),
@@ -92,10 +93,11 @@ impl NetworkPayload {
         info!("[P2P Server] Starting server task on {}:{}", bind_ip, p2p_port);
         tasks.push(tokio::spawn(async move {
             info!("[P2P Server] Server task running");
-            if let Ok(server) = P2pServer::new(&format!("{}:{}", bind_ip, p2p_port), p2p_registry).await {
+            let addr = format!("{}:{}", bind_ip, p2p_port);
+            if let Ok(server) = P2pServer::new(&addr, p2p_registry).await {
                 server.run().await;
             } else {
-                wasix_eth_utils::error!("[P2P Server] Failed to initialize server");
+                wasix_eth_utils::error!("[P2P Server] Failed to initialize server on {}", addr);
             }
         }));
 

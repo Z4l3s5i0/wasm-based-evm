@@ -84,7 +84,19 @@ impl DiscoveryV4Service {
     }
 
     pub async fn start(self: Arc<Self>) {
-        info!("[DiscoveryV4] Starting UDP service on {}", self.socket.local_addr().unwrap());
+        let local_addr = self.socket.local_addr().unwrap();
+        let port = if local_addr.port() == 0 {
+            self.local_endpoint.udp_port
+        } else {
+            local_addr.port()
+        };
+
+        let display_addr = if let Some(ext_ip) = self.local_endpoint.ip.into() {
+            format!("{}:{}", ext_ip, port)
+        } else {
+            format!("{}:{}", local_addr.ip(), port)
+        };
+        info!("[DiscoveryV4] Starting UDP service on {}", display_addr);
         
         // Initial bootstrap
         for bootnode in &self.bootnodes {

@@ -17,7 +17,10 @@ pub struct P2pServer {
 
 impl P2pServer {
     pub async fn new(addr: &str, peer_registry: Arc<PeerRegistry>) -> anyhow::Result<Self> {
-        let listener = TcpListener::bind(addr).await?;
+        let listener = TcpListener::bind(addr).await.map_err(|e| {
+            wasix_eth_utils::error!("[P2P Server] Failed to bind to {}: {}", addr, e);
+            e
+        })?;
         Ok(Self {
             listener,
             peer_registry,
@@ -25,7 +28,23 @@ impl P2pServer {
     }
 
     pub async fn run(self) {
-        info!("[P2P Server] Listening on {}", self.listener.local_addr().unwrap());
+        let local_addr = self.listener.local_addr().unwrap();
+        let port = if local_addr.port() == 0 {
+            self.peer_registry.p2p_port()
+        } else {
+            local_addr.port()
+        };
+
+        let mut display_addr = format!("{}:{}", local_addr.ip(), port);
+        
+        // If it's 0.0.0.0, try to get the external IP from the registry
+        if local_addr.ip().is_unspecified() {
+            if let Some(ext_ip) = self.peer_registry.ext_ip {
+                display_addr = format!("{}:{}", ext_ip, port);
+            }
+        }
+        
+        info!("[P2P Server] Listening on {}", display_addr);
         loop {
             match self.listener.accept().await {
                 Ok((stream, addr)) => {
