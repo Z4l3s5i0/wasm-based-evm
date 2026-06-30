@@ -54,10 +54,10 @@ impl NetworkPayload {
             chain_config,
         ));
 
-        let bind_ip = config.ext_ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+        let bind_ip_discovery = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
         let discovery_v4 = Arc::new(DiscoveryV4Service::new(
             identity.clone(),
-            &format!("{}:{}", bind_ip, config.discovery_port),
+            &format!("{}:{}", bind_ip_discovery, config.discovery_port),
             config.discovery_port,
             config.p2p_port,
             config.bootnodes.clone(),
@@ -88,7 +88,7 @@ impl NetworkPayload {
 
         let p2p_registry = self.peer_manager.registry.clone();
         let p2p_port = p2p_registry.p2p_port();
-        let bind_ip = p2p_registry.ext_ip.unwrap_or(std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0)));
+        let bind_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
         
         info!("[P2P Server] Starting server task on {}:{}", bind_ip, p2p_port);
         tasks.push(tokio::spawn(async move {

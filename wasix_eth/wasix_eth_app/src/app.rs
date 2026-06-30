@@ -389,7 +389,7 @@ impl AppBuilder {
     }
     pub fn setup_addresses(&self, args: &Args) -> (SocketAddr, SocketAddr) {
         info!("[App] Setting up RPC servers addresses");
-        let bind_ip = args.common.ext_ip.unwrap_or("0.0.0.0".parse().unwrap());
+        let bind_ip = "0.0.0.0".parse::<std::net::IpAddr>().unwrap();
         let eth_rpc_addr = SocketAddr::new(bind_ip, args.common.eth_rpc_port);
         let auth_rpc_addr = SocketAddr::new(bind_ip, args.common.auth_rpc_port);
         info!("[App] Addresses: Eth RPC: {}, Auth RPC: {}", eth_rpc_addr, auth_rpc_addr);

@@ -1,18 +1,18 @@
+use crate::discovery::kbuckets::{NodeRecord, RoutingTable};
+use crate::discovery::v4::{Enode, Enr, FindNode, NodeEndpoint, Packet, Ping, RawPacket};
+use alloy_primitives::{B256, B512};
+use alloy_rlp::Encodable;
+use anyhow::Result;
 use std::collections::HashMap;
 use std::net::SocketAddr;
+use std::str::FromStr;
 use std::sync::Arc;
+use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
-use anyhow::Result;
-use wasix_eth_utils::{debug, error, info};
-use wasix_eth_utils::metrics::P2P_DISCOVERY_NODES_FOUND;
 use wasix_eth_utils::identity::Identity;
-use std::str::FromStr;
-use crate::discovery::kbuckets::{RoutingTable, NodeRecord};
-use alloy_primitives::{B256, B512};
-use std::time::{SystemTime, UNIX_EPOCH, Duration, Instant};
-use alloy_rlp::Encodable;
-use crate::discovery::v4::{NodeEndpoint, Enode, Ping, RawPacket, Packet, Enr, FindNode};
+use wasix_eth_utils::metrics::P2P_DISCOVERY_NODES_FOUND;
+use wasix_eth_utils::{error, info};
 
 pub struct DiscoveryV4Service {
     pub(crate) local_identity: Identity,
