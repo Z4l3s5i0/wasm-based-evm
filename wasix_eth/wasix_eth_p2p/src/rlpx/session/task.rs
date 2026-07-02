@@ -68,7 +68,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
     pub async fn run(mut self) {
         info!("[P2P Session] Started session for peer {}", self.peer_id);
         let mut ping_interval = tokio::time::interval(Duration::from_secs(10)); // Reduced from 20s
-
+        
         loop {
             tokio::select! {
                 _ = ping_interval.tick() => {
@@ -80,33 +80,27 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                         break;
                     }
                 }
-                res = tokio::time::timeout(Duration::from_secs(30), self.stream.read_message()) => { // Reduced from 60s
+                res = self.stream.read_message() => {
                     {
                         let mut la = self.last_activity.lock().await;
                         *la = Instant::now();
                     }
+                    
                     match res {
-                        Ok(Ok((id, payload))) => {
+                        Ok((id, payload)) => {
                             P2P_MESSAGES_RECEIVED.inc();
                             if !self.handle_message(id, payload).await {
                                 info!("[P2P Session] Protocol requested disconnect for {}", self.peer_id);
-                                self.notify_disconnect().await;
                                 break;
                             }
                         }
-                        Ok(Err(e)) => {
+                        Err(e) => {
                             let err_str = e.to_string();
                             if err_str.contains("early eof") || err_str.contains("Broken pipe") || err_str.contains("Connection reset") {
                                 debug!("[P2P Session] Connection closed by remote peer {}: {}", self.peer_id, err_str);
                             } else {
                                 error!("[P2P Session] Read error from {}: {}", self.peer_id, e);
                             }
-                            self.notify_disconnect().await;
-                            break;
-                        }
-                        Err(_) => {
-                            error!("[P2P Session] Read timeout from {}", self.peer_id);
-                            self.notify_disconnect().await;
                             break;
                         }
                     }

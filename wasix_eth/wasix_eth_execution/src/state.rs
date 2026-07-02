@@ -41,11 +41,6 @@ impl<'a> StateApplier<'a> {
                 U256::from_be_bytes(bytes)
             };
 
-            if address == &coinbase {
-                debug!("[Execution] Balance update for MINER {:?}: old={:?}, new={:?}", addr, trie_account.balance, final_balance);
-            } else {
-                debug!("[Execution] Balance update: addr={:?}, old={:?}, new={:?}", addr, trie_account.balance, final_balance);
-            }
             trie_account.balance = final_balance;
             self.batch.update_account(addr, trie_account)?;
         }
@@ -140,12 +135,6 @@ impl<'a> StateApplier<'a> {
         reason: &str,
     ) -> Result<TrieAccount> {
         Ok(self.batch.account(addr, state_root)?.unwrap_or_else(|| {
-            debug!(
-                "[Execution] IMPLICIT ACCOUNT MATERIALIZATION:
-                    addr={:?}
-                    reason={}",
-                addr, reason
-            );
             TrieAccount {
                 nonce: 0,
                 balance: U256::ZERO,

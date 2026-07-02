@@ -67,7 +67,7 @@ impl EthDatabase {
             // 1. Process allocations and calculate state root
             let state_root = self.calculate_genesis_state(&write_provider, &genesis)?;
             
-            info!("[Storage] Genesis initialized with state root: {:?}", state_root);
+            debug!("[Storage] Genesis initialized with state root: {:?}", state_root);
 
             // 2. Build Genesis Block
             let timestamp = genesis.timestamp.unwrap_or(U256::ZERO).to::<u64>();
@@ -108,9 +108,9 @@ impl EthDatabase {
             let genesis_header_clone = genesis_header.clone();
             let block_number = genesis_header_clone.number;
 
-            info!("[Storage] Genesis header (RLP): {:?}", wasix_eth_types::hex::encode(alloy_rlp::encode(&genesis_header)));
+            debug!("[Storage] Genesis header (RLP): {:?}", wasix_eth_types::hex::encode(alloy_rlp::encode(&genesis_header)));
             let genesis_hash = genesis_header.clone().seal_slow();
-            info!("[Storage] Genesis hash (calculated): {:?}", genesis_hash);
+            debug!("[Storage] Genesis hash (calculated): {:?}", genesis_hash);
 
             // 3. Persist Block and Metadata
             write_provider.insert_header(genesis_hash.hash(), genesis_header_clone)?;
@@ -135,8 +135,8 @@ impl EthDatabase {
             write_provider.set_metadata("genesis_hash".to_string(), genesis_hash.hash().as_slice().to_vec().into())?;
             write_provider.set_metadata("canonical_0".to_string(), genesis_hash.hash().as_slice().to_vec().into())?;
 
-            info!("[Storage] Genesis state root (calculated): {:?}", state_root);
-            info!("[Storage] Genesis initialized with hash: {:?}", genesis_hash);
+            debug!("[Storage] Genesis state root (calculated): {:?}", state_root);
+            info!("[Storage] Genesis initialized with hash: {:?}", genesis_hash.hash());
         } else {
             debug!("[Storage] Genesis already initialized");
         }
@@ -161,7 +161,7 @@ impl EthDatabase {
         let eip161 = fork >= Hardfork::SpuriousDragon;
         let beneficiary = genesis.coinbase.unwrap_or(Address::ZERO);
 
-        info!("[Execution] GENESIS STATE CALCULATION BEGIN");
+        debug!("[Execution] GENESIS STATE CALCULATION BEGIN");
         debug!("[Execution] GENESIS CONFIG: coinbase={:?}, number={}, timestamp={}, fork={:?}, eip161={}", beneficiary, number, timestamp, fork, eip161);
 
         for (address, account) in &genesis.alloc {

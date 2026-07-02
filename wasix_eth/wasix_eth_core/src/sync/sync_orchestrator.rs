@@ -1,4 +1,6 @@
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::time::sleep;
 use wasix_eth_types::Result;
 use wasix_eth_types::sync::SyncProvider;
 use wasix_eth_utils::{debug, error, info};
@@ -31,6 +33,8 @@ impl SyncOrchestrator {
             if let Err(e) = self.evaluate_and_trigger().await {
                 error!("[SyncOrchestrator] Error triggering sync: {}", e);
             }
+
+            sleep(Duration::from_secs(1)).await;
         }
     }
 

@@ -4,6 +4,7 @@ pub mod task;
 use std::sync::Arc;
 use std::time::Instant;
 use tokio::sync::{mpsc, Mutex};
+use tokio::time::{timeout, Duration};
 use anyhow::Result;
 use wasix_eth_types::sync::P2pSession;
 use wasix_eth_types::async_trait;
@@ -76,35 +77,45 @@ impl P2pSession for PeerSession {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetHeaders { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        rx.await.map_err(|_| anyhow::anyhow!("Response channel closed"))?
+        timeout(Duration::from_secs(10), rx).await
+            .map_err(|_| anyhow::anyhow!("GetBlockHeaders timed out"))?
+            .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
 
     async fn get_block_bodies(&self, request: RequestPair<GetBlockBodies>) -> Result<RequestPair<BlockBodies>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetBodies { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        rx.await.map_err(|_| anyhow::anyhow!("Response channel closed"))?
+        timeout(Duration::from_secs(10), rx).await
+            .map_err(|_| anyhow::anyhow!("GetBlockBodies timed out"))?
+            .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
 
     async fn get_pooled_transactions(&self, request: RequestPair<GetPooledTransactions>) -> Result<RequestPair<PooledTransactions>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetPooledTransactions { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        rx.await.map_err(|_| anyhow::anyhow!("Response channel closed"))?
+        timeout(Duration::from_secs(10), rx).await
+            .map_err(|_| anyhow::anyhow!("GetPooledTransactions timed out"))?
+            .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
 
     async fn get_receipts(&self, request: RequestPair<GetReceipts>) -> Result<RequestPair<Receipts>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetReceipts { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        rx.await.map_err(|_| anyhow::anyhow!("Response channel closed"))?
+        timeout(Duration::from_secs(10), rx).await
+            .map_err(|_| anyhow::anyhow!("GetReceipts timed out"))?
+            .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
 
     async fn get_node_data(&self, request: RequestPair<GetNodeData>) -> Result<RequestPair<NodeData>> {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetNodeData { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        rx.await.map_err(|_| anyhow::anyhow!("Response channel closed"))?
+        timeout(Duration::from_secs(10), rx).await
+            .map_err(|_| anyhow::anyhow!("GetNodeData timed out"))?
+            .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
 
     async fn eth_status(&self) -> Option<Status> {

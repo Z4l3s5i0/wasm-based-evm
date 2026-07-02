@@ -68,6 +68,15 @@ impl PeerManager {
         } else {
             self.discovery_manager.start(None).await;
         }
+
+        // Start Health Check Loop
+        let registry = self.registry.clone();
+        tokio::spawn(async move {
+            loop {
+                registry.cleanup_stale_peers().await;
+                tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+            }
+        });
     }
 
     pub async fn set_gossip_tx(&self, tx: mpsc::Sender<wasix_eth_types::p2p::GossipMessage>) {

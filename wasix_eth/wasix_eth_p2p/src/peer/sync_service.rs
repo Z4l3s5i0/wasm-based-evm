@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::sync::{mpsc, RwLock};
+use tokio::time::{timeout, Duration};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_types::{ConsensusTransaction, Typed2718};
 use alloy_rlp::Encodable;
@@ -31,6 +32,16 @@ pub struct SyncService {
 }
 
 impl SyncService {
+    async fn sync_provider(&self) -> Option<Arc<dyn SyncProvider>> {
+        match timeout(Duration::from_secs(2), self.sync.read()).await {
+            Ok(guard) => Some(guard.clone()),
+            Err(_) => {
+                error!("[Sync Service] Timed out waiting for sync provider lock");
+                None
+            }
+        }
+    }
+
     pub fn new(
         sync: Arc<dyn SyncProvider>,
         read_provider: DatabaseReadProvider,
@@ -53,21 +64,26 @@ impl SyncService {
     }
 
     pub async fn set_provider(&self, sync: Arc<dyn SyncProvider>) {
-        *self.sync.write().await = sync;
+        match timeout(Duration::from_secs(2), self.sync.write()).await {
+            Ok(mut guard) => {
+                *guard = sync;
+            }
+            Err(_) => {
+                error!("[Sync Service] Timed out waiting to replace sync provider");
+            }
+        }
     }
 
     pub async fn start(&self) {
         let gossip_tx = self.peer_gossip_tx.clone();
         self.peer_manager.set_gossip_tx(gossip_tx).await;
-        
+    
         let service = self.clone();
         tokio::spawn(async move {
             let mut rx = service.peer_gossip_rx.lock().await.take().expect("Gossip already started");
             while let Some(msg) = rx.recv().await {
-                let service = service.clone();
-                tokio::spawn(async move {
-                    service.handle_peer_gossip(msg).await;
-                });
+                service.handle_peer_gossip(msg).await;
+                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             }
         });
     }
@@ -76,17 +92,23 @@ impl SyncService {
         match msg {
             GossipMessage::NewBlock(peer_id, m) => {
                 info!("[Sync Service] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), peer_id);
-                let sync = self.sync.read().await;
+                let Some(sync) = self.sync_provider().await else {
+                    return;
+                };
                 let _ = sync.process_gossip_block(m.block, m.total_difficulty).await;
             }
             GossipMessage::Transactions(peer_id, m) => {
                 info!("[Sync Service] Received {} Transactions from {}", m.0.len(), peer_id);
-                let sync = self.sync.read().await;
+                let Some(sync) = self.sync_provider().await else {
+                    return;
+                };
                 let _ = sync.process_gossip_transactions(m.0).await;
             }
             GossipMessage::NewPooledTransactionHashes(peer_id, m) => {
                 info!("[Sync Service] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), peer_id);
-                let sync = self.sync.read().await;
+                let Some(sync) = self.sync_provider().await else {
+                    return;
+                };
                 if let Err(e) = sync.handle_announced_pooled_transactions(peer_id, m.hashes).await {
                     error!("[Sync Service] Failed to handle announced pooled transactions: {}", e);
                 }
@@ -320,7 +342,9 @@ impl SyncService {
         self.peer_manager.dialer.dial_peer(addr);
     }
     pub async fn trigger_sync(&self) -> Result<()> {
-        let sync = self.sync.read().await;
+        let Some(sync) = self.sync_provider().await else {
+            return Err(anyhow::anyhow!("Timed out waiting for sync provider"));
+        };
         sync.trigger_sync().await
     }
 

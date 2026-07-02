@@ -1,6 +1,6 @@
 use std::net::SocketAddr;
 use std::sync::Arc;
-use tokio::time::{Duration, sleep};
+use tokio::time::{Duration, sleep, timeout};
 use std::time::Instant;
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::PeerDiscoveryWriter;
@@ -16,14 +16,16 @@ use crate::rlpx::message::{RequestPair};
 use crate::rlpx::PeerSession;
 use crate::discovery::v4::Enode;
 use wasix_eth_types::p2p::{StatusMessage, GetBlockHeaders};
-use std::collections::HashMap;
-use tokio::sync::Mutex;
+use std::collections::{HashMap, HashSet};
+use tokio::sync::{Mutex, Semaphore};
 
 pub struct PeerDialer {
     registry: Arc<PeerRegistry>,
     write_provider: DatabaseWriteProvider,
     dial_attempts: Arc<Mutex<HashMap<SocketAddr, (u32, bool)>>>,
     protocol_penalties: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
+    in_flight: Arc<Mutex<HashSet<SocketAddr>>>,
+    dial_limit: Arc<Semaphore>,
 }
 
 impl PeerDialer {
@@ -33,6 +35,8 @@ impl PeerDialer {
             write_provider,
             dial_attempts: Arc::new(Mutex::new(HashMap::new())),
             protocol_penalties: Arc::new(Mutex::new(HashMap::new())),
+            in_flight: Arc::new(Mutex::new(HashSet::new())),
+            dial_limit: Arc::new(Semaphore::new(1)),
         }
     }
 
@@ -58,16 +62,54 @@ impl PeerDialer {
             write_provider: self.write_provider.clone(),
             dial_attempts: self.dial_attempts.clone(),
             protocol_penalties: self.protocol_penalties.clone(),
+            in_flight: self.in_flight.clone(),
+            dial_limit: self.dial_limit.clone(),
         }
     }
 
     async fn dial_peer_internal(&self, addr: SocketAddr) {
+        let permit = match tokio::time::timeout(Duration::from_secs(20), self.dial_limit.clone().acquire_owned()).await {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(_)) => {
+                error!("[P2P Dialer] Dial semaphore closed, skipping {}", addr);
+                return;
+            }
+            Err(_) => {
+                debug!("[P2P Dialer] Timed out waiting for dial slot to {}", addr);
+                return;
+            }
+        };
+
+        {
+            let mut in_flight = self.in_flight.lock().await;
+            if !in_flight.insert(addr) {
+                debug!("[P2P Dialer] Dial to {} already in progress, skipping duplicate", addr);
+                drop(permit);
+                return;
+            }
+        }
+
+        let result = self.dial_peer_internal_guarded(addr).await;
+
+        {
+            let mut in_flight = self.in_flight.lock().await;
+            in_flight.remove(&addr);
+        }
+
+        drop(permit);
+
+        if let Err(e) = result {
+            error!("[P2P Dialer] Dial task failed for {}: {}", addr, e);
+        }
+    }
+
+    async fn dial_peer_internal_guarded(&self, addr: SocketAddr) -> anyhow::Result<()> {
         {
             let penalties = self.protocol_penalties.lock().await;
             if let Some(penalty_until) = penalties.get(&addr) {
                 if Instant::now() < *penalty_until {
                     debug!("[P2P Dialer] Peer {} is penalized, skipping dial", addr);
-                    return;
+                    return Ok(());
                 }
             }
         }
@@ -92,13 +134,13 @@ impl PeerDialer {
         let peer_pool = if let Ok(pool) = self.registry.read_provider.get_active_peers() {
             pool
         } else {
-            return;
+            return Ok(());
         };
 
         for entry in peer_pool.iter() {
             if entry.discovery_addr == addr {
                 debug!("[P2P Dialer] Already bonded to peer at {} (ID: {}), skipping dial", addr, entry.peer_id);
-                return;
+                return Ok(());
             }
         }
 
@@ -109,19 +151,30 @@ impl PeerDialer {
             None
         };
 
-        match RlpxStream::connect(&addr.to_string(), &local_sk, &alloy_primitives::B512::ZERO).await {
-            Ok(stream) => {
+        let connect_result = timeout(
+            Duration::from_secs(5),
+            RlpxStream::connect(&addr.to_string(), &local_sk, &alloy_primitives::B512::ZERO),
+        )
+        .await;
+
+        match connect_result {
+            Ok(Ok(rlpx_stream)) => {
+                info!("[P2P Dialer] TCP connection established to {}", addr);
+
                 let handshake = Handshake::new(self.registry.clone());
                 let remote_pk = if let Some(pk) = remote_pk_res {
                     pk
                 } else {
                     error!("[P2P Dialer] Cannot dial {} without remote public key", addr);
                     P2P_CONNECTION_ERRORS_TOTAL.inc();
-                    return;
+                    return Ok(());
                 };
 
-                match handshake.handle_outbound(stream, &remote_pk).await {
-                    Ok((rlpx_stream, remote_status)) => {
+                match timeout(
+                    Duration::from_secs(10),
+                    handshake.handle_outbound(rlpx_stream, &remote_pk),
+                ).await {
+                    Ok(Ok((rlpx_stream, remote_status))) => {
                         let remote_id_hex = format!("{:?}", rlpx_stream.remote_id.unwrap());
                         let remote_block_hash = match &remote_status {
                             StatusMessage::Legacy(s) => s.blockhash,
@@ -129,9 +182,11 @@ impl PeerDialer {
                         };
                         debug!("[P2P Dialer] Handshake successful with {} (PeerId: {}). Remote head: {:?}", addr, remote_id_hex, remote_block_hash);
 
+                        tokio::task::yield_now().await;
+
                         if peer_pool.iter().any(|e| e.peer_id == remote_id_hex) {
                             debug!("[P2P Dialer] Already bonded to peer {}", remote_id_hex);
-                            return;
+                            return Ok(());
                         }
 
                         if let Err(e) = self.write_provider.register_peer(
@@ -163,7 +218,10 @@ impl PeerDialer {
                                     reverse: false,
                                 },
                             };
-                            if let Ok(response) = session_clone.get_block_headers(request).await {
+                            if let Ok(Ok(response)) = timeout(
+                                Duration::from_secs(5),
+                                session_clone.get_block_headers(request),
+                            ).await {
                                 if let Some(header) = response.message.0.first() {
                                     let mut h_guard = session_clone.best_height.lock().await;
                                     if header.number > *h_guard {
@@ -175,12 +233,13 @@ impl PeerDialer {
                         });
 
                         self.registry.register_session_arc(remote_id_hex.clone(), session).await;
+                        tokio::task::yield_now().await;
                         info!("[P2P Dialer] Successfully bonded with {} (PeerId: {})", addr, remote_id_hex);
                         
                         // Success! Reset attempts
                         self.dial_attempts.lock().await.remove(&addr);
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         error!("[P2P Dialer] Handshake failed with {}: {}", addr, e);
                         P2P_CONNECTION_ERRORS_TOTAL.inc();
                         let err_str = e.to_string();
@@ -198,9 +257,13 @@ impl PeerDialer {
                             penalties.insert(addr, Instant::now() + Duration::from_secs(60));
                         }
                     }
+                    Err(_) => {
+                        error!("[P2P Dialer] Handshake timed out with {}", addr);
+                        P2P_CONNECTION_ERRORS_TOTAL.inc();
+                    }
                 }
             }
-            Err(e) => {
+            Ok(Err(e)) => {
                 error!("[P2P Dialer] Connection failed with {}: {}", addr, e);
                 P2P_CONNECTION_ERRORS_TOTAL.inc();
                 let is_eof = e.to_string().contains("early eof");
@@ -211,6 +274,12 @@ impl PeerDialer {
                     }
                 }
             }
+            Err(_) => {
+                error!("[P2P Dialer] TCP connect timed out with {}", addr);
+                P2P_CONNECTION_ERRORS_TOTAL.inc();
+            }
         }
+
+        Ok(())
     }
 }

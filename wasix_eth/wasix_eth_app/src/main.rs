@@ -2,8 +2,13 @@ use clap::Parser;
 use wasix_eth_app::app::App;
 use wasix_eth_app::cli::{self, Commands};
 
-#[tokio::main]
+#[tokio::main(flavor = "current_thread")]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+
+    std::panic::set_hook(Box::new(|panic_info| {
+        eprintln!("[PANIC] {}", panic_info);
+    }));
+
     let mut args = cli::Args::parse();
 
     match &args.command {

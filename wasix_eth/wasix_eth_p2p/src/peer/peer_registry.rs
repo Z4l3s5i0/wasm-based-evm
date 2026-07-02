@@ -14,7 +14,8 @@ use wasix_eth_types::p2p::{DisconnectReason, StatusMessage};
 use crate::rlpx::PeerSession;
 use std::collections::HashMap;
 use alloy_primitives::B256;
-use tokio::sync::{mpsc, Mutex};
+use tokio::sync::{mpsc, Mutex, MutexGuard};
+use tokio::time::{timeout, Duration};
 
 #[derive(Clone)]
 pub struct PeerRegistry {
@@ -37,7 +38,9 @@ pub struct PeerRegistry {
 impl PeerProvider for PeerRegistry {
     async fn get_active_peers(&self) -> Result<Vec<PeerEntry>> {
         let mut peers = self.read_provider.get_active_peers()?;
-        let sessions = self.active_sessions.lock().await;
+        let Some(sessions) = self.active_sessions_guard().await else {
+            return Ok(peers);
+        };
 
         for (peer_id, session) in sessions.iter() {
             if !peers.iter().any(|p| p.peer_id == *peer_id) {
@@ -52,7 +55,7 @@ impl PeerProvider for PeerRegistry {
     }
 
     async fn get_session(&self, peer_id: &str) -> Option<Arc<dyn P2pSession>> {
-        let sessions = self.active_sessions.lock().await;
+        let sessions = self.active_sessions_guard().await?;
         sessions.get(peer_id).cloned().map(|s| s as Arc<dyn P2pSession>)
     }
 
@@ -67,6 +70,16 @@ impl PeerProvider for PeerRegistry {
 }
 
 impl PeerRegistry {
+    async fn active_sessions_guard(&self) -> Option<MutexGuard<'_, HashMap<String, Arc<PeerSession>>>> {
+        match timeout(Duration::from_secs(2), self.active_sessions.lock()).await {
+            Ok(guard) => Some(guard),
+            Err(_) => {
+                debug!("[P2P Registry] Timed out waiting for active_sessions lock");
+                None
+            }
+        }
+    }
+
     pub fn new(
         read_provider: DatabaseReadProvider,
         write_provider: DatabaseWriteProvider,
@@ -100,11 +113,22 @@ impl PeerRegistry {
         tokio::spawn(async move {
             while let Some(peer_id) = disconnect_rx.recv().await {
                 info!("[P2P] Peer disconnected: {}", peer_id);
-                let mut sessions = registry_for_disconnect.active_sessions.lock().await;
-                if sessions.remove(&peer_id).is_some() {
-                    CONNECTED_PEERS.set(sessions.len() as f64);
+
+                let removed_len = if let Some(mut sessions) = registry_for_disconnect.active_sessions_guard().await {
+                    if sessions.remove(&peer_id).is_some() {
+                        Some(sessions.len())
+                    } else {
+                        None
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(len) = removed_len {
+                    CONNECTED_PEERS.set(len as f64);
                     P2P_PEERS_DISCONNECTED.inc();
                 }
+
                 let _ = registry_for_disconnect.write_provider.remove_peer(peer_id);
             }
         });
@@ -165,74 +189,115 @@ impl PeerRegistry {
     }
 
     pub async fn get_session(&self, peer_id: &str) -> Option<Arc<dyn P2pSession>> {
-        let sessions = self.active_sessions.lock().await;
+        let sessions = self.active_sessions_guard().await?;
         sessions.get(peer_id).cloned().map(|s| s as Arc<dyn P2pSession>)
     }
 
     pub async fn get_all_sessions(&self) -> Vec<Arc<PeerSession>> {
-        let sessions = self.active_sessions.lock().await;
+        let Some(sessions) = self.active_sessions_guard().await else {
+            return Vec::new();
+        };
         sessions.values().cloned().collect()
     }
 
     pub async fn register_session_arc(&self, peer_id: String, session: Arc<PeerSession>) {
         info!("[P2P Registry] Registering session for peer {}", peer_id);
-        let mut sessions = self.active_sessions.lock().await;
-        
-        if let Some(existing) = sessions.get(&peer_id) {
-            // Deterministic Tie-Breaking:
-            // Use lexicographical comparison of PeerIDs to decide which node should keep the outbound connection.
-            // Rule: The node with the HIGHER PeerID is the designated initiator.
-            // If we are the node with the higher PeerID, we prefer our OUTBOUND session.
-            // If we are the node with the lower PeerID, we prefer our INBOUND session.
-            
-            let local_id = self.local_peer_id();
-            let we_are_higher = local_id > peer_id;
-            
-            let keep_existing = if we_are_higher {
-                existing.is_initiator
-            } else {
-                !existing.is_initiator
+
+        let mut reject_new = false;
+        let mut disconnect_existing: Option<Arc<PeerSession>> = None;
+        let mut connected_len = None;
+        let mut inserted = false;
+
+        {
+            let Some(mut sessions) = self.active_sessions_guard().await else {
+                let _ = session.disconnect(DisconnectReason::TooManyPeers).await;
+                return;
             };
 
-            if keep_existing {
-                info!("[P2P Registry] Deterministic tie-break: keeping existing session for peer {}, rejecting new one (local higher: {}, existing initiator: {})", 
-                    peer_id, we_are_higher, existing.is_initiator);
-                let _ = session.disconnect(DisconnectReason::AlreadyConnected).await;
-                return;
+            if let Some(existing) = sessions.get(&peer_id) {
+                let local_id = self.local_peer_id();
+                let we_are_higher = local_id > peer_id;
+
+                let keep_existing = if we_are_higher {
+                    existing.is_initiator
+                } else {
+                    !existing.is_initiator
+                };
+
+                if keep_existing {
+                    info!(
+                        "[P2P Registry] Deterministic tie-break: keeping existing session for peer {}, rejecting new one (local higher: {}, existing initiator: {})",
+                        peer_id, we_are_higher, existing.is_initiator
+                    );
+                    reject_new = true;
+                } else {
+                    info!(
+                        "[P2P Registry] Deterministic tie-break: replacing existing session for peer {} (local higher: {}, existing initiator: {}, new initiator: {})",
+                        peer_id, we_are_higher, existing.is_initiator, session.is_initiator
+                    );
+                    disconnect_existing = Some(existing.clone());
+                    sessions.insert(peer_id.clone(), session.clone());
+                    connected_len = Some(sessions.len());
+                    inserted = true;
+                }
             } else {
-                info!("[P2P Registry] Deterministic tie-break: replacing existing session for peer {} (local higher: {}, existing initiator: {}, new initiator: {})", 
-                    peer_id, we_are_higher, existing.is_initiator, session.is_initiator);
-                let _ = existing.disconnect(DisconnectReason::AlreadyConnected).await;
+                sessions.insert(peer_id.clone(), session.clone());
+                connected_len = Some(sessions.len());
+                inserted = true;
             }
         }
-        
-        sessions.insert(peer_id, session);
-        CONNECTED_PEERS.set(sessions.len() as f64);
-        P2P_PEERS_CONNECTED.inc();
+
+        if reject_new {
+            let _ = session.disconnect(DisconnectReason::AlreadyConnected).await;
+            return;
+        }
+
+        if let Some(existing) = disconnect_existing {
+            let _ = existing.disconnect(DisconnectReason::AlreadyConnected).await;
+        }
+
+        if inserted {
+            if let Some(len) = connected_len {
+                CONNECTED_PEERS.set(len as f64);
+            }
+            P2P_PEERS_CONNECTED.inc();
+        }
     }
 
     pub async fn cleanup_stale_peers(&self) {
         debug!("[P2P] Starting health check / cleanup cycle...");
         let sessions = self.get_all_sessions().await;
         let now = std::time::Instant::now();
-        let timeout = std::time::Duration::from_secs(30); // Reduced from 120s
+        let timeout_duration = std::time::Duration::from_secs(30);
 
         for session in sessions {
             let last_activity = *session.last_activity.lock().await;
-            if now.duration_since(last_activity) > timeout {
-                let status = session.status.lock().await;
-                let block_hash = status.as_ref().map(|s| match s {
-                    StatusMessage::Legacy(l) => l.blockhash,
-                    StatusMessage::Eth69(e) => e.blockhash,
-                });
-                debug!("[P2P] Peer with head {:?} stale for too long ({}s), disconnecting", block_hash, now.duration_since(last_activity).as_secs());
+            if now.duration_since(last_activity) > timeout_duration {
+                let block_hash = {
+                    let status = session.status.lock().await;
+                    status.as_ref().map(|s| match s {
+                        StatusMessage::Legacy(l) => l.blockhash,
+                        StatusMessage::Eth69(e) => e.blockhash,
+                    })
+                };
+
+                debug!(
+                    "[P2P] Peer with head {:?} stale for too long ({}s), disconnecting",
+                    block_hash,
+                    now.duration_since(last_activity).as_secs()
+                );
+
                 let _ = session.disconnect(DisconnectReason::PingTimeout).await;
             }
+
+            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
         }
     }
     pub async fn get_active_peers(&self) -> Result<Vec<PeerEntry>> {
         let mut peers = self.read_provider.get_active_peers()?;
-        let sessions = self.active_sessions.lock().await;
+        let Some(sessions) = self.active_sessions_guard().await else {
+            return Ok(peers);
+        };
 
         for (peer_id, session) in sessions.iter() {
             if !peers.iter().any(|p| p.peer_id == *peer_id) {

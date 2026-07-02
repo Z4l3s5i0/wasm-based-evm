@@ -1,11 +1,12 @@
 use std::sync::Arc;
 use std::net::SocketAddr;
 use tokio::net::TcpListener;
+use tokio::time::{timeout, Duration};
 use crate::rlpx::handshake::Handshake;
 use crate::rlpx::message::{RequestPair, GetBlockHeaders};
 use wasix_eth_types::sync::P2pSession;
 use crate::rlpx::session::PeerSession;
-use wasix_eth_utils::{error, info};
+use wasix_eth_utils::{debug, error, info};
 use crate::peer::peer_registry::PeerRegistry;
 use wasix_eth_types::p2p::StatusMessage;
 use wasix_eth_types::PeerEntry;
@@ -46,8 +47,12 @@ impl P2pServer {
         
         info!("[P2P Server] Listening on {}", display_addr);
         loop {
-            match self.listener.accept().await {
-                Ok((stream, addr)) => {
+            debug!("[P2P Server] Waiting for inbound TCP connection on {}", display_addr);
+
+            match timeout(Duration::from_secs(5), self.listener.accept()).await {
+                Ok(Ok((stream, addr))) => {
+                    info!("[P2P Server] Accepted TCP connection from {}", addr);
+
                     let registry = self.peer_registry.clone();
                     tokio::spawn(async move {
                         info!("[P2P Server] Handling connection from {}", addr);
@@ -56,16 +61,25 @@ impl P2pServer {
                         }
                     });
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     error!("[P2P Server] Accept error: {}", e);
                 }
+                Err(_) => {
+                    debug!("[P2P Server] Accept still waiting on {}", display_addr);
+                }
             }
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
     }
 
     async fn handle_connection(stream: tokio::net::TcpStream, addr: SocketAddr, registry: Arc<PeerRegistry>) -> anyhow::Result<()> {
         let handshake = Handshake::new(registry.clone());
-        let (rlpx_stream, remote_status_msg) = handshake.handle_inbound(stream).await?;
+        let (rlpx_stream, remote_status_msg) = timeout(
+            Duration::from_secs(10),
+            handshake.handle_inbound(stream),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("Inbound RLPx handshake timed out for {}", addr))??;
         
         let remote_id = rlpx_stream.remote_id.unwrap();
         let remote_id_hex = format!("{:?}", remote_id);
@@ -104,7 +118,10 @@ impl P2pServer {
                     reverse: false,
                 },
             };
-            if let Ok(response) = session_clone.get_block_headers(request).await {
+            if let Ok(Ok(response)) = timeout(
+                Duration::from_secs(5),
+                session_clone.get_block_headers(request),
+            ).await {
                 if let Some(header) = response.message.0.first() {
                     let mut h_guard = session_clone.best_height.lock().await;
                     if header.number > *h_guard {

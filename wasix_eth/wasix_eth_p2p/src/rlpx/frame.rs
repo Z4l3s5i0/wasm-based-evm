@@ -3,6 +3,7 @@ use aes::{Aes256, Aes256Enc};
 use anyhow::{anyhow, Result};
 use sha3::{Digest, Keccak256};
 use alloy_primitives::{B128, B256};
+use alloy_rlp::{Decodable, Encodable};
 
 pub struct MAC {
     secret: B256,
@@ -83,8 +84,10 @@ impl RlpxFrameCodec {
 
     pub fn write_frame(&mut self, msg_id: u8, payload: &[u8]) -> Vec<u8> {
         use aes::cipher::StreamCipher;
+        
+        // RLPx Frame payload: RLP(msg_id) || payload
         let mut rlp_id = Vec::new();
-        alloy_rlp::Encodable::encode(&msg_id, &mut rlp_id);
+        msg_id.encode(&mut rlp_id);
         
         let frame_size = rlp_id.len() + payload.len();
         let mut header = [0u8; 16];
@@ -102,7 +105,7 @@ impl RlpxFrameCodec {
         self.egress_mac.update_header(&header_ciphertext);
         let header_mac = self.egress_mac.digest();
         
-        let mut frame_ciphertext = Vec::with_capacity(frame_size);
+        let mut frame_ciphertext = Vec::with_capacity(frame_size + 16);
         frame_ciphertext.extend_from_slice(&rlp_id);
         frame_ciphertext.extend_from_slice(payload);
         

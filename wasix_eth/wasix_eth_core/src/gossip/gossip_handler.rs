@@ -39,6 +39,7 @@ impl GossipService {
                 Ok(_) => {},
                 Err(e) => error!("[Gossip] Error handling gossip message: {}", e),
             }
+            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     }
 

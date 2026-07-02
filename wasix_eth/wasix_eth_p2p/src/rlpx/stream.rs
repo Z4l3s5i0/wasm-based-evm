@@ -27,6 +27,14 @@ pub struct RlpxStream<S> {
     pub shared_capabilities: Vec<SharedCapability>,
     pub msg_buffer: VecDeque<(u8, Vec<u8>)>,
     pub initiator: bool,
+    pub(crate) read_buffer: Vec<u8>,
+    pub(crate) partial_frame: Option<PartialFrame>,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub enum PartialFrame {
+    ReadHeader,
+    ReadBody { frame_size: usize },
 }
 
 impl RlpxStream<TcpStream> {
@@ -41,6 +49,8 @@ impl RlpxStream<TcpStream> {
             shared_capabilities: Vec::new(),
             msg_buffer: VecDeque::new(),
             initiator: true,
+            read_buffer: Vec::new(),
+            partial_frame: None,
         })
     }
 
@@ -54,6 +64,8 @@ impl RlpxStream<TcpStream> {
             shared_capabilities: Vec::new(),
             msg_buffer: VecDeque::new(),
             initiator: false,
+            read_buffer: Vec::new(),
+            partial_frame: None,
         })
     }
 }
@@ -65,7 +77,7 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         
         // EIP-706: Hello(0x00) and Disconnect(0x01) are never compressed.
         // P2P messages 0x02-0x0f ARE compressed if snappy is enabled.
-        let final_payload = if self.snappy_enabled() && id > 1 {
+        let final_payload = if self.snappy_enabled() && id > 1 && id < 16 {
             snap::raw::Encoder::new().compress_vec(&payload)?
         } else {
             payload
@@ -144,37 +156,72 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         if let Some(msg) = self.msg_buffer.pop_front() {
             return Ok(msg);
         }
-        let codec = self.codec.as_mut().ok_or_else(|| anyhow!("Codec not initialized"))?;
-        
-        let mut header_ciphertext = [0u8; 16];
-        self.inner.read_exact(&mut header_ciphertext).await?;
-        let mut header_mac = [0u8; 16];
-        self.inner.read_exact(&mut header_mac).await?;
-        
-        let frame_size = codec.read_header(&header_ciphertext, &header_mac)?;
-        
-        // reth: MAX_PAYLOAD_SIZE = 16MB. FrameCodec already checks for 16MB.
-        const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
-        
-        let padded_size = (frame_size + 15) / 16 * 16;
-        let mut frame_ciphertext = vec![0u8; padded_size];
-        self.inner.read_exact(&mut frame_ciphertext).await?;
-        
-        let mut frame_mac = [0u8; 16];
-        self.inner.read_exact(&mut frame_mac).await?;
-        
-        let decrypted = codec.read_frame_payload(&frame_ciphertext, &frame_mac)?;
-        
-        // Truncate to frame_size to remove padding
-        if decrypted.len() < frame_size {
-            return Err(anyhow!("Decrypted frame too short: expected {}, got {}", frame_size, decrypted.len()));
-        }
-        let decrypted = &decrypted[..frame_size];
-        
-        let mut cursor = decrypted;
-        let msg_id = u8::decode(&mut cursor).map_err(|e| anyhow!("Failed to decode msg id: {}", e))?;
-        
-        wasix_eth_utils::debug!("[P2P Stream] Read message ID: {}, payload size: {}", msg_id, cursor.len());
+
+        let (msg_id, payload) = loop {
+            let state = self.partial_frame.as_ref().cloned().unwrap_or(PartialFrame::ReadHeader);
+            match state {
+                PartialFrame::ReadHeader => {
+                    // Header is 16 bytes + 16 bytes MAC
+                    let target = 32;
+                    while self.read_buffer.len() < target {
+                        let mut buf = [0u8; 1024];
+                        let n = self.inner.read(&mut buf).await?;
+                        if n == 0 {
+                            return Err(anyhow!("Connection closed while reading header"));
+                        }
+                        self.read_buffer.extend_from_slice(&buf[..n]);
+                    }
+
+                    let codec = self.codec.as_mut().ok_or_else(|| anyhow!("Codec not initialized"))?;
+                    let mut header_ciphertext = [0u8; 16];
+                    header_ciphertext.copy_from_slice(&self.read_buffer[0..16]);
+                    let mut header_mac = [0u8; 16];
+                    header_mac.copy_from_slice(&self.read_buffer[16..32]);
+
+                    let frame_size = codec.read_header(&header_ciphertext, &header_mac)?;
+                    
+                    // Consume the header from the buffer
+                    self.read_buffer.drain(..32);
+                    self.partial_frame = Some(PartialFrame::ReadBody { frame_size });
+                }
+                PartialFrame::ReadBody { frame_size } => {
+                    let padded_size = (frame_size + 15) / 16 * 16;
+                    // Body is padded_size + 16 bytes MAC
+                    let target = padded_size + 16;
+                    
+                    while self.read_buffer.len() < target {
+                        let mut buf = [0u8; 1024];
+                        let n = self.inner.read(&mut buf).await?;
+                        if n == 0 {
+                            return Err(anyhow!("Connection closed while reading body"));
+                        }
+                        self.read_buffer.extend_from_slice(&buf[..n]);
+                    }
+
+                    let codec = self.codec.as_mut().ok_or_else(|| anyhow!("Codec not initialized"))?;
+                    let frame_ciphertext = &self.read_buffer[0..padded_size];
+                    let mut frame_mac = [0u8; 16];
+                    frame_mac.copy_from_slice(&self.read_buffer[padded_size..padded_size + 16]);
+
+                    let decrypted = codec.read_frame_payload(frame_ciphertext, &frame_mac)?;
+                    
+                    if decrypted.len() < frame_size {
+                        return Err(anyhow!("Decrypted frame too short: expected {}, got {}", frame_size, decrypted.len()));
+                    }
+                    let decrypted_msg = &decrypted[..frame_size];
+                    let mut cursor = decrypted_msg;
+                    let msg_id = u8::decode(&mut cursor).map_err(|e| anyhow!("Failed to decode msg id: {}", e))?;
+                    let payload = cursor.to_vec();
+
+                    // Consume from buffer and reset state
+                    self.read_buffer.drain(..target);
+                    self.partial_frame = None;
+
+                    wasix_eth_utils::debug!("[P2P Stream] Read message ID: {}, payload size: {}", msg_id, payload.len());
+                    break (msg_id, payload);
+                }
+            }
+        };
 
         // Determine if this message should be decompressed
         // ID >= 0x10: Subprotocol messages (eth, snap, etc.)
@@ -182,12 +229,15 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         let is_subprotocol = msg_id >= 0x10;
         let is_compressible_p2p = msg_id > 0x01 && msg_id < 0x10;
 
-        let payload = if (is_subprotocol || is_compressible_p2p) && self.snappy_enabled() {
-            if cursor.is_empty() {
+        let final_payload = if (is_subprotocol || is_compressible_p2p) && self.snappy_enabled() {
+            if payload.is_empty() {
                 Vec::new()
             } else {
+                // reth: MAX_PAYLOAD_SIZE = 16MB
+                const MAX_PAYLOAD_SIZE: usize = 16 * 1024 * 1024;
+
                 // 1. Verify and retrieve the decompressed length safely
-                let decompressed_size = snap::raw::decompress_len(cursor).map_err(|e| {
+                let decompressed_size = snap::raw::decompress_len(&payload).map_err(|e| {
                     wasix_eth_utils::error!("[P2P Stream] Snappy decompress_len failed for msg_id {}: {}", msg_id, e);
                     P2pError::Codec(format!("Snappy decompress_len failed: {}", e))
                 })?;
@@ -197,16 +247,16 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
                 }
 
                 // 2. Perform decompression and propagate error if it fails
-                snap::raw::Decoder::new().decompress_vec(cursor).map_err(|e| {
+                snap::raw::Decoder::new().decompress_vec(&payload).map_err(|e| {
                     wasix_eth_utils::error!("[P2P Stream] Snappy decompression failed for msg_id {}: {}", msg_id, e);
                     P2pError::Decompression(e.to_string())
                 })?
             }
         } else {
             // Raw bytes for Hello, Disconnect, or if Snappy is not enabled
-            cursor.to_vec()
+            payload
         };
         
-        Ok((msg_id, payload))
+        Ok((msg_id, final_payload))
     }
 }

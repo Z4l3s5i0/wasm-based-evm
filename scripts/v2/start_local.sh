@@ -60,7 +60,7 @@ if [ "$CLEANUP" = true ]; then
     fi
 
     # Use sudo to force-remove files owned by root
-    sudo rm -rf startup_v2 data_v2fi
+    sudo rm -rf startup_v2 data_v2
 fi
 
 # 1. Generate Configuration
@@ -180,6 +180,7 @@ for i in $(seq 0 $((NODES - 1))); do
     fi
 
     cat <<EOF >> "$COMPOSE_FILE"
+
   el-node-$i:
     $IMAGE_STR
     $BUILD_STR

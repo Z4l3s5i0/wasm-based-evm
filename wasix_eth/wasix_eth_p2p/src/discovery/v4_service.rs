@@ -127,12 +127,10 @@ impl DiscoveryV4Service {
             loop {
                 match service.socket.recv_from(&mut buf).await {
                     Ok((size, from)) => {
-                        let handler_clone = handler.clone();
-                        tokio::spawn(async move {
-                            if let Err(_e) = handler_clone.handle_packet(&buf[..size], from).await {
-                                // handle_packet already logs
-                            }
-                        });
+                        if let Err(_e) = handler.handle_packet(&buf[..size], from).await {
+                            // handle_packet already logs
+                        }
+                        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
                     }
                     Err(e) => {
                         error!("[DiscoveryV4] UDP receive error: {}", e);

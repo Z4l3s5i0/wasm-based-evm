@@ -9,6 +9,7 @@ pub struct StorageConfig {
     pub storage_name: String,
 }
 
+#[derive(Clone)]
 pub struct StoragePayload {
     pub read_provider: Arc<DatabaseReadProvider>,
     pub write_provider: Arc<DatabaseWriteProvider>,

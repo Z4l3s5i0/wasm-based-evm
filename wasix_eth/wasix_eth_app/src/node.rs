@@ -18,6 +18,8 @@ use crate::node_components::execution::ExecutionPayload;
 use crate::node_components::sync::SyncPayload;
 use crate::import::import_blocks;
 
+
+#[derive(Clone)]
 pub struct Node {
     pub rpc_engine: Arc<RPCEngine>,
     pub engine: Arc<Engine>,
@@ -32,7 +34,6 @@ pub struct Node {
     pub network_payload: Option<NetworkPayload>,
     pub execution_payload: ExecutionPayload,
     pub sync_payload: Option<SyncPayload>,
-    tasks: Vec<JoinHandle<()>>,
 }
 
 impl Node {
@@ -94,7 +95,6 @@ impl Node {
             network_payload: None,
             execution_payload,
             sync_payload: None,
-            tasks: Vec::new(),
         })
     }
     
@@ -164,7 +164,7 @@ impl Node {
             engine: execution_payload.engine.clone(),
             peer_manager: Some(network_payload.peer_manager.clone()),
             sync_service: Some(network_payload.sync_service.clone()),
-            sync_provider: Some(sync_payload.sync_controller.clone() as Arc<dyn SyncProvider>),
+            sync_provider: Some(sync_payload.sync_controller.clone()),
             read_provider: storage_payload.read_provider.clone(),
             write_provider: storage_payload.write_provider.clone(),
             mempool: execution_payload.mempool.clone(),
@@ -173,7 +173,6 @@ impl Node {
             network_payload: Some(network_payload),
             execution_payload,
             sync_payload: Some(sync_payload),
-            tasks: Vec::new(),
         })
     }
 
@@ -181,15 +180,15 @@ impl Node {
         info!("[Node] Starting services...");
 
         if let Some(network) = &self.network_payload {
-            self.tasks.extend(network.start().await);
+            network.start().await;
         }
         
         if let Some(sync) = &self.sync_payload {
-            self.tasks.extend(sync.start(
+            sync.start(
                 self.engine.clone(),
                 self.chain_manager.clone(),
                 self.sync_service.as_ref().unwrap().clone(),
-            ));
+            );
         }
     }
 
@@ -198,10 +197,3 @@ impl Node {
     }
 }
 
-impl Drop for Node {
-    fn drop(&mut self) {
-        for task in self.tasks.iter() {
-            task.abort();
-        }
-    }
-}

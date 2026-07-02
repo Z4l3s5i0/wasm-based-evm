@@ -11,6 +11,7 @@ use tokio::task::JoinHandle;
 use wasix_eth_core::sync::controller::SyncController;
 use wasix_eth_core::sync::processor::BlockProcessor;
 
+#[derive(Clone)]
 pub struct SyncPayload {
     pub sync_controller: Arc<SyncController>,
     pub sync_orchestrator: Arc<SyncOrchestrator>,

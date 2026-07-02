@@ -20,6 +20,7 @@ pub struct NetworkConfig {
     pub ext_ip: Option<std::net::IpAddr>,
 }
 
+#[derive(Clone)]
 pub struct NetworkPayload {
     pub peer_manager: Arc<PeerManager>,
     pub sync_service: Arc<SyncService>,
@@ -83,13 +84,10 @@ impl NetworkPayload {
     pub async fn start(&self) -> Vec<JoinHandle<()>> {
         let mut tasks = Vec::new();
 
-        self.peer_manager.start(Some(self.discovery_v4.clone())).await;
-        self.sync_service.start().await;
-
         let p2p_registry = self.peer_manager.registry.clone();
         let p2p_port = p2p_registry.p2p_port();
         let bind_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
-        
+    
         info!("[P2P Server] Starting server task on {}:{}", bind_ip, p2p_port);
         tasks.push(tokio::spawn(async move {
             info!("[P2P Server] Server task running");
@@ -100,6 +98,11 @@ impl NetworkPayload {
                 wasix_eth_utils::error!("[P2P Server] Failed to initialize server on {}", addr);
             }
         }));
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+
+        self.peer_manager.start(Some(self.discovery_v4.clone())).await;
+        self.sync_service.start().await;
 
         tasks
     }

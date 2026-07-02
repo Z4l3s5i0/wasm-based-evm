@@ -1,9 +1,10 @@
-use crate::cli::{Args, Commands};
+use crate::cli::Args;
 use crate::jwt::HeaderInjectorLayer;
 use crate::jwt::JwtAuthLayer;
 use crate::node::Node;
 use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
 use jsonrpsee::server::Server;
+use serde::{Deserialize, Serialize};
 use serde_json::from_reader;
 use std::error::Error;
 use std::net::SocketAddr;
@@ -14,10 +15,9 @@ use wasix_eth_rpc::EngineService;
 use wasix_eth_rpc::EthService;
 use wasix_eth_rpc::RpcServerFacade;
 use wasix_eth_types::genesis::GenesisConfiguration;
-use wasix_eth_utils::{debug, info, error};
 use wasix_eth_utils::logging;
 use wasix_eth_utils::logging::LogLevel;
-use serde::{Deserialize, Serialize};
+use wasix_eth_utils::{debug, error, info};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct RegisterNodeRequest {
@@ -76,53 +76,34 @@ impl App {
 
         if let Some(registry_url) = &common_args.bootstrap_registry {
             info!("Bootstrap registry provided: {}", registry_url);
-            if let Err(e) = self.handle_bootstrap_registry(registry_url, common_args).await {
-                error!("Failed to handle bootstrap registry: {}", e);
-            }
+            let registry_url = registry_url.clone();
+            let common_args = common_args.clone();
+            let node = self.node.as_ref().unwrap().clone();
+            tokio::spawn(async move {
+                if let Err(e) = Self::handle_bootstrap_registry_task(registry_url, common_args, node).await {
+                    error!("Failed to handle bootstrap registry: {}", e);
+                }
+            });
         }
 
         info!("Starting servers...");
 
         // Spawn metrics collection task
-        let common_args_clone = common_args.clone();
-
         tokio::spawn(async move {
             info!("[App] Starting metrics collection task");
             loop {
                 // Update Node Uptime
-                wasix_eth_utils::metrics::NODE_UPTIME.inc_by(15.0);
-
-                // Update Storage DB Size
-                if let Some(ref path) = common_args_clone.data_dir {
-                    if let Ok(metadata) = std::fs::metadata(path) {
-                        if metadata.is_dir() {
-                            if let Ok(entries) = std::fs::read_dir(path) {
-                                let mut total_size = 0u64;
-                                for entry in entries.flatten() {
-                                    if let Ok(meta) = entry.metadata() {
-                                        total_size += meta.len();
-                                    }
-                                }
-                                wasix_eth_utils::metrics::STORAGE_DB_SIZE.set(total_size as f64);
-                            }
-                        }
-                    }
-                }
-
-                // WASM Memory Usage (if running in WASM environment)
-                // In Wasix/WASI, we can check current memory size
-                #[cfg(target_family = "wasm")]
-                {
-                    let mem = core::arch::wasm32::memory_size(0);
-                    wasix_eth_utils::metrics::WASM_MEMORY_USAGE.set((mem * 64 * 1024) as f64);
-                }
-
-                tokio::time::sleep(tokio::time::Duration::from_secs(15)).await;
+                wasix_eth_utils::metrics::NODE_UPTIME.inc_by(60.0);
+                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
             }
         });
 
-        let node = self.node.as_mut().ok_or("Node not initialized")?;
-        node.start(&self.args).await;
+        tokio::spawn(async move {
+            loop {
+                debug!("[App] Runtime heartbeat");
+                tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            }
+        });
 
         let eth_module = self.eth_module.take().ok_or("Eth module not initialized")?;
         let auth_module = self.auth_module.take().ok_or("Auth module not initialized")?;
@@ -132,60 +113,51 @@ impl App {
         let eth_rpc_handle = eth_rpc_server.start(eth_module);
         let auth_rpc_handle = auth_rpc_server.start(auth_module);
 
+        let node = self.node.as_mut().ok_or("Node not initialized")?;
+        node.start(&self.args).await;
+
         info!("Servers are running, waiting for shutdown signal...");
 
-        if let Some(Commands::Run { common }) = &self.args.command {
-            if let Some(registry_url) = &common.bootstrap_registry {
-                info!("Bootstrap registry provided: {}", registry_url);
-                if let Err(e) = self.handle_bootstrap_registry(registry_url, common).await {
-                    error!("Failed to handle bootstrap registry: {}", e);
-                }
-            }
-        } else if self.args.command.is_none() {
-            // Default is run
-            if let Some(registry_url) = &self.args.common.bootstrap_registry {
-                info!("Bootstrap registry provided: {}", registry_url);
-                if let Err(e) = self.handle_bootstrap_registry(registry_url, &self.args.common).await {
-                    error!("Failed to handle bootstrap registry: {}", e);
-                }
-            }
-        }
+        let eth_rpc_stop = eth_rpc_handle.stopped();
+        let auth_rpc_stop = auth_rpc_handle.stopped();
 
-        // Keep the application running by waiting for the RPC servers to stop or a signal
+        tokio::pin!(eth_rpc_stop);
+        tokio::pin!(auth_rpc_stop);
+
         tokio::select! {
-            _ = eth_rpc_handle.stopped() => {
-                info!("Eth RPC server stopped");
+            _ = &mut eth_rpc_stop => {
+                error!("Eth RPC server stopped internally");
             }
-            _ = auth_rpc_handle.stopped() => {
-                info!("Auth RPC server stopped");
+            _ = &mut auth_rpc_stop => {
+                error!("Auth RPC server stopped internally");
             }
             _ = tokio::signal::ctrl_c() => {
-                info!("Shutdown signal received");
+                info!("Shutdown signal received, shutting down...");
             }
         }
+        error!("[App] App::run exiting");
 
         Ok(())
     }
 
-    async fn handle_bootstrap_registry(&self, registry_url: &str, common_args: &crate::cli::CommonArgs) -> Result<(), Box<dyn Error>> {
-        let node = self.node.as_ref().ok_or("Node not initialized")?;
+    async fn handle_bootstrap_registry_task(registry_url: String, common_args: crate::cli::CommonArgs, node: Node) -> Result<(), Box<dyn Error>> {
         let network_payload = node.network_payload.as_ref().ok_or("Network payload not initialized")?;
 
         let node_id = format!("{:?}", network_payload.discovery_v4.identity().public_key_b512());
         let node_id = node_id.trim_start_matches("B512(").trim_end_matches(')');
-        let enode = format!("enode://{}@{}:{}", node_id, 
+        let enode = format!("enode://{}@{}:{}", node_id,
             common_args.ext_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "127.0.0.1".to_string()),
             common_args.discovery_port);
 
-        let p2p_addr = format!("{}:{}", 
+        let p2p_addr = format!("{}:{}",
             common_args.ext_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string()),
             common_args.p2p_port);
 
-        let discovery_addr = format!("{}:{}", 
+        let discovery_addr = format!("{}:{}",
             common_args.ext_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "0.0.0.0".to_string()),
             common_args.discovery_port);
 
-        let rpc_url = format!("http://{}:{}", 
+        let rpc_url = format!("http://{}:{}",
             common_args.ext_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "127.0.0.1".to_string()),
             common_args.eth_rpc_port);
 
@@ -198,7 +170,7 @@ impl App {
             chain_id: Some(chain_id),
             client: "wasix-eth".to_string(),
             rpc_url,
-            metrics_url: Some(format!("http://{}:{}", 
+            metrics_url: Some(format!("http://{}:{}",
                 common_args.ext_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "127.0.0.1".to_string()),
                 common_args.metrics_port)),
             p2p_addr: Some(p2p_addr),
@@ -206,50 +178,51 @@ impl App {
             enode: Some(enode),
         };
 
-        let client = reqwest::Client::new();
-        
+        let client = reqwest::Client::builder()
+            .connect_timeout(std::time::Duration::from_secs(5))
+            .timeout(std::time::Duration::from_secs(10))
+            .build()?;
+
         // 1. Register self
         info!("[Bootstrap] Registering node with registry...");
         let reg_url = format!("{}/api/nodes/register", registry_url.trim_end_matches('/'));
-        match client.post(&reg_url).json(&register_req).send().await {
-            Ok(resp) => {
+        match tokio::time::timeout(std::time::Duration::from_secs(12), client.post(&reg_url).json(&register_req).send()).await {
+            Ok(Ok(resp)) => {
                 if resp.status().is_success() {
                     info!("[Bootstrap] Node registered successfully");
                 } else {
                     error!("[Bootstrap] Node registration failed: {}", resp.status());
                 }
             }
-            Err(e) => error!("[Bootstrap] Error sending registration request: {}", e),
+            Ok(Err(e)) => error!("[Bootstrap] Error sending registration request: {}", e),
+            Err(_) => error!("[Bootstrap] Registration request timed out"),
         }
 
         // 2. Fetch bootstrap nodes
         info!("[Bootstrap] Fetching bootstrap nodes from registry...");
-        let fetch_url = format!("{}/api/bootstrap/nodes?network={}&chain_id={}&exclude_id={}", 
+        let fetch_url = format!("{}/api/bootstrap/nodes?network={}&chain_id={}&exclude_id={}",
             registry_url.trim_end_matches('/'),
             register_req.network,
             chain_id,
             node_id);
 
-        match client.get(&fetch_url).send().await {
-            Ok(resp) => {
+        match tokio::time::timeout(std::time::Duration::from_secs(12), client.get(&fetch_url).send()).await {
+            Ok(Ok(resp)) => {
                 if resp.status().is_success() {
                     let bootstrap_nodes: BootstrapNodesResponse = resp.json().await?;
                     info!("[Bootstrap] Received {} bootstrap nodes", bootstrap_nodes.nodes.len());
                     for node_info in bootstrap_nodes.nodes {
                         if let Some(enode_str) = node_info.enode {
                             info!("[Bootstrap] Adding bootstrap node: {}", enode_str);
-                            // We need to parse the enode to get ID and endpoint
-                            // For simplicity, we can use the discovery_v4.ping_node if we had the socket addr,
-                            // or better, if DiscoveryV4Service had a way to add bootnodes at runtime.
-                            // Currently DiscoveryV4Service.bootnodes is private.
-                            // But we can try to ping it directly if we can parse the endpoint.
+                            network_payload.peer_manager.dial_enode(&enode_str);
                         }
                     }
                 } else {
                     error!("[Bootstrap] Failed to fetch bootstrap nodes: {}", resp.status());
                 }
             }
-            Err(e) => error!("[Bootstrap] Error fetching bootstrap nodes: {}", e),
+            Ok(Err(e)) => error!("[Bootstrap] Error fetching bootstrap nodes: {}", e),
+            Err(_) => error!("[Bootstrap] Fetch bootstrap nodes timed out"),
         }
 
         Ok(())
