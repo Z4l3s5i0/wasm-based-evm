@@ -15,6 +15,7 @@ use wasix_eth_types::p2p::{
     GetNodeData, NodeData,
     RequestPair, Status, StatusMessage, GossipMessage, DisconnectReason
 };
+use crate::peer::peer_registry::DisconnectEvent;
 use crate::rlpx::RlpxStream;
 use self::types::SessionRequest;
 use self::task::SessionTask;
@@ -26,15 +27,17 @@ pub struct PeerSession {
     pub last_activity: Arc<Mutex<Instant>>,
     pub(crate) is_initiator: bool,
     pub(crate) remote_addr: std::net::SocketAddr,
+    pub session_id: u64,
 }
 
 impl PeerSession {
     pub fn new<S>(
         stream: RlpxStream<S>,
         remote_addr: std::net::SocketAddr,
+        session_id: u64,
         gossip_tx: Option<mpsc::Sender<GossipMessage>>,
-        disconnect_tx: Option<mpsc::Sender<String>>,
-    ) -> Self 
+        disconnect_tx: Option<mpsc::Sender<DisconnectEvent>>,
+    ) -> (Self, SessionTask<S>) 
     where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static
     {
         let (tx, rx) = mpsc::channel(32);
@@ -46,6 +49,7 @@ impl PeerSession {
         let task = SessionTask::new(
             stream,
             rx,
+            session_id,
             gossip_tx,
             disconnect_tx,
             status.clone(),
@@ -53,16 +57,17 @@ impl PeerSession {
             last_activity.clone(),
         );
 
-        tokio::spawn(task.run());
-        
-        Self { 
+        let session = Self { 
             request_tx: tx, 
             status, 
             best_height, 
             last_activity,
             is_initiator,
             remote_addr,
-        }
+            session_id,
+        };
+
+        (session, task)
     }
 
     pub async fn send_status(&self, _status: Status) -> Result<()> {

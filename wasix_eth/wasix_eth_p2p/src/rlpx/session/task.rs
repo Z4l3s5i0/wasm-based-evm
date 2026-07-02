@@ -1,4 +1,5 @@
 use super::types::SessionRequest;
+use crate::peer::peer_registry::DisconnectEvent;
 use crate::rlpx::RlpxStream;
 use alloy_primitives::Bytes;
 use alloy_rlp::Decodable;
@@ -16,7 +17,7 @@ pub struct SessionTask<S> {
     stream: RlpxStream<S>,
     request_rx: mpsc::Receiver<SessionRequest>,
     gossip_tx: Option<mpsc::Sender<GossipMessage>>,
-    disconnect_tx: Option<mpsc::Sender<String>>,
+    disconnect_tx: Option<mpsc::Sender<DisconnectEvent>>,
     status: Arc<Mutex<Option<StatusMessage>>>,
     best_height: Arc<Mutex<u64>>,
     last_activity: Arc<Mutex<Instant>>,
@@ -27,6 +28,7 @@ pub struct SessionTask<S> {
     pending_node_data: HashMap<u64, oneshot::Sender<Result<RequestPair<NodeData>>>>,
     peer_id: String,
     eth_offset: u8,
+    session_id: u64,
 }
 
 impl<S> SessionTask<S> 
@@ -35,8 +37,9 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
     pub fn new(
         stream: RlpxStream<S>,
         request_rx: mpsc::Receiver<SessionRequest>,
+        session_id: u64,
         gossip_tx: Option<mpsc::Sender<GossipMessage>>,
-        disconnect_tx: Option<mpsc::Sender<String>>,
+        disconnect_tx: Option<mpsc::Sender<DisconnectEvent>>,
         status: Arc<Mutex<Option<StatusMessage>>>,
         best_height: Arc<Mutex<u64>>,
         last_activity: Arc<Mutex<Instant>>,
@@ -62,6 +65,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
             pending_node_data: HashMap::new(),
             peer_id,
             eth_offset,
+            session_id,
         }
     }
 
@@ -332,7 +336,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
         };
 
         if let Some(tx) = &self.gossip_tx {
-            let _ = tx.send(GossipMessage::GetBlockHeaders(self.peer_id.clone(), request)).await;
+            let _ = tx.send(GossipMessage::GetBlockHeaders(self.peer_id.clone(), self.session_id, request)).await;
         }
         true
     }
@@ -357,7 +361,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
         };
 
         if let Some(tx) = &self.gossip_tx {
-            let _ = tx.send(GossipMessage::GetBlockBodies(self.peer_id.clone(), request)).await;
+            let _ = tx.send(GossipMessage::GetBlockBodies(self.peer_id.clone(), self.session_id, request)).await;
         }
         true
     }
@@ -382,7 +386,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
         };
 
         if let Some(tx) = &self.gossip_tx {
-            let _ = tx.send(GossipMessage::GetPooledTransactions(self.peer_id.clone(), request)).await;
+            let _ = tx.send(GossipMessage::GetPooledTransactions(self.peer_id.clone(), self.session_id, request)).await;
         }
         true
     }
@@ -415,7 +419,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
         };
 
         if let Some(tx) = &self.gossip_tx {
-            let _ = tx.send(GossipMessage::GetReceipts(self.peer_id.clone(), request)).await;
+            let _ = tx.send(GossipMessage::GetReceipts(self.peer_id.clone(), self.session_id, request)).await;
         }
         true
     }
@@ -440,7 +444,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
         };
 
         if let Some(tx) = &self.gossip_tx {
-            let _ = tx.send(GossipMessage::GetNodeData(self.peer_id.clone(), request)).await;
+            let _ = tx.send(GossipMessage::GetNodeData(self.peer_id.clone(), self.session_id, request)).await;
         }
         true
     }
@@ -482,7 +486,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                 }
             }
             if let Some(tx) = &self.gossip_tx {
-                let _ = tx.send(GossipMessage::NewBlockHashes(self.peer_id.clone(), m)).await;
+                let _ = tx.send(GossipMessage::NewBlockHashes(self.peer_id.clone(), self.session_id, m)).await;
             }
         }
         true
@@ -491,7 +495,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
     async fn handle_transactions(&mut self, payload: Vec<u8>) -> bool {
         if let (Some(tx), Ok(m)) = (&self.gossip_tx, Transactions::decode(&mut &payload[..])) {
             debug!("[P2P Session] Received {} Transactions from {}", m.0.len(), self.peer_id);
-            let _ = tx.send(GossipMessage::Transactions(self.peer_id.clone(), m)).await;
+            let _ = tx.send(GossipMessage::Transactions(self.peer_id.clone(), self.session_id, m)).await;
         }
         true
     }
@@ -635,7 +639,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                 *h_guard = m.block.header.number;
             }
             if let Some(tx) = &self.gossip_tx {
-                let _ = tx.send(GossipMessage::NewBlock(self.peer_id.clone(), m)).await;
+                let _ = tx.send(GossipMessage::NewBlock(self.peer_id.clone(), self.session_id, m)).await;
             }
         }
         true
@@ -663,7 +667,7 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
 
         if let Some(tx) = &self.gossip_tx {
             debug!("[P2P Session] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), self.peer_id);
-            let _ = tx.send(GossipMessage::NewPooledTransactionHashes(self.peer_id.clone(), m)).await;
+            let _ = tx.send(GossipMessage::NewPooledTransactionHashes(self.peer_id.clone(), self.session_id, m)).await;
         }
         true
     }
@@ -679,7 +683,10 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
 
     async fn notify_disconnect(&self) {
         if let Some(tx) = &self.disconnect_tx {
-            let _ = tx.send(self.peer_id.clone()).await;
+            let _ = tx.send(DisconnectEvent {
+                peer_id: self.peer_id.clone(),
+                session_id: self.session_id,
+            }).await;
         }
     }
 }

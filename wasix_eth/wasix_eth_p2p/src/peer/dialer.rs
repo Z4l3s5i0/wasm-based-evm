@@ -1,3 +1,4 @@
+use rand::Rng;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::time::{Duration, sleep, timeout};
@@ -22,7 +23,7 @@ use tokio::sync::{Mutex, Semaphore};
 pub struct PeerDialer {
     registry: Arc<PeerRegistry>,
     write_provider: DatabaseWriteProvider,
-    dial_attempts: Arc<Mutex<HashMap<SocketAddr, (u32, bool)>>>,
+    dial_attempts: Arc<Mutex<HashMap<SocketAddr, (u32, Instant)>>>,
     protocol_penalties: Arc<Mutex<HashMap<SocketAddr, Instant>>>,
     in_flight: Arc<Mutex<HashSet<SocketAddr>>>,
     dial_limit: Arc<Semaphore>,
@@ -104,6 +105,30 @@ impl PeerDialer {
     }
 
     async fn dial_peer_internal_guarded(&self, addr: SocketAddr) -> anyhow::Result<()> {
+        let (attempts, last_dial_time) = {
+            let mut guard = self.dial_attempts.lock().await;
+            let (attempts, last_time) = guard.entry(addr).or_insert((0, Instant::now() - Duration::from_secs(60)));
+            (*attempts, *last_time)
+        };
+
+        if attempts > 0 {
+            let elapsed = Instant::now().duration_since(last_dial_time);
+            let jitter = rand::thread_rng().gen_range(0..10);
+            let cooldown = Duration::from_secs(5 + jitter);
+            if elapsed < cooldown {
+                let wait = cooldown - elapsed;
+                debug!("[P2P Dialer] Cooldown for {}: waiting {:?} (jittered)", addr, wait);
+                sleep(wait).await;
+            }
+        }
+
+        {
+            let mut guard = self.dial_attempts.lock().await;
+            let entry = guard.entry(addr).or_insert((0, Instant::now()));
+            entry.0 += 1;
+            entry.1 = Instant::now();
+        }
+
         {
             let penalties = self.protocol_penalties.lock().await;
             if let Some(penalty_until) = penalties.get(&addr) {
@@ -114,21 +139,7 @@ impl PeerDialer {
             }
         }
 
-        let (attempts, last_error_was_eof) = {
-            let mut guard = self.dial_attempts.lock().await;
-            let entry = guard.entry(addr).or_insert((0, false));
-            entry.0 += 1;
-            (entry.0, entry.1)
-        };
-
-        if attempts > 1 {
-            let base_delay: u64 = if last_error_was_eof { 5 } else { 2 };
-            let delay = Duration::from_secs(base_delay.pow(attempts.min(5) as u32));
-            debug!("[P2P Dialer] Retrying dial to {} in {:?} (attempt {}, eof: {})", addr, delay, attempts, last_error_was_eof);
-            sleep(delay).await;
-        }
-
-        info!("[P2P Dialer] Dialing peer at {} (attempt {})", addr, attempts);
+        info!("[P2P Dialer] Dialing peer at {} (attempt {})", addr, attempts + 1);
 
         // Pre-check: Is this address already in our peer pool?
         let peer_pool = if let Ok(pool) = self.registry.read_provider.get_active_peers() {
@@ -200,12 +211,18 @@ impl PeerDialer {
                         }
 
                         let gossip_tx = self.registry.get_gossip_tx().await;
-                        let session = Arc::new(PeerSession::new(rlpx_stream, addr, gossip_tx, Some(self.registry.disconnect_tx())));
+                        let session_id = self.registry.next_session_id();
+                        let (session, task) = PeerSession::new(rlpx_stream, addr, session_id, gossip_tx, Some(self.registry.disconnect_tx()));
+                        let session = Arc::new(session);
                         let head_hash = remote_block_hash;
                         {
                             let mut guard = session.status.lock().await;
                             *guard = Some(remote_status);
                         }
+                        
+                        // Register BEFORE spawning the task to avoid race
+                        self.registry.register_session_arc(remote_id_hex.clone(), session_id, session.clone()).await;
+
                         let session_clone = session.clone();
                         let remote_id_clone = remote_id_hex.clone();
                         tokio::spawn(async move {
@@ -232,8 +249,9 @@ impl PeerDialer {
                             }
                         });
 
-                        self.registry.register_session_arc(remote_id_hex.clone(), session).await;
-                        tokio::task::yield_now().await;
+                        tokio::spawn(task.run());
+
+                        // tokio::task::yield_now().await;
                         info!("[P2P Dialer] Successfully bonded with {} (PeerId: {})", addr, remote_id_hex);
                         
                         // Success! Reset attempts
@@ -243,13 +261,6 @@ impl PeerDialer {
                         error!("[P2P Dialer] Handshake failed with {}: {}", addr, e);
                         P2P_CONNECTION_ERRORS_TOTAL.inc();
                         let err_str = e.to_string();
-                        let is_eof = err_str.contains("early eof");
-                        if is_eof {
-                            let mut guard = self.dial_attempts.lock().await;
-                            if let Some(entry) = guard.get_mut(&addr) {
-                                entry.1 = true;
-                            }
-                        }
 
                         if err_str.contains("MAC mismatch") {
                             info!("[P2P Dialer] Protocol error (MAC mismatch) with {}, penalizing", addr);
@@ -266,13 +277,6 @@ impl PeerDialer {
             Ok(Err(e)) => {
                 error!("[P2P Dialer] Connection failed with {}: {}", addr, e);
                 P2P_CONNECTION_ERRORS_TOTAL.inc();
-                let is_eof = e.to_string().contains("early eof");
-                if is_eof {
-                    let mut guard = self.dial_attempts.lock().await;
-                    if let Some(entry) = guard.get_mut(&addr) {
-                        entry.1 = true;
-                    }
-                }
             }
             Err(_) => {
                 error!("[P2P Dialer] TCP connect timed out with {}", addr);

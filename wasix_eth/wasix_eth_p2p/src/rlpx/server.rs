@@ -99,11 +99,17 @@ impl P2pServer {
         }).ok();
         
         let gossip_tx = registry.get_gossip_tx().await;
-        let session = Arc::new(PeerSession::new(rlpx_stream, addr, gossip_tx, Some(registry.disconnect_tx())));
+        let session_id = registry.next_session_id();
+        let (session, task) = PeerSession::new(rlpx_stream, addr, session_id, gossip_tx, Some(registry.disconnect_tx()));
+        let session = Arc::new(session);
         {
             let mut guard = session.status.lock().await;
             *guard = Some(remote_status_msg.clone());
         }
+
+        // Register BEFORE spawning the task to avoid race
+        registry.register_session_arc(remote_id_hex.clone(), session_id, session.clone()).await;
+        tokio::spawn(task.run());
 
         // Request head header to get height
         let session_clone = session.clone();
@@ -132,8 +138,6 @@ impl P2pServer {
             }
         });
 
-        registry.register_session_arc(remote_id_hex, session).await;
-        
         Ok(())
     }
 }

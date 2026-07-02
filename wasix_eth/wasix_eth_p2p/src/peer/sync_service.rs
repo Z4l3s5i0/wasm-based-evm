@@ -90,21 +90,30 @@ impl SyncService {
 
     async fn handle_peer_gossip(&self, msg: GossipMessage) {
         match msg {
-            GossipMessage::NewBlock(peer_id, m) => {
+            GossipMessage::NewBlock(peer_id, session_id, m) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 info!("[Sync Service] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), peer_id);
                 let Some(sync) = self.sync_provider().await else {
                     return;
                 };
                 let _ = sync.process_gossip_block(m.block, m.total_difficulty).await;
             }
-            GossipMessage::Transactions(peer_id, m) => {
+            GossipMessage::Transactions(peer_id, session_id, m) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 info!("[Sync Service] Received {} Transactions from {}", m.0.len(), peer_id);
                 let Some(sync) = self.sync_provider().await else {
                     return;
                 };
                 let _ = sync.process_gossip_transactions(m.0).await;
             }
-            GossipMessage::NewPooledTransactionHashes(peer_id, m) => {
+            GossipMessage::NewPooledTransactionHashes(peer_id, session_id, m) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 info!("[Sync Service] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), peer_id);
                 let Some(sync) = self.sync_provider().await else {
                     return;
@@ -113,22 +122,42 @@ impl SyncService {
                     error!("[Sync Service] Failed to handle announced pooled transactions: {}", e);
                 }
             }
-            GossipMessage::GetBlockHeaders(peer_id, req) => {
+            GossipMessage::GetBlockHeaders(peer_id, session_id, req) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 self.handle_get_block_headers(peer_id, req).await;
             }
-            GossipMessage::GetBlockBodies(peer_id, req) => {
+            GossipMessage::GetBlockBodies(peer_id, session_id, req) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 self.handle_get_block_bodies(peer_id, req).await;
             }
-            GossipMessage::GetPooledTransactions(peer_id, req) => {
+            GossipMessage::GetPooledTransactions(peer_id, session_id, req) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 self.handle_get_pooled_transactions(peer_id, req).await;
             }
-            GossipMessage::GetReceipts(peer_id, req) => {
+            GossipMessage::GetReceipts(peer_id, session_id, req) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 self.handle_get_receipts(peer_id, req).await;
             }
-            GossipMessage::GetNodeData(peer_id, req) => {
+            GossipMessage::GetNodeData(peer_id, session_id, req) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
                 self.handle_get_node_data(peer_id, req).await;
             }
-            _ => {}
+            GossipMessage::NewBlockHashes(peer_id, session_id, m) => {
+                if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
+                    return;
+                }
+                // Handle or ignore
+            }
         }
     }
 

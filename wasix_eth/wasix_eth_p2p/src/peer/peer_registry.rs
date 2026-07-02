@@ -2,6 +2,7 @@ use anyhow::Result;
 use wasix_eth_storage::read_traits::{BlockProvider, PeerDiscoveryProvider, HeaderProvider};
 use wasix_eth_types::sync::{P2pSession, PeerProvider};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::PeerDiscoveryWriter;
@@ -18,6 +19,17 @@ use tokio::sync::{mpsc, Mutex, MutexGuard};
 use tokio::time::{timeout, Duration};
 
 #[derive(Clone)]
+pub struct RegisteredSession {
+    pub session_id: u64,
+    pub session: Arc<PeerSession>,
+}
+
+pub struct DisconnectEvent {
+    pub peer_id: String,
+    pub session_id: u64,
+}
+
+#[derive(Clone)]
 pub struct PeerRegistry {
     pub read_provider: DatabaseReadProvider,
     write_provider: DatabaseWriteProvider,
@@ -25,13 +37,14 @@ pub struct PeerRegistry {
     discovery_port: u16,
     p2p_port: u16,
     pub ext_ip: Option<std::net::IpAddr>,
-    active_sessions: Arc<Mutex<HashMap<String, Arc<PeerSession>>>>,
+    active_sessions: Arc<Mutex<HashMap<String, RegisteredSession>>>,
     pub network_id: u64,
     pub genesis_hash: B256,
     pub chain_config: ChainConfig,
     discovery_service_v4: Arc<Mutex<Option<Arc<crate::discovery::v4_service::DiscoveryV4Service>>>>,
     gossip_tx: Arc<Mutex<Option<mpsc::Sender<wasix_eth_types::p2p::GossipMessage>>>>,
-    disconnect_tx: mpsc::Sender<String>,
+    disconnect_tx: mpsc::Sender<DisconnectEvent>,
+    next_session_id: Arc<AtomicU64>,
 }
 
 #[async_trait]
@@ -46,8 +59,8 @@ impl PeerProvider for PeerRegistry {
             if !peers.iter().any(|p| p.peer_id == *peer_id) {
                 peers.push(PeerEntry {
                     peer_id: peer_id.clone(),
-                    discovery_addr: session.remote_addr,
-                    p2p_addr: session.remote_addr,
+                    discovery_addr: session.session.remote_addr,
+                    p2p_addr: session.session.remote_addr,
                 });
             }
         }
@@ -56,7 +69,7 @@ impl PeerProvider for PeerRegistry {
 
     async fn get_session(&self, peer_id: &str) -> Option<Arc<dyn P2pSession>> {
         let sessions = self.active_sessions_guard().await?;
-        sessions.get(peer_id).cloned().map(|s| s as Arc<dyn P2pSession>)
+        sessions.get(peer_id).cloned().map(|s| s.session as Arc<dyn P2pSession>)
     }
 
     fn as_any(&self) -> &dyn std::any::Any {
@@ -64,13 +77,27 @@ impl PeerProvider for PeerRegistry {
     }
 
     fn disconnect_peer(&self, peer_id: &str) -> Result<()> {
-        let _ = self.disconnect_tx.try_send(peer_id.to_string());
+        // This is a manual disconnect, we might not have the session_id here easily.
+        // But for manual disconnects from RPC/etc, we can just send a special 0 session_id or similar,
+        // or just look it up.
+        let registry = self.clone();
+        let peer_id_owned = peer_id.to_string();
+        tokio::spawn(async move {
+            if let Some(sessions) = registry.active_sessions_guard().await {
+                if let Some(reg) = sessions.get(&peer_id_owned) {
+                    let _ = registry.disconnect_tx.try_send(DisconnectEvent {
+                        peer_id: peer_id_owned,
+                        session_id: reg.session_id,
+                    });
+                }
+            }
+        });
         Ok(())
     }
 }
 
 impl PeerRegistry {
-    async fn active_sessions_guard(&self) -> Option<MutexGuard<'_, HashMap<String, Arc<PeerSession>>>> {
+    async fn active_sessions_guard(&self) -> Option<MutexGuard<'_, HashMap<String, RegisteredSession>>> {
         match timeout(Duration::from_secs(2), self.active_sessions.lock()).await {
             Ok(guard) => Some(guard),
             Err(_) => {
@@ -107,16 +134,23 @@ impl PeerRegistry {
             discovery_service_v4: Arc::new(Mutex::new(None)),
             gossip_tx: Arc::new(Mutex::new(None)),
             disconnect_tx,
+            next_session_id: Arc::new(AtomicU64::new(1)),
         };
 
         let registry_for_disconnect = registry.clone();
         tokio::spawn(async move {
-            while let Some(peer_id) = disconnect_rx.recv().await {
-                info!("[P2P] Peer disconnected: {}", peer_id);
+            while let Some(event) = disconnect_rx.recv().await {
+                info!("[P2P] Peer disconnected: {} (session: {})", event.peer_id, event.session_id);
 
                 let removed_len = if let Some(mut sessions) = registry_for_disconnect.active_sessions_guard().await {
-                    if sessions.remove(&peer_id).is_some() {
-                        Some(sessions.len())
+                    if let Some(current) = sessions.get(&event.peer_id) {
+                        if current.session_id == event.session_id {
+                            sessions.remove(&event.peer_id);
+                            Some(sessions.len())
+                        } else {
+                            debug!("[P2P] Ignoring stale disconnect for peer {} (current: {}, event: {})", event.peer_id, current.session_id, event.session_id);
+                            None
+                        }
                     } else {
                         None
                     }
@@ -127,9 +161,8 @@ impl PeerRegistry {
                 if let Some(len) = removed_len {
                     CONNECTED_PEERS.set(len as f64);
                     P2P_PEERS_DISCONNECTED.inc();
+                    let _ = registry_for_disconnect.write_provider.remove_peer(event.peer_id);
                 }
-
-                let _ = registry_for_disconnect.write_provider.remove_peer(peer_id);
             }
         });
 
@@ -146,8 +179,21 @@ impl PeerRegistry {
         guard.clone()
     }
 
-    pub fn disconnect_tx(&self) -> mpsc::Sender<String> {
+    pub fn disconnect_tx(&self) -> mpsc::Sender<DisconnectEvent> {
         self.disconnect_tx.clone()
+    }
+
+    pub fn next_session_id(&self) -> u64 {
+        self.next_session_id.fetch_add(1, Ordering::SeqCst)
+    }
+
+    pub async fn is_current_session(&self, peer_id: &str, session_id: u64) -> bool {
+        if let Some(sessions) = self.active_sessions_guard().await {
+            if let Some(current) = sessions.get(peer_id) {
+                return current.session_id == session_id;
+            }
+        }
+        false
     }
 
     pub async fn set_discovery_service_v4(&self, service: Arc<crate::discovery::v4_service::DiscoveryV4Service>) {
@@ -190,18 +236,18 @@ impl PeerRegistry {
 
     pub async fn get_session(&self, peer_id: &str) -> Option<Arc<dyn P2pSession>> {
         let sessions = self.active_sessions_guard().await?;
-        sessions.get(peer_id).cloned().map(|s| s as Arc<dyn P2pSession>)
+        sessions.get(peer_id).cloned().map(|s| s.session as Arc<dyn P2pSession>)
     }
 
     pub async fn get_all_sessions(&self) -> Vec<Arc<PeerSession>> {
         let Some(sessions) = self.active_sessions_guard().await else {
             return Vec::new();
         };
-        sessions.values().cloned().collect()
+        sessions.values().map(|s| s.session.clone()).collect()
     }
 
-    pub async fn register_session_arc(&self, peer_id: String, session: Arc<PeerSession>) {
-        info!("[P2P Registry] Registering session for peer {}", peer_id);
+    pub async fn register_session_arc(&self, peer_id: String, session_id: u64, session: Arc<PeerSession>) {
+        info!("[P2P Registry] Registering session for peer {} (session_id: {})", peer_id, session_id);
 
         let mut reject_new = false;
         let mut disconnect_existing: Option<Arc<PeerSession>> = None;
@@ -214,7 +260,8 @@ impl PeerRegistry {
                 return;
             };
 
-            if let Some(existing) = sessions.get(&peer_id) {
+            if let Some(existing_reg) = sessions.get(&peer_id) {
+                let existing = &existing_reg.session;
                 let local_id = self.local_peer_id();
                 let we_are_higher = local_id > peer_id;
 
@@ -236,12 +283,12 @@ impl PeerRegistry {
                         peer_id, we_are_higher, existing.is_initiator, session.is_initiator
                     );
                     disconnect_existing = Some(existing.clone());
-                    sessions.insert(peer_id.clone(), session.clone());
+                    sessions.insert(peer_id.clone(), RegisteredSession { session_id, session: session.clone() });
                     connected_len = Some(sessions.len());
                     inserted = true;
                 }
             } else {
-                sessions.insert(peer_id.clone(), session.clone());
+                sessions.insert(peer_id.clone(), RegisteredSession { session_id, session: session.clone() });
                 connected_len = Some(sessions.len());
                 inserted = true;
             }
@@ -299,12 +346,12 @@ impl PeerRegistry {
             return Ok(peers);
         };
 
-        for (peer_id, session) in sessions.iter() {
+        for (peer_id, reg) in sessions.iter() {
             if !peers.iter().any(|p| p.peer_id == *peer_id) {
                 peers.push(PeerEntry {
                     peer_id: peer_id.clone(),
-                    discovery_addr: session.remote_addr,
-                    p2p_addr: session.remote_addr,
+                    discovery_addr: reg.session.remote_addr,
+                    p2p_addr: reg.session.remote_addr,
                 });
             }
         }

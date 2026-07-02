@@ -905,16 +905,16 @@ impl alloy_rlp::Decodable for NewPooledTransactionHashes66 {
 
 #[derive(Debug, Clone)]
 pub enum GossipMessage {
-    NewBlockHashes(String, NewBlockHashes),
-    Transactions(String, Transactions),
-    NewBlock(String, NewBlock),
-    NewPooledTransactionHashes(String, NewPooledTransactionHashes),
+    NewBlockHashes(String, u64, NewBlockHashes),
+    Transactions(String, u64, Transactions),
+    NewBlock(String, u64, NewBlock),
+    NewPooledTransactionHashes(String, u64, NewPooledTransactionHashes),
     // Incoming requests from peers
-    GetBlockHeaders(String, RequestPair<GetBlockHeaders>),
-    GetBlockBodies(String, RequestPair<GetBlockBodies>),
-    GetPooledTransactions(String, RequestPair<GetPooledTransactions>),
-    GetReceipts(String, RequestPair<GetReceipts>),
-    GetNodeData(String, RequestPair<GetNodeData>),
+    GetBlockHeaders(String, u64, RequestPair<GetBlockHeaders>),
+    GetBlockBodies(String, u64, RequestPair<GetBlockBodies>),
+    GetPooledTransactions(String, u64, RequestPair<GetPooledTransactions>),
+    GetReceipts(String, u64, RequestPair<GetReceipts>),
+    GetNodeData(String, u64, RequestPair<GetNodeData>),
 }
 
 /// Snap protocol message IDs (EIP-2364)

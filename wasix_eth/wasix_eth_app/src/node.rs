@@ -1,7 +1,6 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
-use tokio::task::JoinHandle;
 use wasix_eth_core::{Engine, ChainManager};
 use wasix_eth_core::engine::api::RPCEngine;
 use wasix_eth_p2p::{PeerManager, SyncService};
