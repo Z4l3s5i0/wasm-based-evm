@@ -37,7 +37,7 @@ impl PeerDialer {
             dial_attempts: Arc::new(Mutex::new(HashMap::new())),
             protocol_penalties: Arc::new(Mutex::new(HashMap::new())),
             in_flight: Arc::new(Mutex::new(HashSet::new())),
-            dial_limit: Arc::new(Semaphore::new(1)),
+            dial_limit: Arc::new(Semaphore::new(10)),
         }
     }
 
@@ -51,6 +51,15 @@ impl PeerDialer {
     }
 
     pub fn dial_peer(&self, addr: SocketAddr) {
+        // Fast path check BEFORE spawning and BEFORE semaphore
+        {
+            if let Ok(in_flight) = self.in_flight.try_lock() {
+                if in_flight.contains(&addr) {
+                    return;
+                }
+            }
+        }
+
         let dialer = Arc::new(self.clone_internal());
         tokio::spawn(async move {
             dialer.dial_peer_internal(addr).await;
@@ -69,26 +78,29 @@ impl PeerDialer {
     }
 
     async fn dial_peer_internal(&self, addr: SocketAddr) {
-        let permit = match tokio::time::timeout(Duration::from_secs(20), self.dial_limit.clone().acquire_owned()).await {
-            Ok(Ok(permit)) => permit,
-            Ok(Err(_)) => {
-                error!("[P2P Dialer] Dial semaphore closed, skipping {}", addr);
-                return;
-            }
-            Err(_) => {
-                debug!("[P2P Dialer] Timed out waiting for dial slot to {}", addr);
-                return;
-            }
-        };
-
         {
             let mut in_flight = self.in_flight.lock().await;
             if !in_flight.insert(addr) {
                 debug!("[P2P Dialer] Dial to {} already in progress, skipping duplicate", addr);
-                drop(permit);
                 return;
             }
         }
+
+        let permit = match tokio::time::timeout(Duration::from_secs(20), self.dial_limit.clone().acquire_owned()).await {
+            Ok(Ok(permit)) => permit,
+            Ok(Err(_)) => {
+                error!("[P2P Dialer] Dial semaphore closed, skipping {}", addr);
+                let mut in_flight = self.in_flight.lock().await;
+                in_flight.remove(&addr);
+                return;
+            }
+            Err(_) => {
+                debug!("[P2P Dialer] Timed out waiting for dial slot to {}", addr);
+                let mut in_flight = self.in_flight.lock().await;
+                in_flight.remove(&addr);
+                return;
+            }
+        };
 
         let result = self.dial_peer_internal_guarded(addr).await;
 
@@ -107,8 +119,13 @@ impl PeerDialer {
     async fn dial_peer_internal_guarded(&self, addr: SocketAddr) -> anyhow::Result<()> {
         let (attempts, last_dial_time) = {
             let mut guard = self.dial_attempts.lock().await;
-            let (attempts, last_time) = guard.entry(addr).or_insert((0, Instant::now() - Duration::from_secs(60)));
-            (*attempts, *last_time)
+            let entry = guard.entry(addr).or_insert((0, Instant::now() - Duration::from_secs(60)));
+            let res = (entry.0, entry.1);
+            
+            // Increment attempts and update time immediately to avoid separate lock
+            entry.0 += 1;
+            entry.1 = Instant::now();
+            res
         };
 
         if attempts > 0 {
@@ -120,13 +137,6 @@ impl PeerDialer {
                 debug!("[P2P Dialer] Cooldown for {}: waiting {:?} (jittered)", addr, wait);
                 sleep(wait).await;
             }
-        }
-
-        {
-            let mut guard = self.dial_attempts.lock().await;
-            let entry = guard.entry(addr).or_insert((0, Instant::now()));
-            entry.0 += 1;
-            entry.1 = Instant::now();
         }
 
         {
@@ -182,7 +192,7 @@ impl PeerDialer {
                 };
 
                 match timeout(
-                    Duration::from_secs(10),
+                    Duration::from_secs(30),
                     handshake.handle_outbound(rlpx_stream, &remote_pk),
                 ).await {
                     Ok(Ok((rlpx_stream, remote_status))) => {
@@ -225,6 +235,7 @@ impl PeerDialer {
 
                         let session_clone = session.clone();
                         let remote_id_clone = remote_id_hex.clone();
+
                         tokio::spawn(async move {
                             let request = RequestPair {
                                 request_id: 1,
@@ -250,16 +261,12 @@ impl PeerDialer {
                         });
 
                         tokio::spawn(task.run());
-
-                        // tokio::task::yield_now().await;
-                        info!("[P2P Dialer] Successfully bonded with {} (PeerId: {})", addr, remote_id_hex);
-                        
                         // Success! Reset attempts
                         self.dial_attempts.lock().await.remove(&addr);
                     }
                     Ok(Err(e)) => {
                         error!("[P2P Dialer] Handshake failed with {}: {}", addr, e);
-                        P2P_CONNECTION_ERRORS_TOTAL.inc();
+                        // P2P_CONNECTION_ERRORS_TOTAL.inc();
                         let err_str = e.to_string();
 
                         if err_str.contains("MAC mismatch") {

@@ -337,7 +337,7 @@ impl PeerRegistry {
                 let _ = session.disconnect(DisconnectReason::PingTimeout).await;
             }
 
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            tokio::time::sleep(tokio::time::Duration::from_millis(10)).await;
         }
     }
     pub async fn get_active_peers(&self) -> Result<Vec<PeerEntry>> {

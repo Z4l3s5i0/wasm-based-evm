@@ -122,6 +122,8 @@ impl DiscoveryV4Service {
         let handler = Arc::new(crate::discovery::v4::DiscoveryHandler::new(service_for_handler));
         
         let service = self.clone();
+        tokio::time::sleep(Duration::from_millis(600)).await;
+
         tokio::spawn(async move {
             let mut buf = [0u8; 1280];
             loop {
@@ -130,7 +132,6 @@ impl DiscoveryV4Service {
                         if let Err(_e) = handler.handle_packet(&buf[..size], from).await {
                             // handle_packet already logs
                         }
-                        tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
                     }
                     Err(e) => {
                         error!("[DiscoveryV4] UDP receive error: {}", e);

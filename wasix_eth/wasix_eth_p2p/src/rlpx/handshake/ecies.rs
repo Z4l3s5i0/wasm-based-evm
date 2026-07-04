@@ -34,8 +34,10 @@ pub async fn do_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(
         }
 
         let signing_key = k256::ecdsa::SigningKey::from(&initiator_session_eph_sk);
+        tokio::task::yield_now().await;
         let (signature, recovery_id) = signing_key.sign_prehash_recoverable(&msg_to_sign)
             .map_err(|e| anyhow!("Signing failed: {}", e))?;
+        tokio::task::yield_now().await;
 
         let mut sig_bytes = [0u8; 65];
         sig_bytes[0..64].copy_from_slice(&signature.to_bytes());
@@ -70,6 +72,7 @@ pub async fn do_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(
         full_ack.extend_from_slice(&encrypted_ack);
 
         let ack_rlp = ecies_decrypt(local_sk, &encrypted_ack, &ack_len_buf)?;
+        tokio::task::yield_now().await;
         let mut ack_rlp_slice = &ack_rlp[..];
         let ack_msg = AuthAckV4::decode(&mut ack_rlp_slice)?;
 
@@ -113,6 +116,7 @@ pub async fn do_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(
         full_auth.extend_from_slice(&encrypted_auth);
 
         let auth_rlp = ecies_decrypt(local_sk, &encrypted_auth, &auth_len_buf)?;
+        tokio::task::yield_now().await;
         let mut auth_rlp_slice = &auth_rlp[..];
         let auth_msg = AuthMsgV4::decode(&mut auth_rlp_slice)?;
 
@@ -131,6 +135,7 @@ pub async fn do_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(
         }
 
         let initiator_session_eph_pk = recover_pubkey(&auth_msg.signature, &msg_to_sign)?;
+        tokio::task::yield_now().await;
 
         let recipient_session_eph_sk = SecretKey::random(&mut rand::thread_rng());
         let recipient_nonce = B256::from(rand::random::<[u8; 32]>());

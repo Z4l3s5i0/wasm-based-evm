@@ -43,6 +43,7 @@ impl PayloadProcessor {
         expected_blob_versioned_hashes: Option<Vec<B256>>, 
         parent_beacon_block_root: Option<B256>
     ) -> RpcResult<PayloadStatus> {
+        tokio::task::yield_now().await;
         let actual_hash = block.header.hash_slow();
         info!("[PayloadProcessor] new_payload_internal: block={}, hash={}, parent={}", block.header.number, actual_hash, block.header.parent_hash);
 
@@ -350,6 +351,7 @@ impl PayloadProcessor {
         expected_blob_versioned_hashes: Option<Vec<B256>>,
         parent_beacon_block_root: Option<B256>
     ) -> RpcResult<PayloadStatus> {
+        tokio::task::yield_now().await;
         let actual_hash = block.header.hash_slow();
         let parent_hash = block.header.parent_hash;
         let block_number = block.header.number;

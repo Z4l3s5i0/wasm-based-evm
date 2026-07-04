@@ -8,6 +8,7 @@ use wasix_eth_types::ChainConfig;
 use std::sync::Arc;
 use std::error::Error;
 use std::path::PathBuf;
+use std::time::Duration;
 use tokio::task::JoinHandle;
 use wasix_eth_utils::info;
 
@@ -89,6 +90,8 @@ impl NetworkPayload {
         let bind_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
     
         info!("[P2P Server] Starting server task on {}:{}", bind_ip, p2p_port);
+        tokio::time::sleep(Duration::from_millis(500)).await;
+
         tasks.push(tokio::spawn(async move {
             info!("[P2P Server] Server task running");
             let addr = format!("{}:{}", bind_ip, p2p_port);
@@ -98,8 +101,6 @@ impl NetworkPayload {
                 wasix_eth_utils::error!("[P2P Server] Failed to initialize server on {}", addr);
             }
         }));
-
-        tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
 
         self.peer_manager.start(Some(self.discovery_v4.clone())).await;
         self.sync_service.start().await;

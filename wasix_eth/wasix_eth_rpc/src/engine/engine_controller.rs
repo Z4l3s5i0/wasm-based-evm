@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use wasix_eth_types::{ExecutionPayloadBodyV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, TransitionConfiguration, B256, BlobAndProofV1, BlobAndProofV2, B128, Bytes, U256};
 use wasix_eth_types::error::{RpcError, RpcResult};
-use wasix_eth_utils::debug;
+use wasix_eth_utils::{debug, info};
 use crate::EngineService;
 use serde_json::Value;
 
@@ -236,9 +236,9 @@ impl EngineRpcServer for EngineController {
     }
 
     async fn new_payload_v2(&self, payload: ExecutionPayloadV2) -> RpcResult<PayloadStatus> {
-        debug!("[RPC] engine_newPayloadV2: block_number={}, block_hash={:?}", payload.payload_inner.block_number, payload.payload_inner.block_hash);
+        info!("[RPC] engine_newPayloadV2: block_number={}, block_hash={:?}", payload.payload_inner.block_number, payload.payload_inner.block_hash);
         let result = self.service.new_payload_v2(payload).await?;
-        debug!("[RPC] engine_newPayloadV2 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
+        info!("[RPC] engine_newPayloadV2 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
         if matches!(result.status, wasix_eth_types::PayloadStatusEnum::Invalid { .. }) {
             wasix_eth_utils::error!("[RPC] engine_newPayloadV2 returned INVALID status: {:?}", result);
         }

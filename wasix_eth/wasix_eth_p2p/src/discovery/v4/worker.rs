@@ -51,6 +51,9 @@ impl DiscoveryWorker {
             let target = B512::from(id_bytes); // Lookup self to fill buckets near us
 
             let _ = self.service.send_find_node(addr, target).await;
+
+            // Yield between nodes to avoid packet bursts
+            tokio::task::yield_now().await;
         }
     }
 }

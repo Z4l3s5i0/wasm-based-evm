@@ -46,6 +46,8 @@ impl P2pServer {
         }
         
         info!("[P2P Server] Listening on {}", display_addr);
+        tokio::time::sleep(Duration::from_millis(700)).await;
+
         loop {
             debug!("[P2P Server] Waiting for inbound TCP connection on {}", display_addr);
 
@@ -68,14 +70,13 @@ impl P2pServer {
                     debug!("[P2P Server] Accept still waiting on {}", display_addr);
                 }
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
         }
     }
 
     async fn handle_connection(stream: tokio::net::TcpStream, addr: SocketAddr, registry: Arc<PeerRegistry>) -> anyhow::Result<()> {
         let handshake = Handshake::new(registry.clone());
         let (rlpx_stream, remote_status_msg) = timeout(
-            Duration::from_secs(10),
+            Duration::from_secs(30),
             handshake.handle_inbound(stream),
         )
         .await

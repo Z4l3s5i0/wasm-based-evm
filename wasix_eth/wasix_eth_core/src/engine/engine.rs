@@ -236,6 +236,7 @@ impl Engine {
     }
 
     pub async fn get_payload_v1(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadV1> {
+        info!("[Engine] get_payload_v1: payload_id={:?}", payload_id);
         let (block, _, _) = self.payload_builder.get_payload(&payload_id)?;
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_default();
         let fork = Hardfork::get_active_fork(&chain_config, block.header.number, block.header.timestamp);
@@ -249,6 +250,7 @@ impl Engine {
     }
     
     pub async fn get_payload_v2(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV2> {
+        info!("[Engine] get_payload_v2: payload_id={:?}", payload_id);
         let (block, receipts, _) = self.payload_builder.get_payload(&payload_id)?;
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_default();
         let fork = Hardfork::get_active_fork(&chain_config, block.header.number, block.header.timestamp);
@@ -265,6 +267,7 @@ impl Engine {
     }
 
     pub async fn get_payload_v3(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV3> {
+        info!("[Engine] get_payload_v3: payload_id={:?}", payload_id);
         let (block, receipts, bundle) = self.payload_builder.get_payload(&payload_id)?;
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_default();
         let fork = Hardfork::get_active_fork(&chain_config, block.header.number, block.header.timestamp);
@@ -281,6 +284,7 @@ impl Engine {
     }
 
     pub async fn get_payload_v4(&self, payload_id: PayloadId) -> RpcResult<ExecutionPayloadEnvelopeV4> {
+        info!("[Engine] get_payload_v4: payload_id={:?}", payload_id);
         let (block, receipts, bundle) = self.payload_builder.get_payload(&payload_id)?;
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_default();
 
@@ -379,6 +383,7 @@ impl Engine {
     pub async fn forkchoice_updated(&self, forkchoice_state: ForkchoiceState,
                                     payload_attributes: Option<PayloadAttributes>,
                                     version: u8) -> RpcResult<ForkchoiceUpdated> {
+        tokio::task::yield_now().await;
 
         info!("[Engine] forkchoice_updated: head={:?} safe={:?} finalized={:?} version={} attr={}", 
             forkchoice_state.head_block_hash, forkchoice_state.safe_block_hash, forkchoice_state.finalized_block_hash, version, payload_attributes.is_some());
@@ -730,6 +735,7 @@ impl Engine {
     }
 
     pub async fn import_block(&self, block: Block<Transaction>) -> wasix_eth_types::Result<()> {
+        tokio::task::yield_now().await;
         let block_hash = block.header.hash_slow();
         info!("[Engine] import_block (sync path) for block {} hash {}", block.header.number, block_hash);
 
@@ -759,7 +765,7 @@ impl Engine {
         expected_blob_versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus> {
-        info!("[Engine] engine_newPayloadV3: block={}, hash={:?}", payload.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.block_hash);
+        info!("[Engine] new_payload_v3: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.block_hash);
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
             ..Default::default()
@@ -786,6 +792,7 @@ impl Engine {
         parent_beacon_block_root: B256,
         execution_requests: Vec<Bytes>,
     ) -> RpcResult<PayloadStatus> {
+        info!("[Engine] new_payload_v4: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.payload_inner.block_hash);
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
             ..Default::default()
@@ -806,6 +813,7 @@ impl Engine {
     }
 
     pub async fn new_payload(&self, payload_v1: ExecutionPayloadV1, withdrawals: Option<Vec<alloy_rpc_types::Withdrawal>>) -> RpcResult<PayloadStatus> {
+        info!("[Engine] new_payload: block_number={}, block_hash={:?}", payload_v1.block_number, payload_v1.block_hash);
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(1),
             ..Default::default()
@@ -883,6 +891,7 @@ impl Engine {
         Ok(())
     }
     async fn decode_transactions(&self, txs: &[Bytes]) -> RpcResult<Vec<Transaction>> {
+        tokio::task::yield_now().await;
         let mut transactions = Vec::new();
         for tx_bytes in txs {
             let tx = Transaction::decode_2718(&mut &tx_bytes[..])

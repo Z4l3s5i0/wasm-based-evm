@@ -79,11 +79,12 @@ impl SyncService {
         self.peer_manager.set_gossip_tx(gossip_tx).await;
     
         let service = self.clone();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+
         tokio::spawn(async move {
             let mut rx = service.peer_gossip_rx.lock().await.take().expect("Gossip already started");
             while let Some(msg) = rx.recv().await {
                 service.handle_peer_gossip(msg).await;
-                tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             }
         });
     }

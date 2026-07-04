@@ -1,5 +1,6 @@
 use tokio::sync::mpsc::Receiver;
 use std::sync::Arc;
+use std::time::Duration;
 use alloy_rlp::Decodable;
 use wasix_eth_utils::{debug, error, info};
 use wasix_eth_utils::metrics::GOSSIP_MESSAGES_RECEIVED;
@@ -33,13 +34,13 @@ impl GossipService {
 
     pub async fn start(mut self) {
         info!("[Gossip] Starting GossipHandler");
+        tokio::time::sleep(Duration::from_millis(800)).await;
         while let Some(data) = self.gossip_rx.recv().await {
-            GOSSIP_MESSAGES_RECEIVED.inc();
+            // GOSSIP_MESSAGES_RECEIVED.inc();
             match self.handle_message(data).await {
                 Ok(_) => {},
                 Err(e) => error!("[Gossip] Error handling gossip message: {}", e),
             }
-            tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
         }
     }
 

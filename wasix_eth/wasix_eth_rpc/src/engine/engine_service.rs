@@ -153,7 +153,7 @@ impl EngineService {
         payload_attributes: Option<PayloadAttributes>,
         version: u8,
     ) -> RpcResult<ForkchoiceUpdated> {
-        debug!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
+        info!("[EngineService] forkchoiceUpdated: head={:?}, payload_attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         self.engine.forkchoice_updated(forkchoice_state, payload_attributes, version).await
     }
     
@@ -170,7 +170,7 @@ impl EngineService {
         payload_v1: ExecutionPayloadV1,
         withdrawals: Option<Vec<Withdrawal>>,
     ) -> RpcResult<PayloadStatus> {
-        debug!("[EngineService] newPayload: block_number={}, block_hash={:?}, parent_hash={:?}", payload_v1.block_number, payload_v1.block_hash, payload_v1.parent_hash);
+        info!("[EngineService] newPayload: block_number={}, block_hash={:?}, parent_hash={:?}", payload_v1.block_number, payload_v1.block_hash, payload_v1.parent_hash);
         
         self.engine.new_payload(payload_v1, withdrawals).await
     }

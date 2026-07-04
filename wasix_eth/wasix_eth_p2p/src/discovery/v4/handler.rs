@@ -28,6 +28,7 @@ impl DiscoveryHandler {
                 return Ok(());
             }
         };
+        tokio::task::yield_now().await;
 
         let remote_id = match raw.recover_public_key() {
             Ok(id) => id,
@@ -36,6 +37,7 @@ impl DiscoveryHandler {
                 return Ok(());
             }
         };
+        tokio::task::yield_now().await;
 
         // Session tracking for IP mismatch (PingMultiIP)
         {
@@ -134,9 +136,17 @@ impl DiscoveryHandler {
             enr_seq: Some(enr_seq),
         };
         self.service.send_packet(Packet::Pong(pong), from).await?;
+        tokio::task::yield_now().await;
 
         // If we haven't pinged them yet, we should initiate bonding from our side too
-        if !self.service.is_bonded(remote_id).await {
+        // Check both bonded_peers and pending_pings to avoid redundant pings
+        let is_bonded = self.service.is_bonded(remote_id).await;
+        let is_pending = {
+            let pending = self.service.pending_pings.lock().await;
+            pending.values().any(|&addr| addr == from)
+        };
+
+        if !is_bonded && !is_pending {
              let _ = self.service.ping_node(from).await;
         }
 

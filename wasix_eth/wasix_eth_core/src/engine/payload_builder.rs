@@ -140,6 +140,7 @@ impl PayloadBuilder {
             let slot_duration = std::time::Duration::from_millis(12000); // SLOT_DURATION_MS
             
             while !token.is_cancelled() {
+                tokio::task::yield_now().await;
                 if start_time.elapsed() >= slot_duration {
                     info!("[PayloadBuilder] Stopping continuous building for {:?}: time limit reached", id);
                     break;
@@ -344,7 +345,7 @@ impl PayloadBuilder {
             return Ok(());
         }
 
-        info!("[PayloadBuilder] Rebuilding payload {:?}: value {} -> {}", payload_id, old_value, new_value);
+        info!("[PayloadBuilder] Rebuilding payload {:?}: value {} -> {} (tx count: {})", payload_id, old_value, new_value, finalized_block.body.transactions.len());
 
         // 6. Collect blobs
         let mut bundle = BlobsBundleV1::default();
