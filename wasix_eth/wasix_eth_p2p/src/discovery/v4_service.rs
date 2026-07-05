@@ -12,7 +12,7 @@ use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use wasix_eth_utils::identity::Identity;
 use wasix_eth_utils::metrics::P2P_DISCOVERY_NODES_FOUND;
-use wasix_eth_utils::{error, info};
+use wasix_eth_utils::{debug, error, info};
 
 pub struct DiscoveryV4Service {
     pub(crate) local_identity: Identity,
@@ -122,7 +122,6 @@ impl DiscoveryV4Service {
         let handler = Arc::new(crate::discovery::v4::DiscoveryHandler::new(service_for_handler));
         
         let service = self.clone();
-        tokio::time::sleep(Duration::from_millis(600)).await;
 
         tokio::spawn(async move {
             let mut buf = [0u8; 1280];
@@ -134,6 +133,12 @@ impl DiscoveryV4Service {
                         }
                     }
                     Err(e) => {
+                        let err_str = e.to_string();
+                        if err_str.contains("Operation timed out") || err_str.contains("os error 73") {
+                             // This is common in wasix and usually transient, just continue
+                             debug!("[DiscoveryV4] UDP receive timeout (transient)");
+                             continue;
+                        }
                         error!("[DiscoveryV4] UDP receive error: {}", e);
                         tokio::time::sleep(Duration::from_secs(1)).await;
                     }

@@ -90,7 +90,6 @@ impl NetworkPayload {
         let bind_ip = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));
     
         info!("[P2P Server] Starting server task on {}:{}", bind_ip, p2p_port);
-        tokio::time::sleep(Duration::from_millis(500)).await;
 
         tasks.push(tokio::spawn(async move {
             info!("[P2P Server] Server task running");

@@ -104,6 +104,12 @@ impl SyncController {
             if let Some(peer_id) = sync_peer {
                 if let Err(e) = self.fetch_ancestors(&peer_id, target_hash, target_hash).await {
                      error!("[Sync] Failed to fetch target ancestor {:?}: {}", target_hash, e);
+                     // Put it back if it's a transient error like a timeout
+                     let err_str = e.to_string();
+                     if err_str.contains("timed out") || err_str.contains("Session closed") || err_str.contains("channel closed") {
+                         debug!("[Sync] Transient error, putting target {:?} back in registry", target_hash);
+                         self.sync_registry.add_target(target_hash, None, self.chain_manager.clone()).await;
+                     }
                 }
             } else {
                 debug!("[Sync] No peers found for target {:?}, triggering broadened discovery", target_hash);

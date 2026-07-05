@@ -46,7 +46,6 @@ impl P2pServer {
         }
         
         info!("[P2P Server] Listening on {}", display_addr);
-        tokio::time::sleep(Duration::from_millis(700)).await;
 
         loop {
             debug!("[P2P Server] Waiting for inbound TCP connection on {}", display_addr);
