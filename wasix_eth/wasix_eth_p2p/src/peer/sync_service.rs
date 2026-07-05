@@ -98,7 +98,7 @@ impl SyncService {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                info!("[Sync Service] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), peer_id);
+                debug!("[Sync Service] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), peer_id);
                 let Some(sync) = self.sync_provider().await else {
                     return;
                 };
@@ -108,7 +108,7 @@ impl SyncService {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                info!("[Sync Service] Received {} Transactions from {}", m.0.len(), peer_id);
+                debug!("[Sync Service] Received {} Transactions from {}", m.0.len(), peer_id);
                 let Some(sync) = self.sync_provider().await else {
                     return;
                 };
@@ -118,7 +118,7 @@ impl SyncService {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                info!("[Sync Service] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), peer_id);
+                debug!("[Sync Service] Received {} NewPooledTransactionHashes from {}", m.hashes.len(), peer_id);
                 let Some(sync) = self.sync_provider().await else {
                     return;
                 };
@@ -130,31 +130,46 @@ impl SyncService {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                self.handle_get_block_headers(peer_id, req).await;
+                let service = self.clone();
+                tokio::spawn(async move {
+                    service.handle_get_block_headers(peer_id, req).await;
+                });
             }
             GossipMessage::GetBlockBodies(peer_id, session_id, req) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                self.handle_get_block_bodies(peer_id, req).await;
+                let service = self.clone();
+                tokio::spawn(async move {
+                    service.handle_get_block_bodies(peer_id, req).await;
+                });
             }
             GossipMessage::GetPooledTransactions(peer_id, session_id, req) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                self.handle_get_pooled_transactions(peer_id, req).await;
+                let service = self.clone();
+                tokio::spawn(async move {
+                    service.handle_get_pooled_transactions(peer_id, req).await;
+                });
             }
             GossipMessage::GetReceipts(peer_id, session_id, req) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                self.handle_get_receipts(peer_id, req).await;
+                let service = self.clone();
+                tokio::spawn(async move {
+                    service.handle_get_receipts(peer_id, req).await;
+                });
             }
             GossipMessage::GetNodeData(peer_id, session_id, req) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                self.handle_get_node_data(peer_id, req).await;
+                let service = self.clone();
+                tokio::spawn(async move {
+                    service.handle_get_node_data(peer_id, req).await;
+                });
             }
             GossipMessage::NewBlockHashes(peer_id, session_id, m) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
@@ -166,6 +181,7 @@ impl SyncService {
     }
 
     async fn handle_get_block_headers(&self, peer_id: String, req: RequestPair<GetBlockHeaders>) {
+        debug!("[Sync Service] Received GetBlockHeaders (id: {}, amount: {}) from {}", req.request_id, req.message.amount, peer_id);
         let session = match self.peer_manager.registry.get_session(&peer_id).await {
             Some(s) => s,
             None => return,
@@ -194,14 +210,17 @@ impl SyncService {
             }
         }
 
+        let header_count = headers.len();
         let response = RequestPair {
             request_id: req.request_id,
             message: BlockHeaders(headers),
         };
         let _ = session.send_block_headers(response).await;
+        debug!("[Sync Service] Sent {} BlockHeaders (id: {}) to {}", header_count, req.request_id, peer_id);
     }
 
     async fn handle_get_block_bodies(&self, peer_id: String, req: RequestPair<GetBlockBodies>) {
+        debug!("[Sync Service] Received GetBlockBodies (id: {}, hashes: {}) from {}", req.request_id, req.message.0.len(), peer_id);
         let session = match self.peer_manager.registry.get_session(&peer_id).await {
             Some(s) => s,
             None => return,
@@ -214,11 +233,13 @@ impl SyncService {
             }
         }
 
+        let body_count = bodies.len();
         let response = RequestPair {
             request_id: req.request_id,
             message: BlockBodies(bodies),
         };
         let _ = session.send_block_bodies(response).await;
+        debug!("[Sync Service] Sent {} BlockBodies (id: {}) to {}", body_count, req.request_id, peer_id);
     }
 
     async fn handle_get_pooled_transactions(&self, peer_id: String, req: RequestPair<GetPooledTransactions>) {

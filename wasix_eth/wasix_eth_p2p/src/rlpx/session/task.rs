@@ -278,14 +278,27 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
     }
 
     async fn handle_eth_message(&mut self, eth_id: u8, payload: Vec<u8>) -> bool {
+        debug!("[P2P Session] Received ETH message ID: {} from {}", eth_id, self.peer_id);
         match EthMessageID::decode(&mut &vec![eth_id][..]) {
             Ok(EthMessageID::Status) => self.handle_status(payload).await,
             Ok(EthMessageID::NewBlockHashes) => self.handle_new_block_hashes(payload).await,
             Ok(EthMessageID::Transactions) => self.handle_transactions(payload).await,
-            Ok(EthMessageID::GetBlockHeaders) => self.handle_get_block_headers(payload).await,
-            Ok(EthMessageID::BlockHeaders) => self.handle_block_headers(payload).await,
-            Ok(EthMessageID::GetBlockBodies) => self.handle_get_block_bodies(payload).await,
-            Ok(EthMessageID::BlockBodies) => self.handle_block_bodies(payload).await,
+            Ok(EthMessageID::GetBlockHeaders) => {
+                debug!("[P2P Session] Handling GetBlockHeaders from {}", self.peer_id);
+                self.handle_get_block_headers(payload).await
+            }
+            Ok(EthMessageID::BlockHeaders) => {
+                debug!("[P2P Session] Handling BlockHeaders from {}", self.peer_id);
+                self.handle_block_headers(payload).await
+            }
+            Ok(EthMessageID::GetBlockBodies) => {
+                debug!("[P2P Session] Handling GetBlockBodies from {}", self.peer_id);
+                self.handle_get_block_bodies(payload).await
+            }
+            Ok(EthMessageID::BlockBodies) => {
+                debug!("[P2P Session] Handling BlockBodies from {}", self.peer_id);
+                self.handle_block_bodies(payload).await
+            }
             Ok(EthMessageID::GetPooledTransactions) => self.handle_get_pooled_transactions(payload).await,
             Ok(EthMessageID::PooledTransactions) => self.handle_pooled_transactions(payload).await,
             Ok(EthMessageID::GetReceipts) => self.handle_get_receipts(payload).await,

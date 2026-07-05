@@ -8,13 +8,14 @@ use alloy_primitives::{B256, U256};
 use alloy_rpc_types::engine::ForkchoiceState;
 use alloy_rpc_types::SyncInfo;
 use std::sync::Arc;
+use std::time::Duration;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
 use wasix_eth_storage::HeaderProvider;
 use wasix_eth_types::sync::{PeerProvider, SyncProvider};
 use wasix_eth_types::{async_trait, Block, ChainConfig, Hardfork, SyncStatus, Transaction};
 use wasix_eth_utils::metrics::{CHAIN_HEAD_AGE, CURRENT_HEAD_BLOCK, SYNC_REMAINING_BLOCKS, SYNC_STATUS, SYNC_TARGET_HEIGHT};
-use wasix_eth_utils::{debug, error, info};
+use wasix_eth_utils::{debug, error, info, warn};
 
 pub struct SyncController {
     read_storage: DatabaseReadProvider,
@@ -79,8 +80,12 @@ impl SyncController {
             }
         };
 
-        if let Some((target_hash, affinity_peer)) = self.sync_registry.pop_target().await {
-            debug!("[Sync] Attempting to sync specific target {:?} (affinity: {:?})", target_hash, affinity_peer);
+        if let Some(target) = self.sync_registry.pop_target().await {
+            let target_hash = target.hash;
+            let affinity_peer = target.peer_id;
+            let retries = target.retries;
+
+            debug!("[Sync] Attempting to sync specific target {:?} (affinity: {:?}, retries: {})", target_hash, affinity_peer, retries);
             
             let mut sync_peer: Option<String> = None;
             if let Some(peer_id) = affinity_peer.as_ref() {
@@ -104,17 +109,31 @@ impl SyncController {
             if let Some(peer_id) = sync_peer {
                 if let Err(e) = self.fetch_ancestors(&peer_id, target_hash, target_hash).await {
                      error!("[Sync] Failed to fetch target ancestor {:?}: {}", target_hash, e);
-                     // Put it back if it's a transient error like a timeout
-                     let err_str = e.to_string();
-                     if err_str.contains("timed out") || err_str.contains("Session closed") || err_str.contains("channel closed") {
-                         debug!("[Sync] Transient error, putting target {:?} back in registry", target_hash);
-                         self.sync_registry.add_target(target_hash, None, self.chain_manager.clone()).await;
+                     
+                     if retries < 5 {
+                         // Put it back if it's a transient error like a timeout
+                         let err_str = e.to_string();
+                         if err_str.contains("timed out") || err_str.contains("Session closed") || err_str.contains("channel closed") {
+                             debug!("[Sync] Transient error, putting target {:?} back in registry (retry {})", target_hash, retries + 1);
+                             tokio::time::sleep(Duration::from_secs(1)).await;
+                             self.sync_registry.add_target_with_retries(target_hash, None, retries + 1, self.chain_manager.clone()).await;
+                         } else {
+                             // Other error, maybe not found?
+                             debug!("[Sync] Non-transient error fetching target {:?}, retrying anyway (retry {})", target_hash, retries + 1);
+                             self.sync_registry.add_target_with_retries(target_hash, None, retries + 1, self.chain_manager.clone()).await;
+                         }
+                     } else {
+                         warn!("[Sync] Maximum retries reached for target {:?}, dropping it", target_hash);
                      }
                 }
             } else {
                 debug!("[Sync] No peers found for target {:?}, triggering broadened discovery", target_hash);
-                // Put it back
-                self.sync_registry.add_target(target_hash, affinity_peer, self.chain_manager.clone()).await;
+                // Put it back if we haven't reached max retries
+                if retries < 5 {
+                    self.sync_registry.add_target_with_retries(target_hash, affinity_peer, retries + 1, self.chain_manager.clone()).await;
+                } else {
+                    warn!("[Sync] Maximum retries reached for target {:?} without finding peers, dropping it", target_hash);
+                }
             }
         }
 
