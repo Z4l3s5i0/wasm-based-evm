@@ -1,9 +1,7 @@
-use crate::chain_manager::InvalidationReason;
 use crate::mempool::mempool_provider::MempoolProvider;
 use crate::sync::downloader::Downloader;
 use crate::sync::processor::BlockProcessor;
 use crate::sync::registry::SyncRegistry;
-use crate::ChainManager;
 use alloy_primitives::{B256, U256};
 use alloy_rpc_types::engine::ForkchoiceState;
 use alloy_rpc_types::SyncInfo;
@@ -13,7 +11,7 @@ use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
 use wasix_eth_storage::HeaderProvider;
 use wasix_eth_types::sync::{PeerProvider, SyncProvider};
-use wasix_eth_types::{async_trait, Block, ChainConfig, Hardfork, SyncStatus, Transaction};
+use wasix_eth_types::{async_trait, Block, ChainConfig, ChainManager, Hardfork, InvalidationReason, SyncStatus, Transaction};
 use wasix_eth_utils::metrics::{CHAIN_HEAD_AGE, CURRENT_HEAD_BLOCK, SYNC_REMAINING_BLOCKS, SYNC_STATUS, SYNC_TARGET_HEIGHT};
 use wasix_eth_utils::{debug, error, info, warn};
 
@@ -49,11 +47,19 @@ impl SyncController {
 
     pub async fn start(&self) {
         info!("[Sync] Starting synchronization controller...");
+        let notify = self.sync_registry.subscribe();
         loop {
             if let Err(e) = self.sync_step().await {
                 error!("[Sync] Sync step failed: {}", e);
             }
-            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+            
+            // Wait for 1s OR for a new target notification
+            tokio::select! {
+                _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {},
+                _ = notify.notified() => {
+                    debug!("[Sync] Notified of new sync target, waking up...");
+                }
+            }
         }
     }
 
@@ -482,8 +488,20 @@ impl SyncProvider for SyncController {
         self.chain_manager.has_block(hash).await
     }
 
+    async fn get_block_by_hash(&self, hash: B256) -> anyhow::Result<Option<Block<Transaction>>> {
+        if let Ok(Some(block)) = self.read_storage.block_by_hash(hash) {
+            return Ok(Some(block));
+        }
+        let block = self.processor.engine.payload_processor.block_tree.get_block(hash).await;
+        if block.is_some() {
+            debug!("[SyncController] Found block {:?} in block tree", hash);
+        }
+        Ok(block)
+    }
+
     async fn process_gossip_block(&self, block: Block<Transaction>, _td: U256) -> anyhow::Result<()> {
         let block_hash = block.header.hash_slow();
+        let parent_hash = block.header.parent_hash;
         let block_num = block.header.number;
         let block_timestamp = block.header.timestamp;
 
@@ -504,19 +522,33 @@ impl SyncProvider for SyncController {
         }
 
         // 2) Import the block to make it available in storage (side branches included)
-        self.processor.process_block(block).await?;
+        let process_result = self.processor.process_block(block).await;
 
         // 3) Post‑Merge rule: Do NOT alter canonical head from P2P gossip
         //    In Paris/Shanghai and later, forkchoice is dictated by the CL via Engine API.
         let active_fork = Hardfork::get_active_fork(&chain_config, block_num, block_timestamp);
         if active_fork >= Hardfork::Paris {
+            // Check if we failed because of missing parent
+            if let Err(ref e) = process_result {
+                let err_str = e.to_string();
+                if err_str.contains("Parent block") && err_str.contains("not found") {
+                    debug!(
+                        "[Sync] Gossip block #{} ({}) parent {:?} is missing. Adding to sync targets.",
+                        block_num, block_hash, parent_hash
+                    );
+                    self.sync_registry.add_target(parent_hash, None, self.chain_manager.clone()).await;
+                }
+            }
+
             // Keep database populated; wait for CL `forkchoiceUpdated` to move head.
             debug!(
                 "[Sync] Imported post‑merge gossip block #{} ({}); head update deferred to Engine API",
                 block_num, block_hash
             );
-            return Ok(());
+            return process_result;
         }
+
+        process_result?;
 
         // 4) Pre‑merge fallback: only move head forward if this block directly extends the head
         let (curr_head_hash, curr_head_num) = self.chain_manager.head_block().await;

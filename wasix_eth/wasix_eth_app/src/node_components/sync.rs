@@ -1,7 +1,7 @@
 use wasix_eth_core::gossip::gossip_bridge::GossipBridge;
 use wasix_eth_core::gossip::GossipService;
 use wasix_eth_core::sync::registry::SyncRegistry;
-use wasix_eth_core::{Engine, ChainManager};
+use wasix_eth_core::{Engine};
 use wasix_eth_p2p::{SyncService, PeerManager};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_types::sync::SyncProvider;
@@ -10,6 +10,7 @@ use std::sync::Arc;
 use tokio::task::JoinHandle;
 use wasix_eth_core::sync::controller::SyncController;
 use wasix_eth_core::sync::processor::BlockProcessor;
+use wasix_eth_types::ChainManager;
 
 #[derive(Clone)]
 pub struct SyncPayload {

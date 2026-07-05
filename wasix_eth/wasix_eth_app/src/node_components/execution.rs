@@ -7,11 +7,11 @@ use wasix_eth_core::mempool::mempool::Mempool;
 use wasix_eth_core::engine::canonicality_tracker::CanonicalState;
 use wasix_eth_core::engine::sidechain_tracker::BlockTree;
 use wasix_eth_core::engine::reorg_manager::ReorgHandler;
-use wasix_eth_core::{ChainManager, ChainManagerImpl, Engine, EthConsensus};
+use wasix_eth_core::{ChainManagerImpl, Engine, EthConsensus};
 use wasix_eth_core::sync::registry::SyncRegistry;
 use wasix_eth_execution::execution_provider::EthExecutionProvider;
 use wasix_eth_storage::{read::DatabaseReadProvider, write::DatabaseWriteProvider};
-use wasix_eth_types::U256;
+use wasix_eth_types::{ChainManager, U256};
 
 #[derive(Clone)]
 pub struct ExecutionPayload {

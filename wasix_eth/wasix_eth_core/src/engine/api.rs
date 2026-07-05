@@ -1,6 +1,5 @@
 use crate::engine::canonicality_tracker::CanonicalState;
 use crate::account_manager::AccountManager;
-use crate::chain_manager::ChainManager;
 use crate::mempool::mempool_provider::MempoolProvider;
 use crate::{Consensus, EngineEvent};
 use alloy_rlp::{Decodable, Encodable};
@@ -18,7 +17,7 @@ use wasix_eth_storage::read_traits::StorageProvider;
 use wasix_eth_storage::read_traits::TransactionProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_types::error::{RpcError, RpcResult};
-use wasix_eth_types::Address;
+use wasix_eth_types::{Address, ChainManager};
 use wasix_eth_types::Block;
 use wasix_eth_types::BlockId;
 use wasix_eth_types::BlockNumberOrTag;

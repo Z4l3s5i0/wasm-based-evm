@@ -1,3 +1,5 @@
+pub mod chain;
+pub use chain::*;
 pub mod sync;
 pub mod genesis;
 pub mod p2p;
@@ -6,6 +8,7 @@ pub mod error;
 pub mod admin;
 pub mod engine_types;
 
+pub use chain::*;
 pub use alloy_consensus::TxEip4844Variant;
 
 pub use alloy_eips::eip4788::{BEACON_ROOTS_CODE};

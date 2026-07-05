@@ -4,7 +4,7 @@ use wasix_eth_utils::identity::Identity;
 use wasix_eth_storage::{read::DatabaseReadProvider, write::DatabaseWriteProvider, read_traits::BlockProvider};
 use wasix_eth_types::sync::NoopSync;
 use wasix_eth_core::mempool::mempool::Mempool;
-use wasix_eth_types::ChainConfig;
+use wasix_eth_types::{ChainConfig, ChainManager};
 use std::sync::Arc;
 use std::error::Error;
 use std::path::PathBuf;
@@ -35,6 +35,7 @@ impl NetworkPayload {
         read_provider: Arc<DatabaseReadProvider>,
         write_provider: Arc<DatabaseWriteProvider>,
         mempool: Arc<Mempool>,
+        chain_manager: Arc<dyn ChainManager>,
         chain_id: u64,
         chain_config: ChainConfig,
     ) -> Result<Self, Box<dyn Error>> {
@@ -54,6 +55,7 @@ impl NetworkPayload {
             chain_id,
             genesis_hash,
             chain_config,
+            chain_manager,
         ));
 
         let bind_ip_discovery = std::net::IpAddr::V4(std::net::Ipv4Addr::new(0, 0, 0, 0));

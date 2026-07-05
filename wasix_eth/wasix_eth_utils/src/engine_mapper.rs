@@ -23,6 +23,7 @@ use wasix_eth_types::U256;
 use wasix_eth_types::B256;
 use wasix_eth_types::Hardfork;
 use wasix_eth_types::ChainConfig;
+use wasix_eth_types::{TxEip4844Variant, Signed, TxEip4844};
 
 /// Encode a transaction for inclusion in an execution payload.
 /// For EIP-4844 blob transactions, this strips the sidecar and encodes
@@ -31,7 +32,6 @@ fn encode_tx_for_payload(tx: &Transaction) -> Vec<u8> {
     match tx {
         Transaction::Eip4844(signed_tx) => {
             // Strip sidecar: re-create a Signed<TxEip4844Variant> with just TxEip4844
-            use wasix_eth_types::{TxEip4844Variant, Signed, TxEip4844};
             let inner_tx: TxEip4844 = match signed_tx.tx() {
                 TxEip4844Variant::TxEip4844(tx) => tx.clone(),
                 TxEip4844Variant::TxEip4844WithSidecar(tx_sidecar) => tx_sidecar.tx.clone(),

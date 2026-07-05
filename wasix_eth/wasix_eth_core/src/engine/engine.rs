@@ -1,9 +1,8 @@
 use crate::engine::canonicality_tracker::CanonicalState;
-use crate::engine::sidechain_tracker::{BlockTree, InvalidationReason};
+use crate::engine::sidechain_tracker::{BlockTree};
 use crate::engine::reorg_manager::ReorgHandler;
 use crate::sync::registry::SyncRegistry;
 use crate::account_manager::AccountManager;
-use crate::ChainManager;
 use crate::engine::payload_builder::PayloadBuilder;
 use crate::engine::payload_processor::PayloadProcessor;
 use crate::mempool::mempool_provider::MempoolProvider;
@@ -22,7 +21,7 @@ use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_types::eip6110_utils::encode_deposit_request;
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::sync::SyncProvider;
-use wasix_eth_types::{Block, Header, Hardfork};
+use wasix_eth_types::{Block, Header, Hardfork, ChainManager, InvalidationReason};
 use wasix_eth_types::BlockId;
 use wasix_eth_types::BlockNumberOrTag;
 use wasix_eth_types::Bytes;
@@ -96,6 +95,18 @@ impl SyncProvider for Engine {
     async fn has_block(&self, hash: B256) -> bool {
         self.chain.has_block(hash).await
     }
+
+    async fn get_block_by_hash(&self, hash: B256) -> wasix_eth_types::Result<Option<Block<Transaction>>> {
+        if let Ok(Some(block)) = self.read_storage.block_by_hash(hash) {
+            return Ok(Some(block));
+        }
+        let block = self.payload_processor.block_tree.get_block(hash).await;
+        if block.is_some() {
+            debug!("[Engine] Found block {:?} in block tree", hash);
+        }
+        Ok(block)
+    }
+
     async fn process_gossip_block(&self, block: Block<Transaction>, _td: U256) -> wasix_eth_types::Result<()> {
         self.import_block(block).await
     }

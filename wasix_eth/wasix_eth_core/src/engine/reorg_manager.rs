@@ -3,9 +3,8 @@ use wasix_eth_storage::{AccountWriter, BlockProvider, BlockWriter, ChangeSetProv
 use wasix_eth_storage::codecs::RedbRlp;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
-use wasix_eth_types::{Block, BlockId, Transaction, TrieAccount};
+use wasix_eth_types::{Block, BlockId, ReorgContext, Transaction, TrieAccount};
 use wasix_eth_utils::{debug, info};
-use crate::chain_manager::ReorgContext;
 
 use crate::engine::canonicality_tracker::CanonicalState;
 use std::sync::Arc;

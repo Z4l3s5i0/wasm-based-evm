@@ -6,7 +6,7 @@ use crate::peer::discovery_manager::DiscoveryManager;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_utils::identity::Identity;
-use wasix_eth_types::ChainConfig;
+use wasix_eth_types::{ChainConfig, ChainManager};
 use alloy_primitives::B256;
 use tokio::sync::mpsc;
 use crate::discovery::v4_service::DiscoveryV4Service;
@@ -29,6 +29,7 @@ impl PeerManager {
         network_id: u64,
         genesis_hash: B256,
         chain_config: ChainConfig,
+        chain_manager: Arc<dyn ChainManager>,
     ) -> Self {
         let registry = Arc::new(PeerRegistry::new(
             read_provider.clone(),
@@ -41,6 +42,7 @@ impl PeerManager {
             network_id,
             genesis_hash,
             chain_config,
+            chain_manager,
         ));
 
         let dialer = Arc::new(PeerDialer::new(

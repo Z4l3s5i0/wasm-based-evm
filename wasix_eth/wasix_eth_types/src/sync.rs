@@ -14,6 +14,7 @@ pub trait SyncProvider: Send + Sync {
     async fn status(&self) -> SyncStatus;
     async fn trigger_sync(&self) -> Result<()>;
     async fn has_block(&self, hash: B256) -> bool;
+    async fn get_block_by_hash(&self, hash: B256) -> Result<Option<Block<Transaction>>>;
     async fn process_gossip_block(&self, block: Block<Transaction>, td: alloy_primitives::U256) -> Result<()>;
     async fn process_gossip_transactions(&self, txs: Vec<Transaction>) -> Result<()>;
     async fn process_pooled_transactions(&self, txs: Vec<crate::TxPooledEnvelope>) -> Result<()>;
@@ -66,6 +67,9 @@ impl SyncProvider for NoopSync {
     }
     async fn has_block(&self, _hash: B256) -> bool {
         false
+    }
+    async fn get_block_by_hash(&self, _hash: B256) -> Result<Option<Block<Transaction>>> {
+        Ok(None)
     }
     async fn process_gossip_block(&self, _block: Block<Transaction>, _td: alloy_primitives::U256) -> Result<()> {
         Ok(())

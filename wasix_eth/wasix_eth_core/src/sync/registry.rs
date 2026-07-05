@@ -1,7 +1,7 @@
 use std::collections::VecDeque;
 use std::sync::Arc;
 use tokio::sync::{Notify, RwLock};
-use wasix_eth_types::B256;
+use wasix_eth_types::{ChainManager, B256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SyncStatus {
@@ -32,11 +32,11 @@ impl SyncRegistry {
         }
     }
 
-    pub async fn add_target(&self, hash: B256, peer_id: Option<String>, chain_manager: Arc<dyn crate::ChainManager>) {
+    pub async fn add_target(&self, hash: B256, peer_id: Option<String>, chain_manager: Arc<dyn ChainManager>) {
         self.add_target_with_retries(hash, peer_id, 0, chain_manager).await;
     }
 
-    pub async fn add_target_with_retries(&self, hash: B256, peer_id: Option<String>, retries: u32, chain_manager: Arc<dyn crate::ChainManager>) {
+    pub async fn add_target_with_retries(&self, hash: B256, peer_id: Option<String>, retries: u32, chain_manager: Arc<dyn ChainManager>) {
         if chain_manager.has_block(hash).await {
             return; // Already have it
         }

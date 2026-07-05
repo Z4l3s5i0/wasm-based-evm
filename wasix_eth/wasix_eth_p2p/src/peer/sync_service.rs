@@ -194,16 +194,38 @@ impl SyncService {
         for _ in 0..req.message.amount {
             let header = match current_id {
                 wasix_eth_types::p2p::BlockHashOrNumber::Number(n) => self.read_provider.header(wasix_eth_types::BlockId::Number(wasix_eth_types::BlockNumberOrTag::Number(n))),
-                wasix_eth_types::p2p::BlockHashOrNumber::Hash(h) => self.read_provider.header(wasix_eth_types::BlockId::Hash(h.into())),
+                wasix_eth_types::p2p::BlockHashOrNumber::Hash(h) => {
+                    let h_res = self.read_provider.header(wasix_eth_types::BlockId::Hash(h.into()));
+                    if let Ok(Some(header)) = h_res {
+                        Ok(Some(header))
+                    } else {
+                        // Try sync provider (which checks block tree)
+                        debug!("[Sync Service] Header for {:?} not found in storage, trying SyncProvider", h);
+                        match self.get_block_by_hash(h).await {
+                            Ok(Some(block)) => {
+                                debug!("[Sync Service] Header for {:?} found in SyncProvider (BlockTree)", h);
+                                Ok(Some(block.header))
+                            },
+                            Ok(None) => {
+                                debug!("[Sync Service] Header for {:?} not found in SyncProvider", h);
+                                h_res
+                            }
+                            Err(e) => {
+                                error!("[Sync Service] Error getting block for {:?} from SyncProvider: {}", h, e);
+                                h_res
+                            }
+                        }
+                    }
+                }
             };
 
             if let Ok(Some(h)) = header {
-                headers.push(h);
+                headers.push(h.clone());
                 if req.message.reverse {
                     if current_id.as_number().unwrap_or(0) < skip + 1 { break; }
                     current_id = wasix_eth_types::p2p::BlockHashOrNumber::Number(current_id.as_number().unwrap_or(0) - skip - 1);
                 } else {
-                    current_id = wasix_eth_types::p2p::BlockHashOrNumber::Number(current_id.as_number().unwrap_or(0) + skip + 1);
+                    current_id = wasix_eth_types::p2p::BlockHashOrNumber::Number(h.number + skip + 1);
                 }
             } else {
                 break;
@@ -230,6 +252,20 @@ impl SyncService {
         for hash in req.message.0 {
             if let Ok(Some(body)) = self.read_provider.block_body_by_hash(hash) {
                 bodies.push(body);
+            } else {
+                debug!("[Sync Service] Body for {:?} not found in storage, trying SyncProvider", hash);
+                match self.get_block_by_hash(hash).await {
+                    Ok(Some(block)) => {
+                        debug!("[Sync Service] Body for {:?} found in SyncProvider (BlockTree)", hash);
+                        bodies.push(block.body);
+                    },
+                    Ok(None) => {
+                        debug!("[Sync Service] Body for {:?} not found in SyncProvider", hash);
+                    }
+                    Err(e) => {
+                        error!("[Sync Service] Error getting block for {:?} from SyncProvider: {}", hash, e);
+                    }
+                }
             }
         }
 
@@ -411,7 +447,13 @@ impl SyncService {
     }
 
     pub async fn get_block_by_hash(&self, hash: B256) -> Result<Option<Block<Transaction>>> {
-        self.read_provider.block_by_hash(hash)
+        if let Ok(Some(block)) = self.read_provider.block_by_hash(hash) {
+            return Ok(Some(block));
+        }
+        if let Some(sync) = self.sync_provider().await {
+            return sync.get_block_by_hash(hash).await;
+        }
+        Ok(None)
     }
 
     pub async fn latest_block_number(&self) -> Result<Option<u64>> {

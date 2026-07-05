@@ -3,10 +3,9 @@ use alloy_primitives::B256;
 use alloy_rpc_types::RpcBlockHash;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, HeaderProvider};
-use wasix_eth_types::{BlockId, BlockNumberOrTag, ForkchoiceState, ForkchoiceUpdated, Header};
+use wasix_eth_types::{BlockId, BlockNumberOrTag, ChainManager, ForkchoiceState, ForkchoiceUpdated, Header};
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_utils::{debug, error, warn};
-use crate::ChainManager;
 
 #[derive(Clone)]
 pub struct ForkchoiceValidator {

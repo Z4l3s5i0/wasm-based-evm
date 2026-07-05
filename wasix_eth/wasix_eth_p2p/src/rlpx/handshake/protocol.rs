@@ -33,10 +33,10 @@ pub async fn create_local_status<S: AsyncReadExt + AsyncWriteExt + Unpin>(
     registry: &PeerRegistry,
     stream: &RlpxStream<S>,
 ) -> Result<StatusMessage> {
-    let head_hash = registry.read_provider.forkchoice("head").ok().flatten()
-        .unwrap_or(registry.genesis_hash);
-    let latest_height = registry.read_provider.latest_block_number().ok().flatten().unwrap_or_default();
+    let (head_hash, latest_height) = registry.chain_manager.head_block().await;
     
+    wasix_eth_utils::debug!("[P2P Handshake] Creating local status: head_hash={:?}, latest_height={}, genesis_hash={:?}", head_hash, latest_height, registry.genesis_hash);
+
     let head_td = registry.read_provider.header_td(head_hash).ok().flatten()
         .unwrap_or_default();
 
@@ -53,7 +53,7 @@ pub async fn create_local_status<S: AsyncReadExt + AsyncWriteExt + Unpin>(
         total_difficulty: head_td,
         blockhash: head_hash,
         genesis: registry.genesis_hash,
-        forkid: registry.get_fork_id(),
+        forkid: registry.get_fork_id().await,
     };
 
     if negotiated_version >= EthVersion::Eth69 {
@@ -61,7 +61,7 @@ pub async fn create_local_status<S: AsyncReadExt + AsyncWriteExt + Unpin>(
             version: negotiated_version,
             chain: registry.network_id,
             genesis: registry.genesis_hash,
-            forkid: registry.get_fork_id(),
+            forkid: registry.get_fork_id().await,
             earliest: registry.read_provider.header(BlockId::Number(BlockNumberOrTag::Earliest)).ok().flatten().map(|h| h.number).unwrap_or(0),
             latest: latest_height,
             blockhash: head_hash,
@@ -231,9 +231,8 @@ pub async fn do_eth_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(
         return Err(anyhow!("Remote genesis hash mismatch: expected {}, got {}", registry.genesis_hash, remote_genesis));
     }
 
-    let head_hash = registry.read_provider.forkchoice("head").ok().flatten().unwrap_or(registry.genesis_hash);
+    let (head_hash, head_num) = registry.chain_manager.head_block().await;
     let head = registry.read_provider.header(BlockId::Hash(head_hash.into())).ok().flatten();
-    let head_num = head.as_ref().map(|h| h.number).unwrap_or(0);
     let head_time = head.as_ref().map(|h| h.timestamp).unwrap_or(0);
 
     let genesis = registry.read_provider.header(BlockId::Hash(registry.genesis_hash.into())).ok().flatten();

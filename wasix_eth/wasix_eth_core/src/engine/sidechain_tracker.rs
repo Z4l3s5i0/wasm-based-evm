@@ -1,15 +1,7 @@
 use alloy_primitives::B256;
 use std::collections::HashMap;
 use tokio::sync::RwLock;
-use wasix_eth_types::{Block, Transaction};
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum InvalidationReason {
-    /// Protocol violation, should never be retried.
-    Hard,
-    /// Transient error (e.g. missing blobs), can be retried.
-    Soft,
-}
+use wasix_eth_types::{Block, Transaction, InvalidationReason};
 
 pub struct BlockTree {
     /// Memory pool for blocks not yet canonical or ancestors unknown

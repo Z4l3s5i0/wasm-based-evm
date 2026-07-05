@@ -6,7 +6,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::PeerDiscoveryWriter;
-use wasix_eth_types::{async_trait, ChainConfig, PeerEntry, BlockId};
+use wasix_eth_types::{async_trait, ChainConfig, PeerEntry, BlockId, ChainManager};
 use wasix_eth_utils::identity::Identity;
 use wasix_eth_utils::metrics::{CONNECTED_PEERS, P2P_PEERS_CONNECTED, P2P_PEERS_DISCONNECTED};
 use wasix_eth_utils::{debug, info};
@@ -41,6 +41,7 @@ pub struct PeerRegistry {
     pub network_id: u64,
     pub genesis_hash: B256,
     pub chain_config: ChainConfig,
+    pub chain_manager: Arc<dyn ChainManager>,
     discovery_service_v4: Arc<Mutex<Option<Arc<crate::discovery::v4_service::DiscoveryV4Service>>>>,
     gossip_tx: Arc<Mutex<Option<mpsc::Sender<wasix_eth_types::p2p::GossipMessage>>>>,
     disconnect_tx: mpsc::Sender<DisconnectEvent>,
@@ -118,6 +119,7 @@ impl PeerRegistry {
         network_id: u64,
         genesis_hash: B256,
         chain_config: ChainConfig,
+        chain_manager: Arc<dyn ChainManager>,
     ) -> Self {
         let (disconnect_tx, mut disconnect_rx) = mpsc::channel(100);
         let registry = Self {
@@ -131,6 +133,7 @@ impl PeerRegistry {
             network_id,
             genesis_hash,
             chain_config,
+            chain_manager,
             discovery_service_v4: Arc::new(Mutex::new(None)),
             gossip_tx: Arc::new(Mutex::new(None)),
             disconnect_tx,
@@ -222,15 +225,15 @@ impl PeerRegistry {
         self.local_identity.clone()
     }
 
-    pub fn get_fork_id(&self) -> wasix_eth_types::p2p::ForkId {
-        let head_hash = self.read_provider.forkchoice("head").ok().flatten().unwrap_or(self.genesis_hash);
+    pub async fn get_fork_id(&self) -> wasix_eth_types::p2p::ForkId {
+        let (head_hash, head_num) = self.chain_manager.head_block().await;
+        
         let head = self.read_provider.header(BlockId::Hash(head_hash.into())).ok().flatten();
-        let head_num = head.as_ref().map(|h| h.number).unwrap_or(0);
         let head_time = head.as_ref().map(|h| h.timestamp).unwrap_or(0);
 
         let genesis = self.read_provider.header(BlockId::Hash(self.genesis_hash.into())).ok().flatten();
         let genesis_time = genesis.as_ref().map(|h| h.timestamp).unwrap_or(0);
-        
+
         wasix_eth_types::p2p::ForkId::new(self.genesis_hash, &self.chain_config, head_num, head_time, genesis_time)
     }
 

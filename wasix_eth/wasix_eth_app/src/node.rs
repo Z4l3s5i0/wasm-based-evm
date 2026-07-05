@@ -1,13 +1,14 @@
 use std::error::Error;
 use std::path::PathBuf;
 use std::sync::Arc;
-use wasix_eth_core::{Engine, ChainManager};
+use wasix_eth_core::{Engine};
 use wasix_eth_core::engine::api::RPCEngine;
 use wasix_eth_p2p::{PeerManager, SyncService};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_core::mempool::mempool::Mempool;
 use wasix_eth_storage::read_traits::ChainProvider;
+use wasix_eth_types::ChainManager;
 use wasix_eth_types::sync::SyncProvider;
 use wasix_eth_types::genesis::GenesisConfiguration;
 use wasix_eth_utils::info;
@@ -144,6 +145,7 @@ impl Node {
             storage_payload.read_provider.clone(),
             storage_payload.write_provider.clone(),
             execution_payload.mempool.clone(),
+            execution_payload.chain_manager.clone(),
             chain_id,
             chain_config,
         ).await?;

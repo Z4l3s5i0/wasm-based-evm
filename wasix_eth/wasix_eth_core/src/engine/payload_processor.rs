@@ -1,8 +1,7 @@
 use futures_util::{future::BoxFuture, FutureExt};
 use crate::engine::canonicality_tracker::CanonicalState;
-use crate::engine::sidechain_tracker::{BlockTree, InvalidationReason};
+use crate::engine::sidechain_tracker::{BlockTree};
 use crate::sync::registry::SyncRegistry;
-use crate::ChainManager;
 use crate::Consensus;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -13,7 +12,7 @@ use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, HeaderProvide
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::{BlockWriter, HeaderWriter, TransactionWriter};
 use wasix_eth_types::error::{RpcError, RpcResult};
-use wasix_eth_types::{Block, BlockId, ChainConfig, PayloadStatus, PayloadStatusEnum, Transaction, B256, U256, proofs, Header, Hardfork};
+use wasix_eth_types::{Block, BlockId, ChainConfig, PayloadStatus, PayloadStatusEnum, Transaction, B256, U256, proofs, Header, Hardfork, ChainManager, InvalidationReason};
 use wasix_eth_utils::{debug, error, info, metrics::{BLOCK_EXECUTION_TIME, BLOCK_GAS_UTILIZATION}};
 use crate::engine::engine::EngineEvent;
 
