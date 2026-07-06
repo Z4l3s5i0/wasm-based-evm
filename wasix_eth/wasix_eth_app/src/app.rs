@@ -13,6 +13,8 @@ use wasix_eth_rpc::AdminService;
 use wasix_eth_rpc::DebugService;
 use wasix_eth_rpc::EngineService;
 use wasix_eth_rpc::EthService;
+use wasix_eth_rpc::NetService;
+use wasix_eth_rpc::Web3Service;
 use wasix_eth_rpc::RpcServerFacade;
 use wasix_eth_types::genesis::GenesisConfiguration;
 use wasix_eth_utils::logging;
@@ -338,11 +340,15 @@ impl AppBuilder {
             engine: node.engine.clone(),
         };
         let peer_manager = node.peer_manager.clone().expect("PeerManager is required for RPC");
-        let admin_service = AdminService::new(peer_manager, node.read_provider.clone(), ext_ip);
+        let admin_service = AdminService::new(peer_manager.clone(), node.read_provider.clone(), ext_ip);
+        let net_service = NetService::new(peer_manager);
+        let web3_service = Web3Service::new();
 
         eth_facade.register_debug(debug_service)?;
         eth_facade.register_eth(eth_service.clone())?;
         eth_facade.register_admin(admin_service)?;
+        eth_facade.register_net(net_service)?;
+        eth_facade.register_web3(web3_service)?;
 
         auth_facade.register_engine(engine_service)?;
         auth_facade.register_eth(eth_service)?;

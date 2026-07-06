@@ -7,6 +7,8 @@ pub mod eth;
 pub mod error;
 pub mod admin;
 pub mod engine_types;
+pub mod net;
+pub mod web3;
 
 pub use chain::*;
 pub use alloy_consensus::TxEip4844Variant;
