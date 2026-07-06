@@ -26,6 +26,8 @@ impl Downloader {
                 let td = session.eth_status().await.map(|s| s.total_difficulty).unwrap_or(U256::ZERO);
                 let height = session.best_height().await;
                 
+                wasix_eth_utils::info!("[Downloader] Peer {} has TD {} and height {}", peer_info.peer_id, td, height);
+
                 // Prioritize TD first, then height.
                 // If TD is zero (Eth69), we compare only by height.
                 let is_better = if td > max_td {

@@ -222,13 +222,9 @@ impl PeerDialer {
 
                         let gossip_tx = self.registry.get_gossip_tx().await;
                         let session_id = self.registry.next_session_id();
-                        let (session, task) = PeerSession::new(rlpx_stream, addr, session_id, gossip_tx, Some(self.registry.disconnect_tx()));
+                        let (session, task) = PeerSession::new(rlpx_stream, addr, session_id, gossip_tx, Some(self.registry.disconnect_tx()), Some(remote_status.clone()));
                         let session = Arc::new(session);
                         let head_hash = remote_block_hash;
-                        {
-                            let mut guard = session.status.lock().await;
-                            *guard = Some(remote_status);
-                        }
                         
                         // Register BEFORE spawning the task to avoid race
                         self.registry.register_session_arc(remote_id_hex.clone(), session_id, session.clone()).await;
@@ -246,16 +242,26 @@ impl PeerDialer {
                                     reverse: false,
                                 },
                             };
-                            if let Ok(Ok(response)) = timeout(
+                            match timeout(
                                 Duration::from_secs(5),
                                 session_clone.get_block_headers(request),
                             ).await {
-                                if let Some(header) = response.message.0.first() {
-                                    let mut h_guard = session_clone.best_height.lock().await;
-                                    if header.number > *h_guard {
-                                        *h_guard = header.number;
-                                        info!("[P2P Dialer] Set initial best_height for peer {} to {}", remote_id_clone, header.number);
+                                Ok(Ok(response)) => {
+                                    if let Some(header) = response.message.0.first() {
+                                        let mut h_guard = session_clone.best_height.lock().await;
+                                        if header.number > *h_guard {
+                                            *h_guard = header.number;
+                                            info!("[P2P Dialer] Set initial best_height for peer {} to {}", remote_id_clone, header.number);
+                                        }
+                                    } else {
+                                        info!("[P2P Dialer] Peer {} returned empty headers for head hash {:?}", remote_id_clone, head_hash);
                                     }
+                                }
+                                Ok(Err(e)) => {
+                                    error!("[P2P Dialer] Failed to fetch initial head header from peer {}: {}", remote_id_clone, e);
+                                }
+                                Err(_) => {
+                                    error!("[P2P Dialer] Initial head header fetch from peer {} timed out", remote_id_clone);
                                 }
                             }
                         });

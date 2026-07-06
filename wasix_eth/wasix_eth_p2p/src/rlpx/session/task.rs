@@ -75,14 +75,18 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
         
         loop {
             tokio::select! {
-                _ = ping_interval.tick() => {
-                    let _ = self.stream.send_p2p(&Ping {}, 0x02).await;
-                }
+                biased;
+                
                 Some(req) = self.request_rx.recv() => {
                     if let Err(_) = self.handle_request(req).await {
                         // Request handling failed in a way that should terminate session
                         break;
                     }
+                    // Yield to ensure the message is actually sent and the runtime gets a chance to poll other tasks
+                    tokio::task::yield_now().await;
+                }
+                _ = ping_interval.tick() => {
+                    let _ = self.stream.send_p2p(&Ping {}, 0x02).await;
                 }
                 res = self.stream.read_message() => {
                     {

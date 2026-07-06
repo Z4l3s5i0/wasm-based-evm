@@ -199,7 +199,10 @@ impl PayloadProcessor {
 
         if let Ok(ref status) = result {
             if status.status == PayloadStatusEnum::Valid {
-                self.revalidate_dependent_payloads(actual_hash).await;
+                let self_clone = self.clone();
+                tokio::spawn(async move {
+                    self_clone.revalidate_dependent_payloads(actual_hash).await;
+                });
             }
         }
 

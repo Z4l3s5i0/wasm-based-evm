@@ -30,11 +30,14 @@ impl SyncOrchestrator {
             // Wait for a notification that new targets are available
             notify.notified().await;
             
+            debug!("[SyncOrchestrator] Notified of new sync targets");
+            
             if let Err(e) = self.evaluate_and_trigger().await {
                 error!("[SyncOrchestrator] Error triggering sync: {}", e);
             }
 
-            sleep(Duration::from_secs(1)).await;
+            // Small cooldown to prevent tight loops if sync fails rapidly
+            sleep(Duration::from_millis(100)).await;
         }
     }
 

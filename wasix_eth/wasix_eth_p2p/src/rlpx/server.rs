@@ -100,12 +100,8 @@ impl P2pServer {
         
         let gossip_tx = registry.get_gossip_tx().await;
         let session_id = registry.next_session_id();
-        let (session, task) = PeerSession::new(rlpx_stream, addr, session_id, gossip_tx, Some(registry.disconnect_tx()));
+        let (session, task) = PeerSession::new(rlpx_stream, addr, session_id, gossip_tx, Some(registry.disconnect_tx()), Some(remote_status_msg.clone()));
         let session = Arc::new(session);
-        {
-            let mut guard = session.status.lock().await;
-            *guard = Some(remote_status_msg.clone());
-        }
 
         // Register BEFORE spawning the task to avoid race
         registry.register_session_arc(remote_id_hex.clone(), session_id, session.clone()).await;
@@ -124,16 +120,26 @@ impl P2pServer {
                     reverse: false,
                 },
             };
-            if let Ok(Ok(response)) = timeout(
+            match timeout(
                 Duration::from_secs(5),
                 session_clone.get_block_headers(request),
             ).await {
-                if let Some(header) = response.message.0.first() {
-                    let mut h_guard = session_clone.best_height.lock().await;
-                    if header.number > *h_guard {
-                        *h_guard = header.number;
-                        info!("[P2P] Set initial best_height for peer {} to {}", remote_id_clone, header.number);
+                Ok(Ok(response)) => {
+                    if let Some(header) = response.message.0.first() {
+                        let mut h_guard = session_clone.best_height.lock().await;
+                        if header.number > *h_guard {
+                            *h_guard = header.number;
+                            info!("[P2P Server] Set initial best_height for peer {} to {}", remote_id_clone, header.number);
+                        }
+                    } else {
+                        info!("[P2P Server] Peer {} returned empty headers for head hash {:?}", remote_id_clone, head_hash);
                     }
+                }
+                Ok(Err(e)) => {
+                    error!("[P2P Server] Failed to fetch initial head header from peer {}: {}", remote_id_clone, e);
+                }
+                Err(_) => {
+                    error!("[P2P Server] Initial head header fetch from peer {} timed out", remote_id_clone);
                 }
             }
         });

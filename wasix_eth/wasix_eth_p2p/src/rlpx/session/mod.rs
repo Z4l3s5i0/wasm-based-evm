@@ -37,12 +37,17 @@ impl PeerSession {
         session_id: u64,
         gossip_tx: Option<mpsc::Sender<GossipMessage>>,
         disconnect_tx: Option<mpsc::Sender<DisconnectEvent>>,
+        initial_status: Option<StatusMessage>,
     ) -> (Self, SessionTask<S>) 
     where S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin + Send + Sync + 'static
     {
         let (tx, rx) = mpsc::channel(32);
-        let status = Arc::new(Mutex::new(None));
-        let best_height = Arc::new(Mutex::new(0));
+        let status = Arc::new(Mutex::new(initial_status.clone()));
+        let mut initial_height = 0;
+        if let Some(StatusMessage::Eth69(s)) = &initial_status {
+            initial_height = s.latest;
+        }
+        let best_height = Arc::new(Mutex::new(initial_height));
         let last_activity = Arc::new(Mutex::new(Instant::now()));
         let is_initiator = stream.initiator;
 
