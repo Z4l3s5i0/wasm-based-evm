@@ -40,7 +40,7 @@ pub enum PartialFrame {
 impl RlpxStream<TcpStream> {
     pub async fn connect(addr: &str, _local_sk: &SecretKey, remote_id: &B512) -> Result<Self> {
         let stream = TcpStream::connect(addr).await?;
-        stream.set_nodelay(true)?;
+        // stream.set_nodelay(true)?;
         Ok(Self { 
             inner: stream, 
             remote_id: Some(*remote_id), 
@@ -56,7 +56,7 @@ impl RlpxStream<TcpStream> {
     }
 
     pub async fn accept(stream: TcpStream) -> Result<Self> {
-        stream.set_nodelay(true)?;
+        // stream.set_nodelay(true)?;
         Ok(Self { 
             inner: stream, 
             remote_id: None, 
@@ -152,8 +152,6 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         wasix_eth_utils::metrics::P2P_MESSAGES_SENT_BYTES.inc_by(frame.len() as f64);
         self.inner.write_all(&frame).await?;
         self.inner.flush().await?;
-        // In WASIX/Wasm environments, the runtime might not always flush the underlying socket immediately
-        // after a write/flush on the stream. Yielding here ensures the host-side has a chance to process the buffer.
         tokio::task::yield_now().await;
         Ok(())
     }
