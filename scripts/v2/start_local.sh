@@ -64,7 +64,26 @@ fi
 echo "Generating network configuration..."
 "$(dirname "$0")/config_gen.sh" --chain-id "$CHAIN_ID" --nodes "$NODES" --output "startup_v2"
 
-# 2. Calculate node counts
+# 2. Get External IP
+# Find the first non-loopback IPv4 address
+# Try to get it from the default route first, as it's the most reliable way to find the primary IP
+EXT_IP=$(ip -4 route get 1.1.1.1 2>/dev/null | grep -oP 'src \K\S+')
+if [ -z "$EXT_IP" ]; then
+    # Fallback 1: hostname -I
+    EXT_IP=$(hostname -I 2>/dev/null | awk '{print $1}')
+fi
+if [ -z "$EXT_IP" ]; then
+    # Fallback 2: get the first non-loopback IPv4 address from ip addr
+    EXT_IP=$(ip -4 addr show | grep 'inet ' | grep -v '127.0.0.1' | awk '{print $2}' | cut -d/ -f1 | head -n 1)
+fi
+
+if [ -z "$EXT_IP" ]; then
+    echo "Error: Could not determine external IP address."
+    exit 1
+fi
+echo "Using external IP: $EXT_IP"
+
+# 3. Calculate node counts
 read c_linux c_wasix <<< $(calculate_counts "$NODES" "$LINUX_RATIO" "$WASIX_RATIO")
 echo "Node counts: Linux=$c_linux, Wasix=$c_wasix"
 
@@ -137,7 +156,6 @@ for i in $(seq 0 $((NODES - 1))); do
     AUTH_PORT=$(get_auth_rpc_port "$i")
     DISC_PORT=$(get_discovery_port "$i")
     P2P_PORT=$(get_p2p_port "$i")
-    FE_PORT=$(get_frontend_port "$i")
     METRICS_PORT=$(get_metrics_port "$i")
     BN_RPC_PORT=$(get_beacon_rpc_port "$i")
     BN_P2P_PORT=$(get_beacon_p2p_port "$i")
@@ -147,7 +165,7 @@ for i in $(seq 0 $((NODES - 1))); do
     mkdir -p "$DATA_DIR/el" "$DATA_DIR/cl"
 
     # Append Execution Client
-    FLAGS="--data-dir /app/data --genesis-path /app/startup/genesis.json --peer-name $PEER_NAME --eth-rpc-port $ETH_PORT --auth-rpc-port $AUTH_PORT --p2p-port $P2P_PORT --discovery-port $DISC_PORT --frontend-port $FE_PORT --metrics-port $METRICS_PORT --auth-rpc-jwt-path /app/startup/jwt_$i.hex --bootstrap-registry http://metrics-server:9100"
+    FLAGS="--data-dir /app/data --genesis-path /app/startup/genesis.json --peer-name $PEER_NAME --eth-rpc-port $ETH_PORT --auth-rpc-port $AUTH_PORT --p2p-port $P2P_PORT --discovery-port $DISC_PORT --metrics-port $METRICS_PORT --auth-rpc-jwt-path /app/startup/jwt_$i.hex --bootstrap-registry http://metrics-server:9100 --ext-ip $EXT_IP"
     
     if [ "$TYPE" = "wasix" ]; then
         # Wasix nodes need init before run
@@ -186,7 +204,6 @@ for i in $(seq 0 $((NODES - 1))); do
       - "$AUTH_PORT:$AUTH_PORT"
       - "$P2P_PORT:$P2P_PORT"
       - "$DISC_PORT:$DISC_PORT/udp"
-      - "$FE_PORT:$FE_PORT"
       - "$METRICS_PORT:$METRICS_PORT"
     networks:
       - blockchain-net

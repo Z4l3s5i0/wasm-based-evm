@@ -8,7 +8,6 @@
 # Auth RPC: 8551
 # P2P Discovery: 30303
 # P2P Gossip: 30304
-# Frontend: 3000
 # Metrics: 9050
 # Beacon RPC: 5052
 # Beacon P2P: 9000
@@ -18,7 +17,6 @@ get_auth_rpc_port() { echo $((8551 + $1 * 10)); } # Spread them a bit more to av
 get_discovery_port() { echo $((30303 + $1 * 2)); }
 get_p2p_port() { echo $((30304 + $1 * 2)); }
 get_frontend_port() { echo $((3000 + $1)); }
-get_metrics_port() { echo $((9050 + $1)); }
 get_beacon_rpc_port() { echo $((5052 + $1)); }
 get_beacon_p2p_port() { echo $((9000 + $1)); }
 

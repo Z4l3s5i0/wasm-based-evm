@@ -120,10 +120,8 @@ impl RpcCollector {
 
         let val = if method == "eth_syncing" {
             syncing_to_numeric(value)
-        } else if let Some(s) = value.as_str() {
-            parse_hex_f64(s).unwrap_or(0.0)
         } else {
-            0.0
+            parse_hex_f64(value).unwrap_or(0.0)
         };
 
         // Update telemetry

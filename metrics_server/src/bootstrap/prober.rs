@@ -94,8 +94,8 @@ impl BootstrapProber {
 
     pub async fn probe_node_internal(node: &Node, timeout: Duration) -> Result<u64> {
         let client = EthereumRpcClient::new(node.rpc_url.clone(), timeout)?;
-        let chain_id_hex = client.chain_id().await?;
-        let chain_id = parse_hex_u64(&chain_id_hex)?;
+        let chain_id_value = client.chain_id().await?;
+        let chain_id = parse_hex_u64(&chain_id_value)?;
         Ok(chain_id)
     }
 
@@ -121,7 +121,7 @@ impl BootstrapProber {
 
                 if chain_match {
                     if status != NodeStatus::Active {
-                        info!(node_id = node.id, "Node is now ACTIVE");
+                        info!(node_id = node.id, chain_id, "Node is now ACTIVE");
                     }
                     status = NodeStatus::Active;
                     consecutive_failures = 0;
@@ -145,13 +145,15 @@ impl BootstrapProber {
                 debug!("Probe failed for node {}: {}", node.id, e);
                 consecutive_failures += 1;
                 
-                // Transition logic
+                // If it was already active, don't immediately demote to pending.
+                // If it's pending and failed, it stays pending or becomes unhealthy eventually.
+                
                 if consecutive_failures >= 3 {
                     if status != NodeStatus::Unhealthy {
                         info!(node_id = node.id, error = %e, "Node is now UNHEALTHY (probe failed)");
                     }
                     status = NodeStatus::Unhealthy;
-                } else {
+                } else if status == NodeStatus::Active {
                     // Check if stale based on time
                     if let Some(last_success) = last_successful_probe_ms {
                         if (now - last_success) > (bootstrap_config.stale_after_seconds as i64 * 1000) {
@@ -160,8 +162,6 @@ impl BootstrapProber {
                             }
                             status = NodeStatus::Stale;
                         }
-                    } else {
-                        status = NodeStatus::Stale;
                     }
                 }
                 telemetry.bootstrap_probe_total.with_label_values(&["failure"]).inc();

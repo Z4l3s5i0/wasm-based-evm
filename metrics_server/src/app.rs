@@ -103,7 +103,7 @@ pub async fn run(config_path: PathBuf) -> anyhow::Result<()> {
     });
 
     let server_handle = tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app).await {
+        if let Err(e) = axum::serve(listener, app.into_make_service()).await {
             error!("HTTP server failed: {}", e);
         }
     });

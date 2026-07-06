@@ -184,7 +184,7 @@ pub async fn bootstrap_nodes_handler(
             let mut filtered: Vec<Node> = nodes
                 .into_iter()
                 .filter(|n| {
-                    if n.status != NodeStatus::Active {
+                    if n.status != NodeStatus::Active && n.status != NodeStatus::Pending {
                         return false;
                     }
                     if let Some(network) = &query.network {
@@ -208,11 +208,15 @@ pub async fn bootstrap_nodes_handler(
                 .collect();
 
             // Sort by:
-            // 1. last_successful_probe_ms DESC (most recently verified nodes first)
-            // 2. has enode (more complete info)
-            // 3. fewer consecutive failures
+            // 1. status (Active before Pending)
+            // 2. last_successful_probe_ms DESC (most recently verified nodes first)
+            // 3. has enode (more complete info)
+            // 4. fewer consecutive failures
             filtered.sort_by(|a, b| {
-                b.last_successful_probe_ms.cmp(&a.last_successful_probe_ms)
+                let a_active = a.status == NodeStatus::Active;
+                let b_active = b.status == NodeStatus::Active;
+                b_active.cmp(&a_active)
+                    .then_with(|| b.last_successful_probe_ms.cmp(&a.last_successful_probe_ms))
                     .then_with(|| b.enode.is_some().cmp(&a.enode.is_some()))
                     .then_with(|| a.consecutive_failures.cmp(&b.consecutive_failures))
             });

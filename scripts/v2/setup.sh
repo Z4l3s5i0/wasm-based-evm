@@ -7,9 +7,6 @@ set -e
 echo "Starting system setup..."
 
 # 1. Update system and install basic tools
-echo "Enabling 32-bit architecture for Wine..."
-sudo dpkg --add-architecture i386
-
 echo "Updating package list..."
 sudo apt-get update -y
 
@@ -22,13 +19,7 @@ sudo apt-get install -y \
     ca-certificates \
     gnupg \
     lsb-release \
-    openssl \
-    wine \
-    wine32 \
-    wine64 \
-    libwine \
-    libwine:i386 \
-    fonts-wine
+    openssl
 
 # 2. Install Docker if not present
 if ! command -v docker &> /dev/null; then

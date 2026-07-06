@@ -18,6 +18,7 @@ use crate::rlpx::PeerSession;
 use crate::discovery::v4::Enode;
 use wasix_eth_types::p2p::{StatusMessage, GetBlockHeaders};
 use std::collections::{HashMap, HashSet};
+use k256::elliptic_curve::sec1::ToEncodedPoint;
 use tokio::sync::{Mutex, Semaphore};
 
 pub struct PeerDialer {
@@ -43,8 +44,16 @@ impl PeerDialer {
 
     pub fn dial_enode(&self, enode_str: &str) {
         if let Ok(enode) = enode_str.parse::<Enode>() {
-            let addr = SocketAddr::new(enode.ip, enode.tcp_port);
-            self.dial_peer(addr);
+            let peer_id = format!("{:?}", enode.id);
+            if peer_id == self.registry.local_peer_id() {
+                debug!("[P2P Dialer] Skipping dial to self ({})", peer_id);
+                return;
+            }
+
+            let dialer = Arc::new(self.clone_internal());
+            tokio::spawn(async move {
+                dialer.dial_enode_internal(enode).await;
+            });
         } else if let Ok(addr) = enode_str.parse::<SocketAddr>() {
             self.dial_peer(addr);
         }
@@ -77,7 +86,16 @@ impl PeerDialer {
         }
     }
 
+    async fn dial_enode_internal(&self, enode: Enode) {
+        let addr = SocketAddr::new(enode.ip, enode.tcp_port);
+        self.dial_internal_common(addr, Some(enode)).await;
+    }
+
     async fn dial_peer_internal(&self, addr: SocketAddr) {
+        self.dial_internal_common(addr, None).await;
+    }
+
+    async fn dial_internal_common(&self, addr: SocketAddr, enode: Option<Enode>) {
         {
             let mut in_flight = self.in_flight.lock().await;
             if !in_flight.insert(addr) {
@@ -102,7 +120,11 @@ impl PeerDialer {
             }
         };
 
-        let result = self.dial_peer_internal_guarded(addr).await;
+        let result = if let Some(enode) = enode {
+            self.dial_enode_internal_guarded(enode).await
+        } else {
+            self.dial_peer_internal_guarded(addr).await
+        };
 
         {
             let mut in_flight = self.in_flight.lock().await;
@@ -116,13 +138,43 @@ impl PeerDialer {
         }
     }
 
+    async fn dial_enode_internal_guarded(&self, enode: Enode) -> anyhow::Result<()> {
+        let addr = SocketAddr::new(enode.ip, enode.tcp_port);
+        let remote_pk = crate::rlpx::crypto::b512_to_pubkey(&enode.id)?;
+        self.perform_dial(addr, Some(remote_pk)).await
+    }
+
     async fn dial_peer_internal_guarded(&self, addr: SocketAddr) -> anyhow::Result<()> {
+        let remote_pk = if let Some(service) = self.registry.get_discovery_service_v4().await {
+            service.get_node_by_addr(addr).await.and_then(|node| crate::rlpx::crypto::b512_to_pubkey(&node.id).ok())
+        } else {
+            None
+        };
+
+        if remote_pk.is_none() {
+            error!("[P2P Dialer] Cannot dial {} without remote public key", addr);
+            P2P_CONNECTION_ERRORS_TOTAL.inc();
+            return Ok(());
+        }
+
+        self.perform_dial(addr, remote_pk).await
+    }
+
+    async fn perform_dial(&self, addr: SocketAddr, remote_pk: Option<k256::PublicKey>) -> anyhow::Result<()> {
+        if let Some(pk) = remote_pk {
+            let peer_id = format!("{:?}", alloy_primitives::B512::from_slice(&pk.to_encoded_point(false).as_bytes()[1..]));
+            let local_id = self.registry.local_peer_id();
+            if peer_id == local_id {
+                debug!("[P2P Dialer] Refusing to dial self (ID: {})", peer_id);
+                return Ok(());
+            }
+        }
+
         let (attempts, last_dial_time) = {
             let mut guard = self.dial_attempts.lock().await;
             let entry = guard.entry(addr).or_insert((0, Instant::now() - Duration::from_secs(60)));
             let res = (entry.0, entry.1);
             
-            // Increment attempts and update time immediately to avoid separate lock
             entry.0 += 1;
             entry.1 = Instant::now();
             res
@@ -151,7 +203,6 @@ impl PeerDialer {
 
         info!("[P2P Dialer] Dialing peer at {} (attempt {})", addr, attempts + 1);
 
-        // Pre-check: Is this address already in our peer pool?
         let peer_pool = if let Ok(pool) = self.registry.read_provider.get_active_peers() {
             pool
         } else {
@@ -166,12 +217,7 @@ impl PeerDialer {
         }
 
         let local_sk = self.registry.local_identity().secret_key();
-        let remote_pk_res = if let Some(service) = self.registry.get_discovery_service_v4().await {
-            service.get_node_by_addr(addr).await.and_then(|node| crate::rlpx::crypto::b512_to_pubkey(&node.id).ok())
-        } else {
-            None
-        };
-
+        
         let connect_result = timeout(
             Duration::from_secs(5),
             RlpxStream::connect(&addr.to_string(), &local_sk, &alloy_primitives::B512::ZERO),
@@ -183,13 +229,7 @@ impl PeerDialer {
                 info!("[P2P Dialer] TCP connection established to {}", addr);
 
                 let handshake = Handshake::new(self.registry.clone());
-                let remote_pk = if let Some(pk) = remote_pk_res {
-                    pk
-                } else {
-                    error!("[P2P Dialer] Cannot dial {} without remote public key", addr);
-                    P2P_CONNECTION_ERRORS_TOTAL.inc();
-                    return Ok(());
-                };
+                let remote_pk = remote_pk.unwrap(); // Guaranteed by callers
 
                 match timeout(
                     Duration::from_secs(30),
@@ -226,7 +266,6 @@ impl PeerDialer {
                         let session = Arc::new(session);
                         let head_hash = remote_block_hash;
                         
-                        // Register BEFORE spawning the task to avoid race
                         self.registry.register_session_arc(remote_id_hex.clone(), session_id, session.clone()).await;
 
                         let session_clone = session.clone();
@@ -267,14 +306,11 @@ impl PeerDialer {
                         });
 
                         tokio::spawn(task.run());
-                        // Success! Reset attempts
                         self.dial_attempts.lock().await.remove(&addr);
                     }
                     Ok(Err(e)) => {
                         error!("[P2P Dialer] Handshake failed with {}: {}", addr, e);
-                        // P2P_CONNECTION_ERRORS_TOTAL.inc();
                         let err_str = e.to_string();
-
                         if err_str.contains("MAC mismatch") {
                             info!("[P2P Dialer] Protocol error (MAC mismatch) with {}, penalizing", addr);
                             let mut penalties = self.protocol_penalties.lock().await;

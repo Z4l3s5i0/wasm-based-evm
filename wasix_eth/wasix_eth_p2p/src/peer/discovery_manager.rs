@@ -42,7 +42,11 @@ impl DiscoveryManager {
                 // Periodically check for new peers found via discovery
                 if let Some(service) = registry.get_discovery_service_v4().await {
                     let discovered = service.get_all_nodes().await;
+                    let local_peer_id = registry.local_peer_id();
                     for node in discovered {
+                        if format!("{:?}", node.id) == local_peer_id {
+                            continue;
+                        }
                         let addr = SocketAddr::new(node.endpoint.ip, node.endpoint.tcp_port);
                         dialer.dial_peer(addr);
                     }

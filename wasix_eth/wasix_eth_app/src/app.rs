@@ -150,8 +150,9 @@ impl App {
         // Ensure we remove any 0x prefix from the hex string for enode and id
         let node_id_raw = node_id.trim_start_matches("0x");
 
-        let enode = format!("enode://{}@{}:{}", node_id_raw,
+        let enode = format!("enode://{}@{}:{}?discport={}", node_id_raw,
             common_args.ext_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "127.0.0.1".to_string()),
+            common_args.p2p_port,
             common_args.discovery_port);
 
         let p2p_addr = format!("{}:{}",
@@ -189,6 +190,9 @@ impl App {
             .build()?;
 
         // 1. Register self
+        if common_args.ext_ip.is_none() {
+            panic!("Bootstrap registry provided but no external IP (ext_ip) specified. External IP is required for node registration when using a bootstrap registry.");
+        }
         info!("[Bootstrap] Registering node with registry... payload: {:?}", register_req);
         let reg_url = format!("{}/api/nodes/register", registry_url.trim_end_matches('/'));
         match tokio::time::timeout(std::time::Duration::from_secs(12), client.post(&reg_url).json(&register_req).send()).await {
@@ -223,6 +227,10 @@ impl App {
                     };
                     info!("[Bootstrap] Received {} bootstrap nodes", bootstrap_nodes.nodes.len());
                     for node_info in bootstrap_nodes.nodes {
+                        if node_info.id == node_id {
+                            debug!("[Bootstrap] Skipping self in bootstrap list");
+                            continue;
+                        }
                         if let Some(enode_str) = node_info.enode {
                             info!("[Bootstrap] Adding bootstrap node: {}", enode_str);
                             network_payload.peer_manager.dial_enode(&enode_str);

@@ -54,11 +54,11 @@ impl EthereumRpcClient {
         Ok(serde_json::from_value(result.clone())?)
     }
 
-    pub async fn chain_id(&self) -> Result<String> {
+    pub async fn chain_id(&self) -> Result<Value> {
         self.call("eth_chainId", json!([])).await
     }
 
-    pub async fn block_number(&self) -> Result<String> {
+    pub async fn block_number(&self) -> Result<Value> {
         self.call("eth_blockNumber", json!([])).await
     }
 
@@ -66,11 +66,11 @@ impl EthereumRpcClient {
         self.call("eth_syncing", json!([])).await
     }
 
-    pub async fn gas_price(&self) -> Result<String> {
+    pub async fn gas_price(&self) -> Result<Value> {
         self.call("eth_gasPrice", json!([])).await
     }
 
-    pub async fn peer_count(&self) -> Result<String> {
+    pub async fn peer_count(&self) -> Result<Value> {
         self.call("net_peerCount", json!([])).await
     }
 
