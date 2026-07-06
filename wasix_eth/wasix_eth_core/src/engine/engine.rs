@@ -891,7 +891,7 @@ impl Engine {
 
         // Side effects: Update metrics and emit event
         let (head_hash, head_number) = self.chain.head_block().await;
-        wasix_eth_utils::metrics::CURRENT_HEAD_BLOCK.set(head_number as f64);
+        CURRENT_HEAD_BLOCK.set(head_number as f64);
 
         if self.read_storage.header(BlockId::Hash(head_hash.into())).is_ok() {
             self.mempool_listener.handle_reorg(head_hash).await;

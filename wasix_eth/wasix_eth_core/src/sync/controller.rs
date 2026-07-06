@@ -12,7 +12,7 @@ use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionPr
 use wasix_eth_storage::HeaderProvider;
 use wasix_eth_types::sync::{PeerProvider, SyncProvider};
 use wasix_eth_types::{async_trait, Block, ChainConfig, ChainManager, Hardfork, InvalidationReason, SyncStatus, Transaction};
-use wasix_eth_utils::metrics::{CHAIN_HEAD_AGE, CURRENT_HEAD_BLOCK, SYNC_REMAINING_BLOCKS, SYNC_STATUS, SYNC_TARGET_HEIGHT};
+use wasix_eth_utils::metrics::{CURRENT_HEAD_BLOCK, SYNC_STATUS, SYNC_TARGET_HEIGHT};
 use wasix_eth_utils::{debug, error, info, warn};
 
 pub struct SyncController {
@@ -69,14 +69,6 @@ impl SyncController {
 
         CURRENT_HEAD_BLOCK.set(local_height as f64);
         
-        if let Some(h) = self.read_storage.header(wasix_eth_types::BlockId::Number(wasix_eth_types::BlockNumberOrTag::Number(local_height))).ok().flatten() {
-            let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-            if now > h.timestamp {
-                CHAIN_HEAD_AGE.set((now - h.timestamp) as f64);
-            } else {
-                CHAIN_HEAD_AGE.set(0.0);
-            }
-        }
 
         let _lock = match self.sync_lock.try_lock() {
             Ok(lock) => lock,
@@ -161,14 +153,12 @@ impl SyncController {
                     best_peer_id, best_td, best_height, local_td, local_height);
                 
                 SYNC_TARGET_HEIGHT.set(best_height as f64);
-                SYNC_REMAINING_BLOCKS.set((best_height.saturating_sub(local_height)) as f64);
 
                 self.sync_range(&best_peer_id, local_height + 1).await?;
             } else {
                 self.chain_manager.set_sync_status(SyncStatus::None).await;
                 SYNC_STATUS.set(1.0); // 1: synced
                 SYNC_TARGET_HEIGHT.set(local_height as f64);
-                SYNC_REMAINING_BLOCKS.set(0.0);
             }
         } else {
             debug!("[Sync] No peers found with better TD or height (local TD: {}, local height: {})", local_td, local_height);

@@ -11,7 +11,6 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use tokio::net::UdpSocket;
 use tokio::sync::Mutex;
 use wasix_eth_utils::identity::Identity;
-use wasix_eth_utils::metrics::P2P_DISCOVERY_NODES_FOUND;
 use wasix_eth_utils::{debug, error, info};
 
 pub struct DiscoveryV4Service {
@@ -207,9 +206,7 @@ impl DiscoveryV4Service {
     }
 
     pub async fn add_node_to_table(&self, id: B512, endpoint: NodeEndpoint) {
-
         let mut table = self.routing_table.lock().await;
-        let is_new = table.get_all_nodes().iter().all(|n| n.id != id);
         let evicted = table.add_node(id, endpoint.clone());
         drop(table);
 
@@ -218,9 +215,6 @@ impl DiscoveryV4Service {
             info!("[DiscoveryV4] Bucket full, pinging evicted node {} to see if it's still alive", addr);
             let _ = self.ping_node(addr).await;
         } else {
-            if is_new {
-                P2P_DISCOVERY_NODES_FOUND.inc();
-            }
             info!("[DiscoveryV4] Added/Updated node in routing table: {} (ID: {})", 
                 SocketAddr::new(endpoint.ip, endpoint.udp_port), id);
         }

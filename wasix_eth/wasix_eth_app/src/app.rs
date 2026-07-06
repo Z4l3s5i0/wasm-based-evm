@@ -92,15 +92,6 @@ impl App {
 
         info!("Starting servers...");
 
-        // Spawn metrics collection task
-        tokio::spawn(async move {
-            info!("[App] Starting metrics collection task");
-            loop {
-                // Update Node Uptime
-                wasix_eth_utils::metrics::NODE_UPTIME.inc_by(60.0);
-                tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
-            }
-        });
 
         tokio::spawn(async move {
             loop {

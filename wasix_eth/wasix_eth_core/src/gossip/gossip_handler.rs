@@ -35,7 +35,7 @@ impl GossipService {
         info!("[Gossip] Starting GossipHandler");
         tokio::time::sleep(Duration::from_millis(800)).await;
         while let Some(data) = self.gossip_rx.recv().await {
-            // GOSSIP_MESSAGES_RECEIVED.inc();
+            GOSSIP_MESSAGES_RECEIVED.inc();
             match self.handle_message(data).await {
                 Ok(_) => {},
                 Err(e) => error!("[Gossip] Error handling gossip message: {}", e),

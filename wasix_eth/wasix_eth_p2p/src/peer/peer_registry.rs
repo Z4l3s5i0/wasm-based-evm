@@ -8,7 +8,7 @@ use wasix_eth_storage::write_traits::PeerDiscoveryWriter;
 use wasix_eth_types::sync::{P2pSession, PeerProvider};
 use wasix_eth_types::{async_trait, BlockId, ChainConfig, ChainManager, PeerEntry};
 use wasix_eth_utils::identity::Identity;
-use wasix_eth_utils::metrics::{CONNECTED_PEERS, P2P_PEERS_CONNECTED, P2P_PEERS_DISCONNECTED};
+use wasix_eth_utils::metrics::CONNECTED_PEERS;
 use wasix_eth_utils::{debug, info};
 
 use crate::rlpx::PeerSession;
@@ -163,7 +163,6 @@ impl PeerRegistry {
 
                 if let Some(len) = removed_len {
                     CONNECTED_PEERS.set(len as f64);
-                    P2P_PEERS_DISCONNECTED.inc();
                     let _ = registry_for_disconnect.write_provider.remove_peer(event.peer_id);
                 }
             }
@@ -310,7 +309,6 @@ impl PeerRegistry {
             if let Some(len) = connected_len {
                 CONNECTED_PEERS.set(len as f64);
             }
-            P2P_PEERS_CONNECTED.inc();
         }
     }
 

@@ -9,7 +9,6 @@ use wasix_eth_storage::read_traits::PeerDiscoveryProvider;
 use wasix_eth_types::sync::P2pSession;
 use wasix_eth_types::PeerEntry;
 use wasix_eth_utils::{debug, error, info};
-use wasix_eth_utils::metrics::P2P_CONNECTION_ERRORS_TOTAL;
 use crate::peer::peer_registry::PeerRegistry;
 use crate::rlpx::RlpxStream;
 use crate::rlpx::handshake::Handshake;
@@ -153,7 +152,6 @@ impl PeerDialer {
 
         if remote_pk.is_none() {
             error!("[P2P Dialer] Cannot dial {} without remote public key", addr);
-            P2P_CONNECTION_ERRORS_TOTAL.inc();
             return Ok(());
         }
 
@@ -319,17 +317,14 @@ impl PeerDialer {
                     }
                     Err(_) => {
                         error!("[P2P Dialer] Handshake timed out with {}", addr);
-                        P2P_CONNECTION_ERRORS_TOTAL.inc();
                     }
                 }
             }
             Ok(Err(e)) => {
                 error!("[P2P Dialer] Connection failed with {}: {}", addr, e);
-                P2P_CONNECTION_ERRORS_TOTAL.inc();
             }
             Err(_) => {
                 error!("[P2P Dialer] TCP connect timed out with {}", addr);
-                P2P_CONNECTION_ERRORS_TOTAL.inc();
             }
         }
 

@@ -13,7 +13,7 @@ use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::{BlockWriter, HeaderWriter, TransactionWriter};
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::{Block, BlockId, ChainConfig, PayloadStatus, PayloadStatusEnum, Transaction, B256, U256, proofs, Header, Hardfork, ChainManager, InvalidationReason};
-use wasix_eth_utils::{debug, error, info, metrics::{BLOCK_EXECUTION_TIME, BLOCK_GAS_UTILIZATION}};
+use wasix_eth_utils::{debug, error, info, metrics::{TRANSACTIONS_COMMITTED_TOTAL, BLOCKS_IMPORTED_TOTAL}};
 use crate::engine::engine::EngineEvent;
 
 #[derive(Clone)]
@@ -568,16 +568,13 @@ impl PayloadProcessor {
         let execution = Arc::clone(&self.execution);
         let block_clone = block.clone();
         
-        let _timer = BLOCK_EXECUTION_TIME.start_timer();
+        let start_time = std::time::Instant::now();
         let exec_result = tokio::task::spawn_blocking(move || {
             execution.execute_block_with_state_root(block_clone, true, parent_state_root)
         }).await.map_err(|e| RpcError::Internal(format!("Execution task panicked: {}", e)))?;
+        let elapsed = start_time.elapsed();
+        info!("[PayloadProcessor] Block {} executed in {:?}", block.header.number, elapsed);
 
-        if let Ok((ref final_block, _)) = exec_result {
-            if final_block.header.gas_limit > 0 {
-                BLOCK_GAS_UTILIZATION.set(final_block.header.gas_used as f64 / final_block.header.gas_limit as f64);
-            }
-        }
         
         let (final_block, receipts) = match exec_result {
             Ok(res) => res,
@@ -650,6 +647,7 @@ impl PayloadProcessor {
         self.write_storage.insert_block_hash(block_hash, block_number).map_err(|e| RpcError::Internal(e.to_string()))?;
 
         // Persist receipts and transaction lookup
+        let tx_count = final_block.body.transactions.len();
         for (i, tx) in final_block.body.transactions.iter().enumerate() {
             let tx_hash = *tx.hash();
             self.write_storage.insert_transaction(tx_hash, tx.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
@@ -658,6 +656,8 @@ impl PayloadProcessor {
             }
             self.write_storage.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
         }
+        TRANSACTIONS_COMMITTED_TOTAL.inc_by(tx_count as f64);
+        BLOCKS_IMPORTED_TOTAL.inc();
 
         info!("[PayloadProcessor] Successfully imported block {} (hash: {})", block_number, actual_hash);
         let _ = self.event_tx.send(EngineEvent::NewBlock(final_block.clone()));

@@ -11,6 +11,7 @@ use anyhow::Result;
 use alloy_primitives::B512;
 use k256::SecretKey;
 use wasix_eth_types::p2p::EthVersion;
+use wasix_eth_utils::metrics::P2P_MESSAGES_SENT_BYTES;
 
 pub struct SharedCapability {
     pub name: String,
@@ -149,7 +150,7 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         let codec = self.codec.as_mut().ok_or_else(|| anyhow!("Codec not initialized"))?;
         let frame = codec.write_frame(id, payload);
         
-        wasix_eth_utils::metrics::P2P_MESSAGES_SENT_BYTES.inc_by(frame.len() as f64);
+        P2P_MESSAGES_SENT_BYTES.inc_by(frame.len() as f64);
         self.inner.write_all(&frame).await?;
         self.inner.flush().await?;
         tokio::task::yield_now().await;
@@ -268,3 +269,4 @@ impl<S: AsyncReadExt + AsyncWriteExt + Unpin> RlpxStream<S> {
         Ok((msg_id, final_payload))
     }
 }
+

@@ -7,7 +7,6 @@ use std::sync::Mutex;
 use std::sync::Arc;
 use crate::write_traits::{AccountWriter, BlockWriter, BytecodeWriter, ChangeSetWriter, HeaderWriter, MetadataWriter, PeerDiscoveryWriter, StateWriter, StorageWriter, TransactionWriter};
 use crate::read_traits::{AccountProvider, BytecodeProvider, StateProvider, StorageProvider, HeaderProvider};
-use wasix_eth_utils::metrics::{STORAGE_WRITE_LATENCY, STORAGE_OPERATIONS, STORAGE_TRIE_COMPUTATION_TIME};
 use wasix_eth_types::BlockId;
 use crate::read::DatabaseReadProvider;
 
@@ -28,8 +27,6 @@ impl DatabaseWriteProvider {
     where
         F: FnOnce(&WriteTransaction) -> Result<R>,
     {
-        STORAGE_OPERATIONS.inc();
-        let _timer = STORAGE_WRITE_LATENCY.start_timer();
         let wtx = self.db.begin_write()?;
         let result = f(&wtx)?;
         wtx.commit()?;
@@ -105,7 +102,6 @@ impl BatchWriter {
     }
 
     fn calculate_state_root_internal(&self, is_eip161: bool, state_root: Option<B256>) -> Result<B256> {
-        let _timer = STORAGE_TRIE_COMPUTATION_TIME.start_timer();
         let state_root = state_root.or(*self.base_state_root.lock().unwrap());
         let root = match state_root {
             Some(r) => r,
@@ -204,8 +200,6 @@ impl BatchWriter {
     }
 
     pub fn commit(self) -> Result<()> {
-        STORAGE_OPERATIONS.inc();
-        let _timer = STORAGE_WRITE_LATENCY.start_timer();
         self.wtx.commit()?;
         Ok(())
     }

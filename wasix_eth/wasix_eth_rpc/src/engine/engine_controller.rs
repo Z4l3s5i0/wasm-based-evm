@@ -2,7 +2,7 @@ use async_trait::async_trait;
 use jsonrpsee::proc_macros::rpc;
 use wasix_eth_types::{ExecutionPayloadBodyV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, TransitionConfiguration, B256, BlobAndProofV1, BlobAndProofV2, B128, Bytes, U256};
 use wasix_eth_types::error::{RpcError, RpcResult};
-use wasix_eth_utils::{debug, info};
+use wasix_eth_utils::{debug, info, metrics::RPC_REQUESTS_TOTAL};
 use crate::EngineService;
 use serde_json::Value;
 
@@ -114,6 +114,7 @@ pub struct EngineController {
 #[async_trait]
 impl EngineRpcServer for EngineController {
     async fn exchange_capabilities(&self, capabilities: Vec<String>) -> RpcResult<Vec<String>> {
+        RPC_REQUESTS_TOTAL.inc();
         debug!("[RPC] engine_exchangeCapabilities: capabilities={:?}", capabilities);
         let result = self.service.exchange_capabilities(capabilities).await?;
         debug!("[RPC] engine_exchangeCapabilities result: {:?}", result);
@@ -125,6 +126,7 @@ impl EngineRpcServer for EngineController {
         forkchoice_state: ForkchoiceState,
         payload_attributes: Option<PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
+        RPC_REQUESTS_TOTAL.inc();
         debug!("[RPC] engine_forkchoiceUpdatedV1: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let result = self.service.forkchoice_updated_v1(forkchoice_state, payload_attributes).await?;
         debug!("[RPC] engine_forkchoiceUpdatedV1 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
@@ -136,6 +138,7 @@ impl EngineRpcServer for EngineController {
         forkchoice_state: ForkchoiceState,
         payload_attributes: Option<PayloadAttributes>,
     ) -> RpcResult<ForkchoiceUpdated> {
+        RPC_REQUESTS_TOTAL.inc();
         debug!("[RPC] engine_forkchoiceUpdatedV2: head={:?}, attributes={:?}", forkchoice_state.head_block_hash, payload_attributes);
         let result = self.service.forkchoice_updated_v2(forkchoice_state, payload_attributes).await?;
         debug!("[RPC] engine_forkchoiceUpdatedV2 result status={:?}, payload_id={:?}", result.payload_status.status, result.payload_id);
@@ -229,6 +232,7 @@ impl EngineRpcServer for EngineController {
     }
 
     async fn new_payload_v1(&self, payload: ExecutionPayloadV1) -> RpcResult<PayloadStatus> {
+        RPC_REQUESTS_TOTAL.inc();
         debug!("[RPC] engine_newPayloadV1: block_number={}, block_hash={:?}", payload.block_number, payload.block_hash);
         let result = self.service.new_payload_v1(payload).await?;
         debug!("[RPC] engine_newPayloadV1 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
@@ -251,6 +255,7 @@ impl EngineRpcServer for EngineController {
         expected_blob_versioned_hashes: Vec<B256>,
         parent_beacon_block_root: B256,
     ) -> RpcResult<PayloadStatus> {
+        RPC_REQUESTS_TOTAL.inc();
         debug!("[RPC] engine_newPayloadV3: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.block_hash);
         let result = self.service.new_payload_v3(payload, expected_blob_versioned_hashes, parent_beacon_block_root).await?;
         debug!("[RPC] engine_newPayloadV3 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);
@@ -264,6 +269,7 @@ impl EngineRpcServer for EngineController {
         parent_beacon_block_root: B256,
         execution_requests: Vec<Bytes>,
     ) -> RpcResult<PayloadStatus> {
+        RPC_REQUESTS_TOTAL.inc();
         debug!("[RPC] engine_newPayloadV4: block_number={}, block_hash={:?}", payload.payload_inner.payload_inner.payload_inner.block_number, payload.payload_inner.payload_inner.payload_inner.block_hash);
         let result = self.service.new_payload_v4(payload, expected_blob_versioned_hashes, parent_beacon_block_root, execution_requests).await?;
         debug!("[RPC] engine_newPayloadV4 result status={:?}, latest_valid_hash={:?}", result.status, result.latest_valid_hash);

@@ -10,7 +10,6 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use wasix_eth_types::p2p::{BlockBodies, BlockHeaders, BlockRangeUpdate, Disconnect, EthMessageID, GetBlockBodies, GetBlockHeaders, GetNodeData, GetPooledTransactions, GetReceipts, GossipMessage, NewBlock, NewBlockHashes, NewPooledTransactionHashes, NewPooledTransactionHashes66, NodeData, Ping, Pong, PooledTransactions, Receipts, RequestPair, Status, StatusEth69, StatusMessage, Transactions};
-use wasix_eth_utils::metrics::P2P_MESSAGES_RECEIVED;
 use wasix_eth_utils::{debug, error, info};
 
 pub struct SessionTask<S> {
@@ -96,7 +95,6 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                     
                     match res {
                         Ok((id, payload)) => {
-                            P2P_MESSAGES_RECEIVED.inc();
                             if !self.handle_message(id, payload).await {
                                 info!("[P2P Session] Protocol requested disconnect for {}", self.peer_id);
                                 break;
