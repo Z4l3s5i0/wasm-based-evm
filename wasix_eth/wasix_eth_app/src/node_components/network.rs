@@ -8,7 +8,6 @@ use wasix_eth_types::{ChainConfig, ChainManager};
 use std::sync::Arc;
 use std::error::Error;
 use std::path::PathBuf;
-use std::time::Duration;
 use tokio::task::JoinHandle;
 use wasix_eth_utils::info;
 

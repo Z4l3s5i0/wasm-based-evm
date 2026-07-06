@@ -1,9 +1,9 @@
 use aes::cipher::{BlockEncrypt, KeyInit};
 use aes::{Aes256, Aes256Enc};
+use alloy_primitives::{B128, B256};
+use alloy_rlp::Encodable;
 use anyhow::{anyhow, Result};
 use sha3::{Digest, Keccak256};
-use alloy_primitives::{B128, B256};
-use alloy_rlp::{Decodable, Encodable};
 
 pub struct MAC {
     secret: B256,

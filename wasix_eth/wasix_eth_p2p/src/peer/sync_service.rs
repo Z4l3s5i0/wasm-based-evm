@@ -171,7 +171,7 @@ impl SyncService {
                     service.handle_get_node_data(peer_id, req).await;
                 });
             }
-            GossipMessage::NewBlockHashes(peer_id, session_id, m) => {
+            GossipMessage::NewBlockHashes(peer_id, session_id, _m) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }

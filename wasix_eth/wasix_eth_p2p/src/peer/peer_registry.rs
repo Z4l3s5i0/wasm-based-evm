@@ -1,22 +1,22 @@
 use anyhow::Result;
-use wasix_eth_storage::read_traits::{BlockProvider, PeerDiscoveryProvider, HeaderProvider};
-use wasix_eth_types::sync::{P2pSession, PeerProvider};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 use wasix_eth_storage::read::DatabaseReadProvider;
+use wasix_eth_storage::read_traits::{HeaderProvider, PeerDiscoveryProvider};
 use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::PeerDiscoveryWriter;
-use wasix_eth_types::{async_trait, ChainConfig, PeerEntry, BlockId, ChainManager};
+use wasix_eth_types::sync::{P2pSession, PeerProvider};
+use wasix_eth_types::{async_trait, BlockId, ChainConfig, ChainManager, PeerEntry};
 use wasix_eth_utils::identity::Identity;
 use wasix_eth_utils::metrics::{CONNECTED_PEERS, P2P_PEERS_CONNECTED, P2P_PEERS_DISCONNECTED};
 use wasix_eth_utils::{debug, info};
 
-use wasix_eth_types::p2p::{DisconnectReason, StatusMessage};
 use crate::rlpx::PeerSession;
-use std::collections::HashMap;
 use alloy_primitives::B256;
+use std::collections::HashMap;
 use tokio::sync::{mpsc, Mutex, MutexGuard};
 use tokio::time::{timeout, Duration};
+use wasix_eth_types::p2p::{DisconnectReason, StatusMessage};
 
 #[derive(Clone)]
 pub struct RegisteredSession {

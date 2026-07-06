@@ -4,7 +4,6 @@ use wasix_eth_types::eip4895::Withdrawal;
 use wasix_eth_types::{ExecutionPayloadBodyV1, ExecutionPayloadEnvelopeV2, ExecutionPayloadEnvelopeV3, ExecutionPayloadEnvelopeV4, ExecutionPayloadV1, ExecutionPayloadV2, ExecutionPayloadV3, ExecutionPayloadV4, ForkchoiceState, ForkchoiceUpdated, PayloadAttributes, PayloadId, PayloadStatus, TransitionConfiguration, B256, B128, Bytes};
 use wasix_eth_types::{BlobAndProofV1, BlobAndProofV2};
 use wasix_eth_types::error::RpcResult;
-use wasix_eth_utils::debug;
 use wasix_eth_utils::info;
 use serde_json::Value;
 

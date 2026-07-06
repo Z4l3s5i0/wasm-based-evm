@@ -37,9 +37,11 @@ struct BootstrapNode {
     pub id: String,
     pub network: String,
     pub chain_id: Option<u64>,
+    pub client: String,
     pub enode: Option<String>,
     pub p2p_addr: Option<String>,
     pub discovery_addr: Option<String>,
+    pub last_seen_ms: Option<i64>,
 }
 
 #[derive(Serialize, Deserialize, Debug)]
@@ -145,7 +147,10 @@ impl App {
 
         let node_id = format!("{:?}", network_payload.discovery_v4.identity().public_key_b512());
         let node_id = node_id.trim_start_matches("B512(").trim_end_matches(')');
-        let enode = format!("enode://{}@{}:{}", node_id,
+        // Ensure we remove any 0x prefix from the hex string for enode and id
+        let node_id_raw = node_id.trim_start_matches("0x");
+
+        let enode = format!("enode://{}@{}:{}", node_id_raw,
             common_args.ext_ip.map(|ip| ip.to_string()).unwrap_or_else(|| "127.0.0.1".to_string()),
             common_args.discovery_port);
 
@@ -165,7 +170,7 @@ impl App {
         let chain_id = node.read_provider.chain_id().unwrap_or(1);
 
         let register_req = RegisterNodeRequest {
-            id: node_id.to_string(),
+            id: node_id_raw.to_string(),
             network: format!("{}", chain_id),
             chain_id: Some(chain_id),
             client: "wasix-eth".to_string(),
@@ -184,7 +189,7 @@ impl App {
             .build()?;
 
         // 1. Register self
-        info!("[Bootstrap] Registering node with registry...");
+        info!("[Bootstrap] Registering node with registry... payload: {:?}", register_req);
         let reg_url = format!("{}/api/nodes/register", registry_url.trim_end_matches('/'));
         match tokio::time::timeout(std::time::Duration::from_secs(12), client.post(&reg_url).json(&register_req).send()).await {
             Ok(Ok(resp)) => {
@@ -209,7 +214,13 @@ impl App {
         match tokio::time::timeout(std::time::Duration::from_secs(12), client.get(&fetch_url).send()).await {
             Ok(Ok(resp)) => {
                 if resp.status().is_success() {
-                    let bootstrap_nodes: BootstrapNodesResponse = resp.json().await?;
+                    let bootstrap_nodes: BootstrapNodesResponse = match resp.json().await {
+                        Ok(n) => n,
+                        Err(e) => {
+                            error!("[Bootstrap] Failed to deserialize bootstrap nodes: {}", e);
+                            return Err(e.into());
+                        }
+                    };
                     info!("[Bootstrap] Received {} bootstrap nodes", bootstrap_nodes.nodes.len());
                     for node_info in bootstrap_nodes.nodes {
                         if let Some(enode_str) = node_info.enode {

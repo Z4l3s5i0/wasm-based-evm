@@ -1,6 +1,6 @@
 use std::time::Duration;
 use axum::{
-    extract::{Query, State},
+    extract::{Query, State, rejection::JsonRejection},
     http::StatusCode,
     response::IntoResponse,
     Json,
@@ -18,22 +18,29 @@ pub async fn health_handler() -> impl IntoResponse {
 
 pub async fn register_node_handler(
     State(state): State<ApiState>,
-    Json(payload): Json<RegisterNodeRequest>,
+    payload: Result<Json<RegisterNodeRequest>, JsonRejection>,
 ) -> impl IntoResponse {
+    let Json(payload) = match payload {
+        Ok(p) => p,
+        Err(rejection) => {
+            info!("Registration JSON rejection: {} - {}", rejection.status(), rejection.body_text());
+            return (rejection.status(), rejection.body_text()).into_response();
+        }
+    };
+
+    info!("Received registration request: {:?}", payload);
 
     if payload.id.is_empty() || payload.network.is_empty() || payload.rpc_url.is_empty() {
-        tracing::warn!("Registration request missing required fields: {:?}", payload);
+        info!("Registration request missing required fields: {:?}", payload);
         state.telemetry.bootstrap_registration_requests.with_label_values(&["bad_request"]).inc();
         return (StatusCode::BAD_REQUEST, "id, network, and rpc_url are required").into_response();
     }
-
-    info!(node_id = payload.id, network = payload.network, "Received registration request");
 
     if let Some(bootstrap) = &state.config.bootstrap {
         // Enforce network if configured
         if let Some(expected_network) = &bootstrap.network {
             if &payload.network != expected_network {
-                tracing::warn!(node_id = payload.id, got = payload.network, expected = expected_network, "Network mismatch during registration");
+                info!(node_id = payload.id, got = payload.network, expected = expected_network, "Network mismatch during registration");
                 state.telemetry.bootstrap_registration_requests.with_label_values(&["bad_request"]).inc();
                 return (StatusCode::BAD_REQUEST, format!("Invalid network. Expected: {}", expected_network)).into_response();
             }
@@ -64,7 +71,7 @@ pub async fn register_node_handler(
             };
 
             if !check_url(&payload.rpc_url) {
-                tracing::warn!(node_id = payload.id, url = payload.rpc_url, "Loopback or private IP rejected for rpc_url");
+                info!(node_id = payload.id, url = payload.rpc_url, "Loopback or private IP rejected for rpc_url");
                 return (StatusCode::BAD_REQUEST, "Loopback or private IPs not allowed for rpc_url").into_response();
             }
             if let Some(m_url) = &payload.metrics_url {
@@ -107,7 +114,7 @@ pub async fn register_node_handler(
     }
 
     if !payload.rpc_url.starts_with("http://") && !payload.rpc_url.starts_with("https://") {
-        tracing::warn!(node_id = payload.id, rpc_url = payload.rpc_url, "rpc_url missing protocol");
+        info!(node_id = payload.id, rpc_url = payload.rpc_url, "rpc_url missing protocol");
         state.telemetry.bootstrap_registration_requests.with_label_values(&["bad_request"]).inc();
         return (StatusCode::BAD_REQUEST, "rpc_url must start with http:// or https://").into_response();
     }

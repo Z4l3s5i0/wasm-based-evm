@@ -1,12 +1,12 @@
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
-use anyhow::{Result, anyhow};
-use crate::rlpx::stream::RlpxStream;
-use crate::rlpx::message::{Hello, Status, StatusMessage, EthVersion, Pong};
 use crate::peer::peer_registry::PeerRegistry;
-use wasix_eth_storage::read_traits::{BlockProvider, HeaderProvider};
-use wasix_eth_types::{BlockId, BlockNumberOrTag};
-use wasix_eth_types::p2p::{StatusEth69, Disconnect};
+use crate::rlpx::message::{EthVersion, Hello, Pong, Status, StatusMessage};
+use crate::rlpx::stream::RlpxStream;
 use alloy_rlp::Decodable;
+use anyhow::{anyhow, Result};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use wasix_eth_storage::read_traits::HeaderProvider;
+use wasix_eth_types::p2p::{Disconnect, StatusEth69};
+use wasix_eth_types::{BlockId, BlockNumberOrTag};
 
 pub fn create_local_hello(registry: &PeerRegistry) -> Hello {
     Hello {
@@ -109,7 +109,7 @@ pub async fn do_p2p_handshake<S: AsyncReadExt + AsyncWriteExt + Unpin>(
     stream.remote_client_version = Some(remote_hello.client_version.clone());
     
     // Negotiate capabilities and assign offsets
-    use std::collections::{HashMap, BTreeSet};
+    use std::collections::{BTreeSet, HashMap};
     let mut shared_capabilities_map: HashMap<String, u64> = HashMap::new();
     let mut shared_capability_names = BTreeSet::new();
 
