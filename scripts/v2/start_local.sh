@@ -7,8 +7,7 @@ source "$(dirname "$0")/common.sh"
 
 NODES=4
 LINUX_RATIO=50
-WINDOWS_RATIO=25
-WASIX_RATIO=25
+WASIX_RATIO=50
 CHAIN_ID=12345
 CLEANUP=false
 SETUP=false
@@ -20,8 +19,7 @@ usage() {
     echo "Options:"
     echo "  --nodes N         Total number of nodes (default: 4)"
     echo "  --linux P         Percentage of Linux nodes (default: 50)"
-    echo "  --windows P       Percentage of Windows nodes (default: 25)"
-    echo "  --wasix P         Percentage of Wasix nodes (default: 25)"
+    echo "  --wasix P         Percentage of Wasix nodes (default: 50)"
     echo "  --chain-id ID     Unique chain ID (default: 12345)"
     echo "  --cleanup         Remove existing data before starting"
     echo "  --setup           Run setup.sh locally before starting"
@@ -34,7 +32,6 @@ while [[ "$#" -gt 0 ]]; do
     case $1 in
         --nodes) NODES="$2"; shift ;;
         --linux) LINUX_RATIO="$2"; shift ;;
-        --windows) WINDOWS_RATIO="$2"; shift ;;
         --wasix) WASIX_RATIO="$2"; shift ;;
         --chain-id) CHAIN_ID="$2"; shift ;;
         --cleanup) CLEANUP=true ;;
@@ -68,8 +65,8 @@ echo "Generating network configuration..."
 "$(dirname "$0")/config_gen.sh" --chain-id "$CHAIN_ID" --nodes "$NODES" --output "startup_v2"
 
 # 2. Calculate node counts
-read c_linux c_windows c_wasix <<< $(calculate_counts "$NODES" "$LINUX_RATIO" "$WINDOWS_RATIO" "$WASIX_RATIO")
-echo "Node counts: Linux=$c_linux, Windows=$c_windows, Wasix=$c_wasix"
+read c_linux c_wasix <<< $(calculate_counts "$NODES" "$LINUX_RATIO" "$WASIX_RATIO")
+echo "Node counts: Linux=$c_linux, Wasix=$c_wasix"
 
 # 3. Generate docker-compose.yml
 COMPOSE_FILE="docker-compose.v2.yml"
@@ -130,7 +127,6 @@ EOF_PY
 # Track assigned types
 node_types=()
 for i in $(seq 1 $c_linux); do node_types+=("linux"); done
-for i in $(seq 1 $c_windows); do node_types+=("windows"); done
 for i in $(seq 1 $c_wasix); do node_types+=("wasix"); done
 
 for i in $(seq 0 $((NODES - 1))); do
@@ -151,23 +147,21 @@ for i in $(seq 0 $((NODES - 1))); do
     mkdir -p "$DATA_DIR/el" "$DATA_DIR/cl"
 
     # Append Execution Client
-    COMMAND_STR="command: [\"run\", \"--config\", \"config/docker.toml\"]"
-    # Actually, we want to override the command for el-node to register to metrics-server
-    # But el-node command is different. 
-    # Wait, el-node-i command:
-    COMMAND_STR="command: [\"run\", \"--data-dir\", \"/app/data\", \"--genesis-path\", \"/app/startup/genesis.json\", \"--peer-name\", \"$PEER_NAME\", \"--eth-rpc-port\", \"$ETH_PORT\", \"--auth-rpc-port\", \"$AUTH_PORT\", \"--p2p-port\", \"$P2P_PORT\", \"--discovery-port\", \"$DISC_PORT\", \"--frontend-port\", \"$FE_PORT\", \"--metrics-port\", \"$METRICS_PORT\", \"--auth-rpc-jwt-path\", \"/app/startup/jwt_$i.hex\", \"--bootstrap-registry\", \"http://metrics-server:9100\"]"
+    FLAGS="--data-dir /app/data --genesis-path /app/startup/genesis.json --peer-name $PEER_NAME --eth-rpc-port $ETH_PORT --auth-rpc-port $AUTH_PORT --p2p-port $P2P_PORT --discovery-port $DISC_PORT --frontend-port $FE_PORT --metrics-port $METRICS_PORT --auth-rpc-jwt-path /app/startup/jwt_$i.hex --bootstrap-registry http://metrics-server:9100"
+    
+    if [ "$TYPE" = "wasix" ]; then
+        # Wasix nodes need init before run
+        ENTRYPOINT_STR="entrypoint: [\"sh\", \"-c\", \"wasmer run /app/wasix_eth.wasm --enable-async-threads --net --volume /app/data:/app/data --volume /app/startup:/app/startup -- init $FLAGS && wasmer run /app/wasix_eth.wasm --enable-async-threads --net --volume /app/data:/app/data --volume /app/startup:/app/startup -- run $FLAGS\"]"
+        COMMAND_STR="# Command is handled by entrypoint for wasix"
+    else
+        # Linux nodes need init before run
+        ENTRYPOINT_STR="entrypoint: [\"sh\", \"-c\", \"/app/wasix_eth init $FLAGS && /app/wasix_eth run $FLAGS\"]"
+        COMMAND_STR="# Command is handled by entrypoint for linux"
+    fi
 
     DEPENDS_ON="depends_on:
       metrics-server:
         condition: service_started"
-
-    if [ "$TYPE" = "windows" ]; then
-        # Ensure we always use the full path to wine in the command if it's being overridden or used as argument
-        # Actually, since it's an argument to the ENTRYPOINT, it should NOT include wine again.
-        # But if for some reason ENTRYPOINT is bypassed, we might have issues.
-        # We'll stick to the args and ensure the ENTRYPOINT is correct in the Dockerfile.
-        :
-    fi
 
     if [ -n "$REGISTRY" ]; then
         IMAGE_STR="image: ${REGISTRY}/wasix-eth-${TYPE}:${TAG}"
@@ -196,6 +190,7 @@ for i in $(seq 0 $((NODES - 1))); do
       - "$METRICS_PORT:$METRICS_PORT"
     networks:
       - blockchain-net
+    $ENTRYPOINT_STR
     $COMMAND_STR
     $DEPENDS_ON
 

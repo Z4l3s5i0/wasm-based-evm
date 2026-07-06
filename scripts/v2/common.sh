@@ -26,14 +26,12 @@ get_beacon_p2p_port() { echo $((9000 + $1)); }
 calculate_counts() {
     local total=$1
     local p_linux=$2
-    local p_windows=$3
-    local p_wasix=$4
+    local p_wasix=$3
 
     local c_linux=$((total * p_linux / 100))
-    local c_windows=$((total * p_windows / 100))
-    local c_wasix=$((total - c_linux - c_windows)) # Give remainder to wasix
+    local c_wasix=$((total - c_linux)) # Give remainder to wasix
 
-    echo "$c_linux $c_windows $c_wasix"
+    echo "$c_linux $c_wasix"
 }
 
 # Determine if a node should be a validator (exactly 50%)
