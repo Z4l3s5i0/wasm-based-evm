@@ -60,9 +60,49 @@ if [ "$CLEANUP" = true ]; then
     sudo rm -rf startup_v2 data_v2
 fi
 
+# Ensure startup_v2 directory exists
+mkdir -p startup_v2/grafana/provisioning
+mkdir -p startup_v2/grafana/dashboards
+
 # 1. Generate Configuration
 echo "Generating network configuration..."
 "$(dirname "$0")/config_gen.sh" --chain-id "$CHAIN_ID" --nodes "$NODES" --output "startup_v2"
+
+# Ensure SCRIPT_DIR is set (it might have been set in common.sh or previously)
+SCRIPT_DIR_LOCAL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+ROOT_DIR_LOCAL="$(cd "$SCRIPT_DIR_LOCAL/../.." && pwd)"
+
+# Copy monitoring configuration
+echo "Setting up monitoring configuration..."
+cp "$SCRIPT_DIR_LOCAL/monitoring/prometheus.yml" "startup_v2/prometheus.yml"
+chmod 644 "startup_v2/prometheus.yml"
+cp -r "$SCRIPT_DIR_LOCAL/monitoring/grafana/provisioning/"* "startup_v2/grafana/provisioning/"
+chmod -R 755 "startup_v2/grafana/provisioning"
+
+# Copy local monitoring dashboards if they exist
+if [ -d "$SCRIPT_DIR_LOCAL/monitoring/grafana/dashboards" ]; then
+    cp "$SCRIPT_DIR_LOCAL/monitoring/grafana/dashboards"/*.json "startup_v2/grafana/dashboards/" 2>/dev/null || true
+fi
+
+# Try to find dashboards in multiple possible locations
+DASHBOARD_SOURCES=(
+    "$ROOT_DIR_LOCAL/wasix_eth/grafana/dashboards"
+    "$ROOT_DIR_LOCAL/grafana/dashboards"
+    "$(dirname "$0")/../../wasix_eth/grafana/dashboards"
+)
+
+for src in "${DASHBOARD_SOURCES[@]}"; do
+    if [ -d "$src" ]; then
+        # Check if there are any .json files to copy
+        if ls "$src"/*.json &>/dev/null; then
+            echo "Copying dashboards from $src..."
+            cp "$src"/*.json "startup_v2/grafana/dashboards/"
+        fi
+    fi
+done
+
+# Ensure all dashboards are readable
+chmod 644 "startup_v2/grafana/dashboards"/*.json 2>/dev/null || true
 
 # 2. Get External IP
 # Find the first non-loopback IPv4 address
@@ -264,6 +304,13 @@ EOF
 EOF
     fi
 done
+
+cat <<EOF >> "$COMPOSE_FILE"
+
+volumes:
+  prometheus-data:
+  grafana-data:
+EOF
 
 echo "Generated $COMPOSE_FILE"
 echo "Starting network (forcing rebuild)..."

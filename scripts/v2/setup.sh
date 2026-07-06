@@ -55,5 +55,8 @@ echo "Pre-pulling common Docker images..."
 docker pull ethpandaops/ethereum-genesis-generator:master
 docker pull sigp/lighthouse:latest
 docker pull ghcr.io/ethstaker/ethstaker-deposit-cli:latest
+docker pull prom/node-exporter:v1.8.1
+docker pull grafana/grafana:11.1.0
+docker pull prom/prometheus:v2.53.1
 
 echo "Setup complete!"

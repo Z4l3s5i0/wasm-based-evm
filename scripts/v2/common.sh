@@ -16,7 +16,7 @@ get_eth_rpc_port() { echo $((8545 + $1)); }
 get_auth_rpc_port() { echo $((8551 + $1 * 10)); } # Spread them a bit more to avoid conflicts
 get_discovery_port() { echo $((30303 + $1 * 2)); }
 get_p2p_port() { echo $((30304 + $1 * 2)); }
-get_frontend_port() { echo $((3000 + $1)); }
+get_metrics_port() { echo $((9050 + $1)); }
 get_beacon_rpc_port() { echo $((5052 + $1)); }
 get_beacon_p2p_port() { echo $((9000 + $1)); }
 

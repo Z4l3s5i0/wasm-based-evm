@@ -5,6 +5,7 @@ use alloy_consensus::Block as ConsensusBlock;
 use alloy_consensus::TxEnvelope as Transaction;
 use alloy_primitives::{B256, U256};
 use rand::seq::SliceRandom;
+use wasix_eth_utils::debug;
 
 pub struct Downloader {
     pub(crate) peer_provider: Arc<dyn PeerProvider>,
@@ -26,7 +27,7 @@ impl Downloader {
                 let td = session.eth_status().await.map(|s| s.total_difficulty).unwrap_or(U256::ZERO);
                 let height = session.best_height().await;
                 
-                wasix_eth_utils::info!("[Downloader] Peer {} has TD {} and height {}", peer_info.peer_id, td, height);
+                debug!("[Downloader] Peer {} has TD {} and height {}", peer_info.peer_id, td, height);
 
                 // Prioritize TD first, then height.
                 // If TD is zero (Eth69), we compare only by height.
