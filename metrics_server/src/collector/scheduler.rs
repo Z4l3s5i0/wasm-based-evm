@@ -37,6 +37,7 @@ impl CollectorScheduler {
 
         let prometheus_scraper = PrometheusScraper::new(
             self.store.clone(),
+            self.telemetry.clone(),
             timeout,
             experiment_id,
         );

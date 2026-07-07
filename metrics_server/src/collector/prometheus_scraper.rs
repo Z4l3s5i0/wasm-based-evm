@@ -1,5 +1,6 @@
 use crate::model::{MetricSample, MetricSource, Node, CollectionError};
 use crate::storage::SharedStore;
+use crate::telemetry::registry::TelemetryRegistry;
 use crate::time::now_ms;
 use anyhow::Result;
 use std::time::Duration;
@@ -8,18 +9,19 @@ use std::collections::HashMap;
 #[derive(Clone)]
 pub struct PrometheusScraper {
     store: SharedStore,
+    telemetry: TelemetryRegistry,
     timeout: Duration,
     experiment_id: Option<String>,
 }
 
 impl PrometheusScraper {
-    pub fn new(store: SharedStore, timeout: Duration, experiment_id: Option<String>) -> Self {
-        Self { store, timeout, experiment_id }
+    pub fn new(store: SharedStore, telemetry: TelemetryRegistry, timeout: Duration, experiment_id: Option<String>) -> Self {
+        Self { store, telemetry, timeout, experiment_id }
     }
 
     pub async fn scrape_node(&self, node: Node) -> Result<()> {
         let url = match &node.metrics_url {
-            Some(url) => url,
+            Some(url) => format!("{}/metrics", url),
             None => return Ok(()),
         };
 
@@ -54,6 +56,7 @@ impl PrometheusScraper {
 
             if let Some(sample) = self.parse_line(line, &node, timestamp) {
                 self.store.insert_metric_sample(&sample)?;
+                self.emit_telemetry(&node, &sample);
             }
         }
 
@@ -106,5 +109,23 @@ impl PrometheusScraper {
             }
         }
         labels
+    }
+
+    fn emit_telemetry(&self, node: &Node, sample: &MetricSample) {
+        let labels = [node.id.as_str(), node.network.as_str(), node.client.as_str()];
+        match sample.name.as_str() {
+            "sync_status" => self.telemetry.node_sync_status.with_label_values(&labels).set(sample.value),
+            "current_head_block" => self.telemetry.node_current_head_block.with_label_values(&labels).set(sample.value),
+            "connected_peers" => self.telemetry.node_connected_peers.with_label_values(&labels).set(sample.value),
+            "blocks_imported_total" => self.telemetry.node_blocks_imported_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "transactions_committed_total" => self.telemetry.node_transactions_committed_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "mempool_size" => self.telemetry.node_mempool_size.with_label_values(&labels).set(sample.value),
+            "mempool_rejected_transactions_total" => self.telemetry.node_mempool_rejected_transactions_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "gossip_messages_received_total" => self.telemetry.node_gossip_messages_received_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "p2p_messages_sent_bytes_total" => self.telemetry.node_p2p_messages_sent_bytes_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "rpc_requests_total" => self.telemetry.node_rpc_requests_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "sync_target_height" => self.telemetry.node_sync_target_height.with_label_values(&labels).set(sample.value),
+            _ => {}
+        }
     }
 }

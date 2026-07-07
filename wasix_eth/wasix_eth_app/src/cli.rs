@@ -45,10 +45,6 @@ pub struct CommonArgs {
     #[arg(long, default_value_t = 8551)]
     pub auth_rpc_port: u16,
 
-    /// TCP port for Frontend (logs)
-    #[arg(long, default_value_t = 3000)]
-    pub frontend_port: u16,
-
     /// Comma-separated list of Multiaddrs for bootstrapping
     #[arg(long, value_delimiter = ',')]
     pub bootnodes: Vec<String>,

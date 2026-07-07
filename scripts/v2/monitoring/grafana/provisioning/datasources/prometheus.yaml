@@ -7,4 +7,6 @@ datasources:
     url: http://prometheus:9090
     uid: prometheus
     isDefault: true
+    jsonData:
+      httpMethod: POST
     editable: true

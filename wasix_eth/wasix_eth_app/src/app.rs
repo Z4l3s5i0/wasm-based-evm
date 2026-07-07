@@ -2,8 +2,11 @@ use crate::cli::Args;
 use crate::jwt::HeaderInjectorLayer;
 use crate::jwt::JwtAuthLayer;
 use crate::node::Node;
+use hyper::service::service_fn;
+use hyper::{Body, Request, Response, Server as HyperServer};
 use jsonrpsee::server::middleware::rpc::RpcServiceBuilder;
 use jsonrpsee::server::Server;
+use prometheus::{Encoder, TextEncoder};
 use serde::{Deserialize, Serialize};
 use serde_json::from_reader;
 use std::error::Error;
@@ -58,6 +61,7 @@ pub struct App {
     auth_rpc_server: Option<Server<tower::layer::util::Stack<HeaderInjectorLayer, tower::layer::util::Identity>, tower::layer::util::Stack<JwtAuthLayer, tower::layer::util::Identity>>>,
     eth_module: Option<jsonrpsee::RpcModule<()>>,
     auth_module: Option<jsonrpsee::RpcModule<()>>,
+    metrics_handle: Option<tokio::task::JoinHandle<()>>,
 }
 
 impl App {
@@ -107,6 +111,41 @@ impl App {
 
         let eth_rpc_handle = eth_rpc_server.start(eth_module);
         let auth_rpc_handle = auth_rpc_server.start(auth_module);
+
+        let metrics_port = common_args.metrics_port;
+        let addr = SocketAddr::from(([0, 0, 0, 0], metrics_port));
+        info!("Starting metrics server on {}...", addr);
+        let make_svc = hyper::service::make_service_fn(|_conn| async {
+            Ok::<_, hyper::Error>(service_fn(|req: Request<Body>| async move {
+                if req.uri().path() == "/metrics" {
+                    let encoder = TextEncoder::new();
+                    let metric_families = prometheus::gather();
+                    let mut buffer = vec![];
+                    encoder.encode(&metric_families, &mut buffer).unwrap();
+
+                    let response = Response::builder()
+                        .status(200)
+                        .header(hyper::header::CONTENT_TYPE, encoder.format_type())
+                        .body(Body::from(buffer))
+                        .unwrap();
+
+                    Ok::<_, hyper::Error>(response)
+                } else {
+                    let response = Response::builder()
+                        .status(404)
+                        .body(Body::from("Not Found"))
+                        .unwrap();
+                    Ok::<_, hyper::Error>(response)
+                }
+            }))
+        });
+
+        let server = HyperServer::bind(&addr).serve(make_svc);
+        tokio::spawn(async move {
+            if let Err(e) = server.await {
+                error!("Metrics server error: {}", e);
+            }
+        });
 
         let node = self.node.as_mut().ok_or("Node not initialized")?;
         node.start(&self.args).await;
@@ -410,6 +449,7 @@ impl AppBuilder {
             auth_rpc_server: None,
             eth_module: None,
             auth_module: None,
+            metrics_handle: None,
         })
     }
 
@@ -439,6 +479,7 @@ impl AppBuilder {
             auth_rpc_server: None,
             eth_module: None,
             auth_module: None,
+            metrics_handle: None,
         })
     }
 
@@ -478,6 +519,7 @@ impl AppBuilder {
             auth_rpc_server: Some(auth_rpc_server),
             eth_module: Some(eth_module),
             auth_module: Some(auth_module),
+            metrics_handle: None,
         })
     }
 }

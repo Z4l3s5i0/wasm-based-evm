@@ -15,6 +15,17 @@ pub struct TelemetryRegistry {
     pub ethereum_peer_count: GaugeVec,
     pub ethereum_gas_price: GaugeVec,
     pub ethereum_syncing: GaugeVec,
+    pub node_sync_status: GaugeVec,
+    pub node_current_head_block: GaugeVec,
+    pub node_connected_peers: GaugeVec,
+    pub node_blocks_imported_total: IntCounterVec,
+    pub node_transactions_committed_total: IntCounterVec,
+    pub node_mempool_size: GaugeVec,
+    pub node_mempool_rejected_transactions_total: IntCounterVec,
+    pub node_gossip_messages_received_total: IntCounterVec,
+    pub node_p2p_messages_sent_bytes_total: IntCounterVec,
+    pub node_rpc_requests_total: IntCounterVec,
+    pub node_sync_target_height: GaugeVec,
     pub bootstrap_nodes: GaugeVec,
     pub bootstrap_registration_requests: IntCounterVec,
     pub bootstrap_probe_total: IntCounterVec,
@@ -68,6 +79,50 @@ impl TelemetryRegistry {
             prometheus::opts!("ethereum_syncing", "Ethereum syncing status"),
             &["node_id", "network", "client"]
         )?;
+        let node_sync_status = GaugeVec::new(
+            prometheus::opts!("sync_status", "Sync status (1: synced, 0: syncing, -1: stalled)"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_current_head_block = GaugeVec::new(
+            prometheus::opts!("current_head_block", "Current head block height"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_connected_peers = GaugeVec::new(
+            prometheus::opts!("connected_peers", "Number of currently connected peers"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_blocks_imported_total = IntCounterVec::new(
+            prometheus::opts!("blocks_imported_total", "Total number of blocks successfully imported"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_transactions_committed_total = IntCounterVec::new(
+            prometheus::opts!("transactions_committed_total", "Total number of successfully committed transactions"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_mempool_size = GaugeVec::new(
+            prometheus::opts!("mempool_size", "Current number of transactions in the mempool"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_mempool_rejected_transactions_total = IntCounterVec::new(
+            prometheus::opts!("mempool_rejected_transactions_total", "Total number of transactions rejected by the mempool"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_gossip_messages_received_total = IntCounterVec::new(
+            prometheus::opts!("gossip_messages_received_total", "Total gossip messages received"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_p2p_messages_sent_bytes_total = IntCounterVec::new(
+            prometheus::opts!("p2p_messages_sent_bytes_total", "Total bytes sent over the p2p network"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_rpc_requests_total = IntCounterVec::new(
+            prometheus::opts!("rpc_requests_total", "Total number of RPC requests received"),
+            &["node_id", "network", "client"]
+        )?;
+        let node_sync_target_height = GaugeVec::new(
+            prometheus::opts!("sync_target_height", "The target block height the node is syncing towards"),
+            &["node_id", "network", "client"]
+        )?;
         let bootstrap_nodes = GaugeVec::new(
             prometheus::opts!("metrics_server_bootstrap_nodes", "Number of nodes in bootstrap registry"),
             &["status", "network"]
@@ -92,6 +147,17 @@ impl TelemetryRegistry {
         registry.register(Box::new(ethereum_peer_count.clone()))?;
         registry.register(Box::new(ethereum_gas_price.clone()))?;
         registry.register(Box::new(ethereum_syncing.clone()))?;
+        registry.register(Box::new(node_sync_status.clone()))?;
+        registry.register(Box::new(node_current_head_block.clone()))?;
+        registry.register(Box::new(node_connected_peers.clone()))?;
+        registry.register(Box::new(node_blocks_imported_total.clone()))?;
+        registry.register(Box::new(node_transactions_committed_total.clone()))?;
+        registry.register(Box::new(node_mempool_size.clone()))?;
+        registry.register(Box::new(node_mempool_rejected_transactions_total.clone()))?;
+        registry.register(Box::new(node_gossip_messages_received_total.clone()))?;
+        registry.register(Box::new(node_p2p_messages_sent_bytes_total.clone()))?;
+        registry.register(Box::new(node_rpc_requests_total.clone()))?;
+        registry.register(Box::new(node_sync_target_height.clone()))?;
         registry.register(Box::new(bootstrap_nodes.clone()))?;
         registry.register(Box::new(bootstrap_registration_requests.clone()))?;
         registry.register(Box::new(bootstrap_probe_total.clone()))?;
@@ -109,6 +175,17 @@ impl TelemetryRegistry {
             ethereum_peer_count,
             ethereum_gas_price,
             ethereum_syncing,
+            node_sync_status,
+            node_current_head_block,
+            node_connected_peers,
+            node_blocks_imported_total,
+            node_transactions_committed_total,
+            node_mempool_size,
+            node_mempool_rejected_transactions_total,
+            node_gossip_messages_received_total,
+            node_p2p_messages_sent_bytes_total,
+            node_rpc_requests_total,
+            node_sync_target_height,
             bootstrap_nodes,
             bootstrap_registration_requests,
             bootstrap_probe_total,
