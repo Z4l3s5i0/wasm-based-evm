@@ -13,6 +13,7 @@ CLEANUP=false
 SETUP=false
 REGISTRY=""
 TAG="latest"
+COMPOSE_FILE="docker-compose.v2.yml"
 
 usage() {
     echo "Usage: $0 [options]"
@@ -128,8 +129,6 @@ read c_linux c_wasix <<< $(calculate_counts "$NODES" "$LINUX_RATIO" "$WASIX_RATI
 echo "Node counts: Linux=$c_linux, Wasix=$c_wasix"
 
 # 3. Generate docker-compose.yml
-COMPOSE_FILE="docker-compose.v2.yml"
-
 # Prepare variables for template replacement
 if [ -n "$REGISTRY" ]; then
     METRICS_IMAGE="${REGISTRY}/wasix-eth-metrics:${TAG}"
@@ -199,6 +198,7 @@ for i in $(seq 0 $((NODES - 1))); do
     METRICS_PORT=$(get_metrics_port "$i")
     BN_RPC_PORT=$(get_beacon_rpc_port "$i")
     BN_P2P_PORT=$(get_beacon_p2p_port "$i")
+    BN_QUIC_PORT=$((BN_P2P_PORT + 1))
     
     PEER_NAME="${TYPE}-node-${i}"
     DATA_DIR="./data_v2/node-${i}"
@@ -254,6 +254,12 @@ for i in $(seq 0 $((NODES - 1))); do
 EOF
 
     # Append Consensus Client (Lighthouse Beacon Node)
+    BOOT_NODES_FLAG=""
+    if [ "$i" -gt 0 ]; then
+        # Using a conditional variable to avoid passing empty --boot-nodes
+        BOOT_NODES_FLAG="\${BOOT_NODES_CONFIG:-}"
+    fi
+
     cat <<EOF >> "$COMPOSE_FILE"
   cl-node-$i:
     image: sigp/lighthouse
@@ -263,6 +269,8 @@ EOF
     ports:
       - "$BN_RPC_PORT:5052"
       - "$BN_P2P_PORT:9000"
+      - "$BN_P2P_PORT:9000/udp"
+      - "$BN_QUIC_PORT:9001/udp"
     networks:
       - blockchain-net
     depends_on:
@@ -276,10 +284,15 @@ EOF
       --testnet-dir /app/startup
       --debug-level info
       --datadir /root/.lighthouse
-      --enr-udp-port 9000
-      --enr-tcp-port 9000
-      --discovery-port 9000
+      --enr-address $EXT_IP
+      --enr-udp-port $BN_P2P_PORT
+      --enr-tcp-port $BN_P2P_PORT
+      --enr-quic-port $BN_QUIC_PORT
+      --listen-address 0.0.0.0
       --port 9000
+      --quic-port 9001
+      --enable-private-discovery
+      $BOOT_NODES_FLAG
 
 EOF
 
@@ -313,8 +326,40 @@ volumes:
 EOF
 
 echo "Generated $COMPOSE_FILE"
-echo "Starting network (forcing rebuild)..."
+echo "Starting first beacon node to extract ENR..."
 COMPOSE_CMD=$(get_compose_cmd)
-$COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build
+
+# Start metrics server and first node
+export BOOT_NODES_CONFIG=""
+$COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build metrics-server el-node-0 cl-node-0
+
+BN0_RPC_PORT=$(get_beacon_rpc_port 0)
+echo "Waiting for cl-node-0 to start on port $BN0_RPC_PORT..."
+
+MAX_RETRIES=30
+RETRY_COUNT=0
+BOOT_NODE_ENR=""
+
+while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+    # Use a subshell and || true to prevent set -e from exiting the script if curl or python fails
+    BOOT_NODE_ENR=$(curl -s http://localhost:$BN0_RPC_PORT/eth/v1/node/identity 2>/dev/null | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['enr'])" 2>/dev/null || echo "")
+    if [ -n "$BOOT_NODE_ENR" ]; then
+        echo "Extracted ENR: $BOOT_NODE_ENR"
+        break
+    fi
+    echo "Waiting for ENR... ($((RETRY_COUNT + 1))/$MAX_RETRIES)"
+    sleep 2
+    RETRY_COUNT=$((RETRY_COUNT + 1))
+done
+
+if [ -z "$BOOT_NODE_ENR" ]; then
+    echo "Error: Failed to extract ENR from cl-node-0"
+    exit 1
+fi
+
+export BOOT_NODES_CONFIG="--boot-nodes \"$BOOT_NODE_ENR\""
+
+echo "Starting remaining network..."
+$COMPOSE_CMD -f "$COMPOSE_FILE" up -d
 
 echo "Network started. Use '$COMPOSE_CMD -f $COMPOSE_FILE logs -f' to see logs."

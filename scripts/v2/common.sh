@@ -18,7 +18,7 @@ get_discovery_port() { echo $((30303 + $1 * 2)); }
 get_p2p_port() { echo $((30304 + $1 * 2)); }
 get_metrics_port() { echo $((9050 + $1)); }
 get_beacon_rpc_port() { echo $((5052 + $1)); }
-get_beacon_p2p_port() { echo $((9000 + $1)); }
+get_beacon_p2p_port() { echo $((9000 + $1 * 2)); }
 
 # Calculate number of nodes per type based on percentages
 calculate_counts() {
