@@ -50,7 +50,6 @@ pub struct MempoolInner {
 }
 
 /// Metadata for a transaction in the mempool.
-//TODO
 #[derive(Debug, Clone)]
 pub struct TxMetadata {
     pub arrival_time: u64,

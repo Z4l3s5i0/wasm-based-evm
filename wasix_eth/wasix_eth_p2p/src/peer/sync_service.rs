@@ -15,6 +15,7 @@ use wasix_eth_types::p2p::{
     GetPooledTransactions, PooledTransactions, GetReceipts, Receipts, GetNodeData, NodeData
 };
 use wasix_eth_types::{async_trait, Block, BlockId, GossipProvider, Transaction, B256, TxPooledEnvelope, BlobTransactionSidecar, Signed, TxEip4844Variant, BlobTransactionSidecarVariant};
+use wasix_eth_utils::metrics::GOSSIP_MESSAGES_RECEIVED;
 use wasix_eth_utils::{debug, error, info};
 
 use crate::peer::peer_manager::PeerManager;
@@ -93,6 +94,7 @@ impl SyncService {
     }
 
     async fn handle_peer_gossip(&self, msg: GossipMessage) {
+        GOSSIP_MESSAGES_RECEIVED.inc();
         match msg {
             GossipMessage::NewBlock(peer_id, session_id, m) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
