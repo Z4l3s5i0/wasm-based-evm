@@ -3,7 +3,7 @@
 # Default values
 REGISTRY=""
 TAG="latest"
-INTERVAL=1800 # 30 minutes
+INTERVAL=300 # 5 minutes
 ONCE=false
 
 usage() {
@@ -34,6 +34,10 @@ ROOT_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 LINUX_IMAGE="${REGISTRY}/wasix-eth-linux:${TAG}"
 WASIX_IMAGE="${REGISTRY}/wasix-eth-wasix:${TAG}"
 
+# Store last seen digests
+LAST_LINUX_DIGEST=""
+LAST_WASIX_DIGEST=""
+
 # Get current image digests
 get_digest() {
     local image=$1
@@ -44,6 +48,7 @@ get_digest() {
 # Pull and check for updates
 check_and_pull() {
     local image=$1
+    local last_digest_var=$2
     echo "Checking for updates for $image..."
     
     local old_digest=$(get_digest "$image")
@@ -61,35 +66,60 @@ check_and_pull() {
     fi
     
     local new_digest=$(get_digest "$image")
+    local remote_digest=$(echo "$pull_output" | grep "Digest: " | cut -d' ' -f2 | tr -d '\r')
+
+    # Update the global LAST_..._DIGEST variable
+    local updated=false
+    local last_seen_digest="${!last_digest_var}"
     
     # Check if we downloaded something new OR if RepoDigests changed
     if echo "$pull_output" | grep -q "Downloaded newer image" || [ "$old_digest" != "$new_digest" ]; then
         echo "Image $image updated!"
-        return 0 # Updated
+        updated=true
+    # Check if the registry digest changed since we last checked
+    elif [ -n "$last_seen_digest" ] && [ -n "$remote_digest" ] && [ "$remote_digest" != "$last_seen_digest" ]; then
+        echo "Image $image updated (Registry digest changed: $last_seen_digest -> $remote_digest)!"
+        updated=true
     fi
 
-    # Extra check for the specific case where the manifest digest changed but docker says "up to date"
-    local remote_digest=$(echo "$pull_output" | grep "Digest: " | cut -d' ' -f2 | tr -d '\r')
-    if [ -n "$remote_digest" ] && ! echo "$new_digest" | grep -q "$remote_digest"; then
-        echo "Image $image updated (Manifest changed)!"
-        return 0
+    # Store the remote digest for next time
+    if [ -n "$remote_digest" ]; then
+        eval "$last_digest_var=\"$remote_digest\""
+    fi
+
+    if [ "$updated" = true ]; then
+        return 0 # Updated
     fi
     
     echo "Image $image is up to date."
     return 2 # Not updated
 }
 
-run_hive_tests() {
-    echo "Starting HIVE tests..."
-    
+ensure_hiveview_running() {
     # 1. Build hive-custom if it doesn't exist
     if [[ "$(docker images -q hive-custom:latest 2> /dev/null)" == "" ]]; then
         echo "Building hive-custom image..."
-        docker build -f "$ROOT_DIR/testing/hive.dockerfile" -t hive-custom "$ROOT_DIR"
+        docker build -f "$ROOT_DIR/hive/hive.dockerfile" -t hive-custom "$ROOT_DIR"
     fi
 
     # Ensure workspace directory exists
     mkdir -p "$ROOT_DIR/workspace"
+
+    # Start hiveview in the background if not already running
+    if [[ "$(docker ps -q -f name=hiveview 2> /dev/null)" == "" ]]; then
+        echo "Starting Hiveview server in the background..."
+        docker run -d --rm \
+          --name hiveview \
+          -p 8080:8080 \
+          -v "$ROOT_DIR/workspace:/hive/workspace" \
+          --entrypoint ./hiveview \
+          hive-custom \
+          --serve --logdir /hive/workspace/logs
+    fi
+}
+
+run_hive_tests() {
+    echo "Starting HIVE tests..."
 
     echo "Running Wasix Wasm-Ethereum Client (wasix-w-eth)..."
     docker run --rm \
@@ -114,10 +144,10 @@ perform_check() {
     local linux_status
     local wasix_status
     
-    check_and_pull "$LINUX_IMAGE"
+    check_and_pull "$LINUX_IMAGE" "LAST_LINUX_DIGEST"
     linux_status=$?
     
-    check_and_pull "$WASIX_IMAGE"
+    check_and_pull "$WASIX_IMAGE" "LAST_WASIX_DIGEST"
     wasix_status=$?
     
     if [ $linux_status -eq 0 ] || [ $wasix_status -eq 0 ]; then
@@ -127,6 +157,8 @@ perform_check() {
         echo "No updates found for node images."
     fi
 }
+
+ensure_hiveview_running
 
 if [ "$ONCE" = true ]; then
     perform_check

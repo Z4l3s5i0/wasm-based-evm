@@ -58,5 +58,6 @@ docker pull ghcr.io/ethstaker/ethstaker-deposit-cli:latest
 docker pull prom/node-exporter:v1.8.1
 docker pull grafana/grafana:11.1.0
 docker pull prom/prometheus:v2.53.1
+docker pull docker.io/z4l3s5i0/contender:latest
 
 echo "Setup complete!"

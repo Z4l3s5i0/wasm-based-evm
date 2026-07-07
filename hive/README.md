@@ -12,7 +12,7 @@ This guide explains how to build and run the customized HIVE test suite using Do
 Run the following command from the directory containing the `Dockerfile` to clone, switch branches, and compile both `hive` and `hiveview` inside an isolated container:
 
 ```bash
-docker build -f ./testing/hive.dockerfile -t hive-custom .
+docker build -f ./hive/hive.dockerfile -t hive-custom .
 ```
 
 ## 2. Running the test suite

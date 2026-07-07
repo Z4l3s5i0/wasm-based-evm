@@ -6,7 +6,7 @@ set -e
 
 CHAIN_ID=12345
 NUM_NODES=4
-GENESIS_DELAY=600 # 10 minutes
+GENESIS_DELAY=180 # 3 minutes
 MNEMONIC="sleep moment list remain like wall lake industry canvas wonder ecology elite duck salad naive syrup frame brass utility club odor country obey pudding"
 OUTPUT_DIR="startup_v2"
 
@@ -46,7 +46,10 @@ FULU_FORK_EPOCH=99999999
 GENESIS_TIMESTAMP=$GENESIS_TIMESTAMP
 GENESIS_DELAY=$GENESIS_DELAY
 GENESIS_GASLIMIT=60000000
-SECONDS_PER_ETH1_BLOCK=14
+# Pre-fund the default contender account (first Anvil account)
+# and a few accounts from the custom mnemonic if needed.
+# 1000 ETH = 1000000000000000000000 Wei
+EL_PREMINE_ADDRS='{"0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266": "1000000000000000000000"}'
 EOF
 
 # 2. Run genesis generator
