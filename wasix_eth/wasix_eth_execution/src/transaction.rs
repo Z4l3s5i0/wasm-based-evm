@@ -47,11 +47,14 @@ impl<'a> TransactionExecutor<'a> {
 
         let recovered = tx.clone().try_into_recovered().map_err(|e| anyhow::anyhow!("Failed to recover signer: {}", e))?;
         let sender = recovered.signer();
-        let tx_hash = tx.hash();
-
-        debug!("[Execution] STARTING TX {:?} (sender={:?}, fork={:?}, nonce={})", tx_hash, sender, self.fork, recovered.nonce());
+        let tx_hash_final = recovered.hash();
 
         let mut backend = self.prepare_backend(tx, sender, state_root)?;
+        let sender_h160 = H160::from_slice(sender.as_slice());
+        let balance_before = backend.balance(sender_h160);
+
+        debug!("[Execution] STARTING TX {:?} (sender={:?}, balance={}, fork={:?}, nonce={})", tx_hash_final, sender, balance_before, self.fork, recovered.nonce());
+
         if self.fork >= Hardfork::Cancun {
             if let Transaction::Eip4844(s) = tx {
                 let blob_hashes: Vec<H256> = s.tx().blob_versioned_hashes().iter().flat_map(|h| h.iter()).map(|h| H256::from_slice(h.as_slice())).collect();
@@ -66,9 +69,12 @@ impl<'a> TransactionExecutor<'a> {
 
         let args = self.prepare_transact_args(tx, sender, &overlay);
         
-        let eip161 = self.fork >= Hardfork::SpuriousDragon;
+        debug!("[Execution] Transaction {:?} Args details: caller={:?}, gas_limit={}, gas_price={:?}, value={}", tx_hash_final, args.caller, args.gas_limit, args.gas_price, args.value);
         let sender_h160 = H160::from_slice(sender.as_slice());
-        let balance_before = overlay.balance(sender_h160);
+        let balance_before_overlay = overlay.balance(sender_h160);
+        debug!("[Execution] Sender balance in overlay before transact: {}", balance_before_overlay);
+
+        let eip161 = self.fork >= Hardfork::SpuriousDragon;
         let effective_gas_price = args.gas_price.effective_gas_price(self.config, &overlay);
         let reward_rate = args.gas_price.coinbase_reward(EvmU256::from(1), self.config, &overlay);
         let is_coinbase = sender_h160 == overlay.block_coinbase();
@@ -76,7 +82,8 @@ impl<'a> TransactionExecutor<'a> {
         let (result, tx_failed) = match transact(args.clone(), None, &mut overlay, self.invoker) {
             Ok(res) => (res, false),
             Err(e) => {
-                let res = self.handle_transact_error(e, &args, sender_h160, balance_before, effective_gas_price, reward_rate, is_coinbase, &overlay)?;
+                debug!("[Execution] Transaction {:?} EVM execution error: {:?}. Args: caller={:?}, value={}, gas_limit={}, gas_price={:?}", tx_hash_final, e, args.caller, args.value, args.gas_limit, args.gas_price);
+                let res = self.handle_transact_error(tx, e, &args, sender_h160, balance_before, effective_gas_price, reward_rate, is_coinbase, &overlay)?;
                 (res, true)
             }
         };
@@ -85,7 +92,7 @@ impl<'a> TransactionExecutor<'a> {
         let mut tx_gas_used = result.used_gas.as_u64();
         
         // Post-execution gas adjustments (EIP-7702, EIP-7623, etc)
-        tx_gas_used = self.adjust_gas_post_execution(tx, tx_gas_used, *tx_hash, &backend_final);
+        tx_gas_used = self.adjust_gas_post_execution(tx, tx_gas_used, *tx_hash_final, &backend_final);
         let elapsed = start_time.elapsed();
         debug!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}, elapsed={:?}", tx_hash, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed);
 
@@ -120,7 +127,7 @@ impl<'a> TransactionExecutor<'a> {
 
         let output = match &result.call_create {
             TransactValueCallCreate::Call { retval, .. } => Bytes::from(retval.clone()),
-            TransactValueCallCreate::Create { .. } => Bytes::new(),
+            TransactValueCallCreate::Create { address, .. } => Bytes::from(address.as_bytes().to_vec()),
         };
 
         Ok(TransactionExecutionResult {
@@ -293,19 +300,26 @@ impl<'a> TransactionExecutor<'a> {
         }
     }
 
-    fn handle_transact_error(&self, e: evm::interpreter::ExitError, args: &TransactArgs<'a>, sender_h160: H160, balance_before: EvmU256, effective_gas_price: EvmU256, reward_rate: EvmU256, is_coinbase: bool, overlay: &OverlayedBackend<'a, SputnikBackend<'a>>) -> Result<TransactValue> {
+    fn handle_transact_error(&self, tx: &Transaction, e: evm::interpreter::ExitError, args: &TransactArgs<'a>, sender_h160: H160, balance_before: EvmU256, effective_gas_price: EvmU256, reward_rate: EvmU256, is_coinbase: bool, overlay: &OverlayedBackend<'a, SputnikBackend<'a>>) -> Result<TransactValue> {
         use evm::interpreter::ExitError;
         let balance_after = overlay.balance(sender_h160);
         let used_gas = {
             let deduction_rate = if is_coinbase { effective_gas_price.saturating_sub(reward_rate) } else { effective_gas_price };
-            if deduction_rate > EvmU256::from(0) { 
+            let calculated = if deduction_rate > EvmU256::from(0) { 
                 let spent = balance_before.saturating_sub(balance_after);
                 spent / deduction_rate 
             } else { 
-                EvmU256::from(21000u64) // Default to intrinsic for zero gas price errors
-            }
+                EvmU256::from(0u64)
+            };
+            // Always charge at least intrinsic gas for failed transactions, 
+            // unless it's a zero-gas-price transaction (where we still want some non-zero gas for accounting)
+            let intrinsic_gas = crate::config::calculate_intrinsic_gas(tx, self.fork);
+            std::cmp::max(calculated, EvmU256::from(intrinsic_gas))
         };
-        let used_gas_u64 = std::cmp::min(used_gas.as_u64(), args.gas_limit.as_u64());
+        let used_gas_u64 = used_gas.as_u64();
+        if used_gas_u64 > args.gas_limit.as_u64() {
+             debug!("[Execution] Transaction used gas ({}) exceeds limit ({})", used_gas_u64, args.gas_limit.as_u64());
+        }
 
         match e {
             ExitError::Exception(_) | ExitError::Reverted => Ok(TransactValue {

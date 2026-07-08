@@ -87,7 +87,7 @@ else
 fi
 
 EXTRA_ARGS=""
-DOCKER_OPTS="--rm -it"
+DOCKER_OPTS="-it"
 # Check for network
 if [ -n "$NETWORK" ]; then
     DOCKER_OPTS="$DOCKER_OPTS --network $NETWORK"
@@ -157,7 +157,7 @@ if [ "$IS_CAMPAIGN" = true ]; then
     docker run $DOCKER_OPTS \
         -v "$STATE_DIR":/root/.local/state/contender \
         -w / \
-        "$CONTENDER_IMAGE" campaign "$SCENARIO_REF" -r "$RPC_URL" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
+        "$CONTENDER_IMAGE" campaign "$SCENARIO_REF" -r "$RPC_URL" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS --pending-timeout 36
 else
     echo "Starting workload (spam)..."
     docker run $DOCKER_OPTS \
