@@ -90,6 +90,7 @@ impl EthExecutionProvider {
         calculated_root: B256,
         fork: Hardfork,
         additional_requests: &[Vec<u8>],
+        building: bool,
     ) -> Result<()> {
         let transactions_root = proofs::calculate_transaction_root(&block.body.transactions);
         let receipts_root = proofs::calculate_receipt_root(receipts);
@@ -104,7 +105,7 @@ impl EthExecutionProvider {
 
         // Determine if we should update or validate based on the presence of values.
         // We use a "building" heuristic: if key fields are missing or at their default "empty" values, we fill them.
-        let is_building = block.header.state_root == B256::ZERO 
+        let is_building = building || block.header.state_root == B256::ZERO 
             || (block.header.gas_used == 0 && cumulative_gas_used > 0);
 
         if is_building {
@@ -468,6 +469,7 @@ impl ExecutionProvider for EthExecutionProvider {
     }
 
     fn execute_block_with_batch(&self, mut block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+        let building = state_root.is_none();
         let mut state_root = state_root;
         if state_root.is_none() && block.header.number > 0 {
             // Look up the parent header to get the correct state root for the reorged path
@@ -672,7 +674,7 @@ impl ExecutionProvider for EthExecutionProvider {
         let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
         debug!("[Execution] State root calculated: {:?}", calculated_root);
 
-        self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests)?;
+        self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests, building)?;
         info!("[Execution] Block header finalized for block {}", block.header.number);
         Ok((block, receipts))
     }
@@ -841,7 +843,7 @@ impl ExecutionProvider for EthExecutionProvider {
             
             let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
             // block_processor.finalize_block_header(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[])?;
-            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[])?;
+            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], false)?;
             drop(block_processor);
             batch.commit()?;
         } else {
@@ -853,7 +855,7 @@ impl ExecutionProvider for EthExecutionProvider {
 
             let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
             // block_processor.finalize_block_header(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[])?;
-            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[])?;
+            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], false)?;
         }
 
         Ok((results, block))
