@@ -119,42 +119,33 @@ ensure_hiveview_running() {
 }
 
 run_hive_tests() {
-    echo "Starting HIVE tests..."
+    local client=$1
+    echo "Starting HIVE tests for client: $client..."
 
-    echo "Running Wasix Wasm-Ethereum Client (wasix-w-eth)..."
     docker run --rm \
       -v /var/run/docker.sock:/var/run/docker.sock \
       -v "$ROOT_DIR/workspace:/hive/workspace" \
       hive-custom \
       --sim ethereum/engine \
-      --client wasix-w-eth \
-      --sim.parallelism 20
-
-    echo "Running Wasix Rust-Ethereum Client (wasix-r-eth)..."
-    docker run --rm \
-      -v /var/run/docker.sock:/var/run/docker.sock \
-      -v "$ROOT_DIR/workspace:/hive/workspace" \
-      hive-custom \
-      --sim ethereum/engine \
-      --client wasix-r-eth \
+      --client "$client" \
       --sim.parallelism 20
 }
 
 perform_check() {
-    local linux_status
-    local wasix_status
-    
     check_and_pull "$LINUX_IMAGE" "LAST_LINUX_DIGEST"
-    linux_status=$?
+    if [ $? -eq 0 ]; then
+        echo "Image $LINUX_IMAGE updated. Running HIVE tests for wasix-r-eth."
+        run_hive_tests "wasix-r-eth"
+    else
+        echo "No updates found for $LINUX_IMAGE."
+    fi
     
     check_and_pull "$WASIX_IMAGE" "LAST_WASIX_DIGEST"
-    wasix_status=$?
-    
-    if [ $linux_status -eq 0 ] || [ $wasix_status -eq 0 ]; then
-        echo "One or more images updated. Running HIVE tests."
-        run_hive_tests
+    if [ $? -eq 0 ]; then
+        echo "Image $WASIX_IMAGE updated. Running HIVE tests for wasix-w-eth."
+        run_hive_tests "wasix-w-eth"
     else
-        echo "No updates found for node images."
+        echo "No updates found for $WASIX_IMAGE."
     fi
 }
 
