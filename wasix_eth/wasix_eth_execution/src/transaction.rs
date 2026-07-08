@@ -296,7 +296,7 @@ impl<'a> TransactionExecutor<'a> {
     fn handle_transact_error(&self, e: evm::interpreter::ExitError, args: &TransactArgs<'a>, sender_h160: H160, balance_before: EvmU256, effective_gas_price: EvmU256, reward_rate: EvmU256, is_coinbase: bool, overlay: &OverlayedBackend<'a, SputnikBackend<'a>>) -> Result<TransactValue> {
         use evm::interpreter::ExitError;
         let balance_after = overlay.balance(sender_h160);
-        let used_gas = if matches!(e, ExitError::Exception(_)) { args.gas_limit } else {
+        let used_gas = {
             let deduction_rate = if is_coinbase { effective_gas_price.saturating_sub(reward_rate) } else { effective_gas_price };
             if deduction_rate > EvmU256::from(0) { balance_before.saturating_sub(balance_after) / deduction_rate } else { args.gas_limit }
         };

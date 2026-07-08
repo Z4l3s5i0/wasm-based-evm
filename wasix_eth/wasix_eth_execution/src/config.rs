@@ -11,7 +11,7 @@ pub fn get_evm_config(chain_config: &ChainConfig, block_number: u64, timestamp: 
         Hardfork::Prague => Config::prague(),
         Hardfork::Cancun => Config::cancun(),
         Hardfork::Shanghai => Config::shanghai(),
-        Hardfork::Paris => Config::london(),
+        Hardfork::Paris => Config::shanghai(), // Use Shanghai for Paris as it includes Merge changes
         Hardfork::GrayGlacier => Config::london(),
         Hardfork::ArrowGlacier => Config::london(),
         Hardfork::London => Config::london(),
