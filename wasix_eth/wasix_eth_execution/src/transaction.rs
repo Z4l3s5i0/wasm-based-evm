@@ -298,13 +298,19 @@ impl<'a> TransactionExecutor<'a> {
         let balance_after = overlay.balance(sender_h160);
         let used_gas = {
             let deduction_rate = if is_coinbase { effective_gas_price.saturating_sub(reward_rate) } else { effective_gas_price };
-            if deduction_rate > EvmU256::from(0) { balance_before.saturating_sub(balance_after) / deduction_rate } else { args.gas_limit }
+            if deduction_rate > EvmU256::from(0) { 
+                let spent = balance_before.saturating_sub(balance_after);
+                spent / deduction_rate 
+            } else { 
+                EvmU256::from(21000u64) // Default to intrinsic for zero gas price errors
+            }
         };
+        let used_gas_u64 = std::cmp::min(used_gas.as_u64(), args.gas_limit.as_u64());
 
         match e {
             ExitError::Exception(_) | ExitError::Reverted => Ok(TransactValue {
                 call_create: TransactValueCallCreate::Call { succeed: evm::interpreter::ExitSucceed::Stopped, retval: Vec::new() },
-                used_gas,
+                used_gas: EvmU256::from(used_gas_u64),
                 instruction_count: 0,
                 requests: Vec::new(),
             }),
