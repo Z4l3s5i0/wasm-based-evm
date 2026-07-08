@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use wasix_eth_types::{Address, BlockId, Bytes, Filter, Log, RpcBlock, RpcTransaction, RpcTransactionReceipt, SyncStatus, TransactionRequest, B256, U256};
-use wasix_eth_types::error::{parse_strict_hex, RpcError, RpcResult};
+use wasix_eth_types::error::{parse_loose_hash, RpcError, RpcResult};
 use wasix_eth_types::eth::EthRpcServer;
 use wasix_eth_utils::debug;
 use wasix_eth_utils::metrics::RPC_REQUESTS_TOTAL;
@@ -126,7 +126,7 @@ impl EthRpcServer for EthController {
     async fn get_block_by_hash(&self, hash: serde_json::Value, full: bool) -> RpcResult<Option<RpcBlock>> {
         debug!("[RPC] eth_getBlockByHash: hash={:?}, full={}", hash, full);
         RPC_REQUESTS_TOTAL.inc();
-        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+        let hash: B256 = parse_loose_hash(hash).map_err(|e| {
             e
         })?;
         let result = self.service.get_block_by_id(BlockId::hash(hash), full).await.map_err(|e| {
@@ -172,7 +172,7 @@ impl EthRpcServer for EthController {
     async fn get_block_transaction_count_by_hash(&self, hash: serde_json::Value) -> RpcResult<Option<U256>> {
         debug!("[RPC] eth_getBlockTransactionCountByHash: hash={:?}", hash);
         RPC_REQUESTS_TOTAL.inc();
-        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+        let hash: B256 = parse_loose_hash(hash).map_err(|e| {
             e
         })?;
         let count = self.service.get_block_transaction_count(BlockId::hash(hash)).await.map_err(|e| {
@@ -195,7 +195,7 @@ impl EthRpcServer for EthController {
     async fn get_transaction_by_hash(&self, hash: serde_json::Value) -> RpcResult<Option<RpcTransaction>> {
         debug!("[RPC] eth_getTransactionByHash: hash={:?}", hash);
         RPC_REQUESTS_TOTAL.inc();
-        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+        let hash: B256 = parse_loose_hash(hash).map_err(|e| {
             e
         })?;
         let result = self.service.get_transaction_by_hash(hash).await.map_err(|e| {
@@ -208,7 +208,7 @@ impl EthRpcServer for EthController {
     async fn get_transaction_receipt(&self, hash: serde_json::Value) -> RpcResult<Option<RpcTransactionReceipt>> {
         debug!("[RPC] eth_getTransactionReceipt: hash={:?}", hash);
         RPC_REQUESTS_TOTAL.inc();
-        let hash: B256 = parse_strict_hex(hash).map_err(|e| {
+        let hash: B256 = parse_loose_hash(hash).map_err(|e| {
             e
         })?;
         let result = self.service.get_transaction_receipt(hash).await.map_err(|e| {
@@ -260,9 +260,10 @@ impl EthRpcServer for EthController {
         Ok(result)
     }
 
-    async fn get_storage_at(&self, address: Address, slot: B256, block_id: Option<serde_json::Value>) -> RpcResult<B256> {
-        debug!("[RPC] eth_getStorageAt: address={}, slot={}, block_id={:?}", address, slot, block_id);
+    async fn get_storage_at(&self, address: Address, slot: serde_json::Value, block_id: Option<serde_json::Value>) -> RpcResult<B256> {
+        debug!("[RPC] eth_getStorageAt: address={}, slot={:?}, block_id={:?}", address, slot, block_id);
         RPC_REQUESTS_TOTAL.inc();
+        let slot = parse_loose_hash(slot)?;
         let block_id: BlockId = match block_id {
             Some(v) => serde_json::from_value(v).map_err(|e| {
                 RpcError::InvalidParamsCode(e.to_string())

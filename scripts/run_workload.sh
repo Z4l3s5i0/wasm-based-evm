@@ -5,7 +5,7 @@ set -e
 
 # Default values
 RPC_URL="http://host.docker.internal:8545"
-PRIVATE_KEY=""
+PRIVATE_KEY="ac0974bec39a17e36ba4a6b4d238ff944bacb478cbed5efcae784d7bf4f2ff80"
 SCENARIO="stress"
 IS_CAMPAIGN=false
 TPS=10
@@ -143,13 +143,13 @@ if [ "$SKIP_FUNDING" = true ]; then
 fi
 
 # Run setup if private key is provided
-if [ -n "$PRIVATE_KEY" ]; then
-    echo "Running contender setup..."
-    docker run $DOCKER_OPTS \
-        -v "$STATE_DIR":/root/.local/state/contender \
-        -w / \
-        "$CONTENDER_IMAGE" setup "$SCENARIO_REF" -r "$RPC_URL" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
-fi
+#if [ -n "$PRIVATE_KEY" ]; then
+#    echo "Running contender setup..."
+#    docker run $DOCKER_OPTS \
+#        -v "$STATE_DIR":/root/.local/state/contender \
+#        -w / \
+#        "$CONTENDER_IMAGE" setup "$SCENARIO_REF" -r "$RPC_URL" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
+#fi
 
 # Run workload
 if [ "$IS_CAMPAIGN" = true ]; then
@@ -157,13 +157,13 @@ if [ "$IS_CAMPAIGN" = true ]; then
     docker run $DOCKER_OPTS \
         -v "$STATE_DIR":/root/.local/state/contender \
         -w / \
-        "$CONTENDER_IMAGE" campaign "$SCENARIO_REF" -r "$RPC_URL" -a "$ACCOUNTS" $EXTRA_ARGS
+        "$CONTENDER_IMAGE" campaign "$SCENARIO_REF" -r "$RPC_URL" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
 else
     echo "Starting workload (spam)..."
     docker run $DOCKER_OPTS \
         -v "$STATE_DIR":/root/.local/state/contender \
         -w / \
-        "$CONTENDER_IMAGE" spam "$SCENARIO_REF" -r "$RPC_URL" --tps "$TPS" -d "$DURATION" -a "$ACCOUNTS" $EXTRA_ARGS
+        "$CONTENDER_IMAGE" spam "$SCENARIO_REF" -r "$RPC_URL" --tps "$TPS" -d "$DURATION" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
 fi
 
 echo "Workload finished."

@@ -51,7 +51,7 @@ pub trait EthRpc {
     #[method(name = "eth_getCode")]
     async fn get_code(&self, address: Address, block_id: Option<serde_json::Value>) -> RpcResult<Bytes>;
     #[method(name = "eth_getStorageAt")]
-    async fn get_storage_at(&self, address: Address, slot: B256, block_id: Option<serde_json::Value>) -> RpcResult<B256>;
+    async fn get_storage_at(&self, address: Address, slot: serde_json::Value, block_id: Option<serde_json::Value>) -> RpcResult<B256>;
 
     #[method(name = "eth_getBlockReceipts")]
     async fn get_block_receipts(&self, block_id: serde_json::Value) -> RpcResult<Option<Vec<RpcTransactionReceipt>>>;
