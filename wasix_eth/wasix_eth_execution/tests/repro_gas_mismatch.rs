@@ -53,10 +53,23 @@ async fn test_repro_gas_mismatch_isolated() {
                 }
                 
                 // Execute block
-                match execution.execute_block(block) {
+                match execution.execute_block(block.clone()) {
                     Ok((final_block, _receipts)) => {
                         println!("Successfully executed block {}: gas_used={}, state_root={:?}", 
                             block_num, final_block.header.gas_used, final_block.header.state_root);
+                        
+                        // NEW: Run simulation on top of this block
+                        println!("Running simulation on block {}...", block_num);
+                        match execution.run_simulation_with_state_root(block.body.transactions.clone(), block.clone(), Some(final_block.header.state_root)) {
+                            Ok((results, simulated_block)) => {
+                                println!("Simulation successful: txs={}, gas_used={}", results.len(), simulated_block.header.gas_used);
+                            }
+                            Err(e) => {
+                                println!("Simulation FAILED: {}", e);
+                                panic!("Simulation FAILED: {}", e);
+                            }
+                        }
+                        
                         count += 1;
                     }
                     Err(e) => {

@@ -175,9 +175,6 @@ impl<'a> RuntimeBackend for SputnikBackend<'a> {
         Ok(())
     }
 
-    fn push_request(&mut self, _ty: u8, _data: Vec<u8>) -> Result<(), evm::interpreter::ExitError> {
-        Ok(())
-    }
 }
 
 impl<'a> RuntimeEnvironment for SputnikBackend<'a> {

@@ -207,7 +207,11 @@ impl PayloadProcessor {
                 // });
             }
         }
+        info!("[PayloadProcessor] Successfully imported block {} (hash: {})", block.number, actual_hash);
+        let tx_count = block.body.transactions.len();
 
+        TRANSACTIONS_COMMITTED_TOTAL.inc_by(tx_count as f64);
+        BLOCKS_IMPORTED_TOTAL.inc();
         result
     }
 
@@ -647,7 +651,6 @@ impl PayloadProcessor {
         self.write_storage.insert_block_hash(block_hash, block_number).map_err(|e| RpcError::Internal(e.to_string()))?;
 
         // Persist receipts and transaction lookup
-        let tx_count = final_block.body.transactions.len();
         for (i, tx) in final_block.body.transactions.iter().enumerate() {
             let tx_hash = *tx.hash();
             self.write_storage.insert_transaction(tx_hash, tx.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
@@ -656,10 +659,8 @@ impl PayloadProcessor {
             }
             self.write_storage.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
         }
-        TRANSACTIONS_COMMITTED_TOTAL.inc_by(tx_count as f64);
-        BLOCKS_IMPORTED_TOTAL.inc();
 
-        info!("[PayloadProcessor] Successfully imported block {} (hash: {})", block_number, actual_hash);
+
         let _ = self.event_tx.send(EngineEvent::NewBlock(final_block.clone()));
 
         // If this block was previously marked as invalid (e.g. due to bad parameters in a previous call),

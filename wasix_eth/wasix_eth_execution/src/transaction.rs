@@ -5,7 +5,7 @@ use wasix_eth_storage::write_traits::AccountWriter;
 use wasix_eth_utils::debug;
 use evm::backend::{OverlayedBackend, OverlayedChangeSet, InMemoryEnvironment, RuntimeBaseBackend, RuntimeEnvironment, RuntimeBackend};
 use evm::uint::{H160, H256, U256 as EvmU256};
-use evm::standard::{AuthorizationItem, Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker, TransactArgs, TransactArgsCallCreate, TransactGasPrice, TransactValue, TransactValueCallCreate};
+use evm::standard::{Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker, TransactArgs, TransactArgsCallCreate, TransactGasPrice, TransactValue, TransactValueCallCreate};
 use evm::interpreter::etable::Chained;
 use evm::transact;
 use crate::backend::SputnikBackend;
@@ -92,9 +92,8 @@ impl<'a> TransactionExecutor<'a> {
         let mut tx_gas_used = result.used_gas.as_u64();
         
         // Post-execution gas adjustments (EIP-7702, EIP-7623, etc)
-        tx_gas_used = self.adjust_gas_post_execution(tx, tx_gas_used, *tx_hash_final, &backend_final);
         let elapsed = start_time.elapsed();
-        debug!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}, elapsed={:?}", tx_hash, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed);
+        debug!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}, elapsed={:?}", tx_hash_final, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed);
 
         *cumulative_gas_used += tx_gas_used;
 
@@ -202,13 +201,6 @@ impl<'a> TransactionExecutor<'a> {
                 hot_accounts.insert(H160::from_slice(to.as_slice()));
             }
 
-            // ONLY pre-warm precompiles. Other system contracts (EIP-7002, etc) are COLD by default.
-            /* 
-            if self.fork >= Hardfork::Cancun {
-                hot_accounts.insert(H160::from_slice(BEACON_ROOTS_ADDRESS.as_slice()));
-                hot_accounts.insert(H160::from_slice(SYSTEM_ADDRESS.as_slice()));
-            }
-            */
 
             for (addr, keys) in &access_list {
                 hot_accounts.insert(*addr);
@@ -270,31 +262,12 @@ impl<'a> TransactionExecutor<'a> {
              TransactGasPrice::Legacy(EvmU256::from(tx.gas_price().unwrap_or_default()))
         };
 
-        let authorization_list = if let Transaction::Eip7702(s) = tx {
-            s.tx().authorization_list().unwrap_or_default().iter().map(|a| {
-                let sig = a.signature().expect("Failed to get signature");
-                let recovered = a.recover_authority().expect("Failed to recover authority");
-                AuthorizationItem {
-                    chain_id: EvmU256::from_big_endian(&a.chain_id().to_be_bytes::<32>()),
-                    address: H160::from_slice(a.address().as_slice()),
-                    nonce: EvmU256::from(a.nonce()),
-                    target: H160::from_slice(recovered.as_slice()),
-                    v: if sig.v() { 1 } else { 0 },
-                    r: H256::from_slice(&sig.r().to_be_bytes::<32>()),
-                    s: H256::from_slice(&sig.s().to_be_bytes::<32>()),
-                }
-            }).collect()
-        } else {
-            Vec::new()
-        };
-
         TransactArgs {
             caller: H160::from_slice(sender.as_slice()),
             value: EvmU256::from_big_endian(&tx.value().to_be_bytes::<32>()),
             gas_limit: EvmU256::from(tx.gas_limit()),
             gas_price,
             access_list: tx.access_list().map(|al| al.0.iter().map(|a| (H160::from_slice(a.address.as_slice()), a.storage_keys.iter().map(|k: &B256| H256::from_slice(k.as_slice())).collect())).collect()).unwrap_or_default(),
-            authorization_list,
             call_create,
             config: self.config,
         }
@@ -325,64 +298,9 @@ impl<'a> TransactionExecutor<'a> {
             ExitError::Exception(_) | ExitError::Reverted => Ok(TransactValue {
                 call_create: TransactValueCallCreate::Call { succeed: evm::interpreter::ExitSucceed::Stopped, retval: Vec::new() },
                 used_gas: EvmU256::from(used_gas_u64),
-                instruction_count: 0,
-                requests: Vec::new(),
             }),
             ExitError::Fatal(fatal) => Err(anyhow::anyhow!("Fatal EVM error: {:?}", fatal)),
         }
-    }
-
-    fn adjust_gas_post_execution(&self, tx: &Transaction, tx_gas_used: u64, _tx_hash: B256, backend: &SputnikBackend) -> u64 {
-        let mut adjusted_gas = tx_gas_used;
-        
-        // EIP-7702: delegation access cost
-        // "If an account is a delegated account (starts with 0xef0100), the first time it is accessed in a transaction, an additional 2600 gas is charged."
-        // Our current EVM library doesn't seem to charge this automatically.
-        // We charge it for the transaction destination if it's delegated and not warm.
-        if self.fork >= Hardfork::Prague && !tx.is_eip7702() {
-            if let Some(to) = tx.to() {
-                let to_h160 = H160::from_slice(to.as_slice());
-                // We check if it was cold (not in the initial hot accounts)
-                // Actually, TransactionExecutor::prepare_backend pre-warms sender and to if it's Type 0/1/2.
-                // Wait, if it's pre-warmed, then it's NOT the first time it's accessed? 
-                // No, "first time it is accessed in a transaction" means even if it's in the access list it should cost more?
-                // Actually EIP-7702 says:
-                // "For each transaction, a set of all addresses accessed is maintained...
-                // When an address is accessed, if it is NOT in the set:
-                //   If it is delegated, charge PER_EMPTY_ACCOUNT_COST (2600)
-                //   Else charge PER_COLD_ACCOUNT_ACCESS_COST (2600)
-                // If it IS in the set:
-                //   If it is delegated, charge 0.
-                //   Else charge 0."
-                // Wait, so it costs the SAME as a cold access? 
-                // PER_COLD_ACCOUNT_ACCESS_COST is 2600.
-                // PER_EMPTY_ACCOUNT_COST is 2600.
-                // So a cold access to a delegated account costs 2600, same as EOA or contract.
-                // But wait, the test says "Delegation cost of 2600 should be charged" and expects 23700.
-                // 21000 (intrinsic) + 100 (warm call) + 2600 (delegation) = 23700.
-                // If the account was WARM, it would cost 100. But if it's delegated, it costs 2600 EXTRA?
-                // Let me re-read EIP-7702 again.
-                // "if it is in the accessed_addresses, the cost is 0. 
-                // If it is NOT in the accessed_addresses, it is added to the set and:
-                //   if it is a delegated account, the cost is 2600.
-                //   else the cost is 2600."
-                // This means there's NO difference for cold access.
-                // BUT, "When an address is accessed... if it is a delegated account, the cost is 2600".
-                // Does this mean EVERY access? No, "the cost is 2600" is only when NOT in accessed_addresses.
-                
-                // Wait, I see: "if the account is delegated... it is always considered COLD"? No.
-                // Ah! "For all transaction types, if the `to` address is a delegated account, it is added to `accessed_addresses` at the start of the transaction."
-                // "The cost for this is 2600."
-                // YES! This is it. Even if it's Type 0/1/2, if `to` is delegated, it costs 2600 at the start.
-                if backend.check_delegation(to_h160).is_some() {
-                    adjusted_gas += 2600;
-                    // If the account was cold, it would have already cost 2600 in intrinsic/execution.
-                    // But EIP-7702 says it's 2600 at the start.
-                }
-            }
-        }
-        
-        adjusted_gas
     }
 
     fn process_logs(&self, changeset: &OverlayedChangeSet) -> Vec<LogPrimitive> {

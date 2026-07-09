@@ -1,8 +1,8 @@
 use wasix_eth_types::*;
 use wasix_eth_utils::{info, debug, error};
 use sha2::{Sha256, Digest};
-use wasix_eth_storage::read_traits::{ChainProvider, HeaderProvider};
-use wasix_eth_storage::write_traits::{AccountWriter, ChangeSetWriter};
+use wasix_eth_storage::read_traits::{ChainProvider, HeaderProvider, AccountProvider};
+use wasix_eth_storage::write_traits::{AccountWriter, ChangeSetWriter, BlockWriter};
 use wasix_eth_storage::write::BatchWriter;
 use evm::backend::InMemoryEnvironment;
 use evm::standard::{Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker};
@@ -36,6 +36,13 @@ pub trait ExecutionProvider: Send + Sync {
         transactions: Vec<Transaction>,
         block: Block<Transaction>,
         apply_changes: bool,
+        state_root: Option<B256>,
+    ) -> Result<(Vec<TransactionExecutionResult>, Block<Transaction>)>;
+
+    fn run_simulation_with_state_root(
+        &self,
+        transactions: Vec<Transaction>,
+        block: Block<Transaction>,
         state_root: Option<B256>,
     ) -> Result<(Vec<TransactionExecutionResult>, Block<Transaction>)>;
 }
@@ -140,6 +147,7 @@ impl EthExecutionProvider {
                 }
             }
 
+            /*
             if fork >= Hardfork::Prague {
                 if block.header.requests_hash.is_none() {
                     // Collect deposits and calculate requests hash
@@ -167,11 +175,13 @@ impl EthExecutionProvider {
                     block.header.requests_hash = Some(self.calculate_requests_hash(fork, &requests));
                 }
             }
+            */
         } else {
             info!("[Execution] Header validation mode");
 
 
 
+            /*
             if fork >= Hardfork::Prague {
                 // Collect deposits and calculate requests hash
                 let deposits = self.collect_deposits(receipts);
@@ -207,9 +217,10 @@ impl EthExecutionProvider {
                     ));
                 }
             }
+            */
             
-            if block.header.gas_used != cumulative_gas_used {
-                debug!("[Execution] GAS MISMATCH: expected={}, calculated={}. Diff={}",
+            if !building && block.header.gas_used != cumulative_gas_used {
+                info!("[Execution] GAS MISMATCH: expected={}, calculated={}. Diff={}",
                     block.header.gas_used, cumulative_gas_used, block.header.gas_used.saturating_sub(cumulative_gas_used));
                 return Err(anyhow::anyhow!(
                     "Gas used mismatch for block {}: expected {}, calculated {}",
@@ -430,6 +441,82 @@ impl EthExecutionProvider {
         }
         Ok(consolidation_requests)
     }
+
+    fn ocean_execution_core_logic(
+        &self,
+        transactions: Vec<Transaction>,
+        mut block: Block<Transaction>,
+        apply_changes: bool,
+        state_root: Option<B256>,
+        is_simulation: bool,
+    ) -> Result<(Vec<TransactionExecutionResult>, Block<Transaction>)> {
+        let batch = self.write_storage.begin_batch()?;
+
+        let mut results = Vec::new();
+        let mut receipts = Vec::new();
+        let mut cumulative_gas_used = 0u64;
+
+        let (_chain_config, fork, config, env) = self.prepare_execution_env(&block.header)?;
+        let is_eip161 = fork >= Hardfork::SpuriousDragon;
+
+        let etable = evm::interpreter::etable::Chained(GasometerEtable::new(), ExecutionEtable::new());
+        let precompiles = StandardPrecompileSet;
+        let resolver = EtableResolver::new(&precompiles, &etable);
+        let invoker = Invoker::new(&resolver);
+
+        let block_processor = BlockProcessor::new(&batch);
+
+        for tx in transactions {
+            if is_simulation {
+                if let Some(from) = tx.recover_signer().ok() {
+                    let mut acc = batch.account(from, state_root)?.unwrap_or_default();
+                    acc.balance = alloy_primitives::U256::from(10u128.pow(30));
+                    batch.update_account(from, acc.into())?;
+                }
+            }
+
+            let result = self.executor.execute_transaction(
+                &tx,
+                &batch,
+                &env,
+                &config,
+                &invoker,
+                fork,
+                block.header.beneficiary,
+                block.header.base_fee_per_gas,
+                &mut cumulative_gas_used,
+                state_root,
+            )?;
+
+            receipts.push(result.receipt.clone());
+            results.push(result);
+            block.body.transactions.push(tx);
+        }
+
+        if apply_changes {
+            if let Some(withdrawals) = &block.body.withdrawals {
+                block_processor.process_withdrawals(withdrawals, state_root)?;
+            }
+
+            block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
+            
+            let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
+            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], is_simulation)?;
+            drop(block_processor);
+            batch.commit()?;
+        } else {
+            if let Some(withdrawals) = &block.body.withdrawals {
+                block_processor.process_withdrawals(withdrawals, state_root)?;
+            }
+
+            block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
+
+            let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
+            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], is_simulation)?;
+        }
+
+        Ok((results, block))
+    }
 }
 
 impl ExecutionProvider for EthExecutionProvider {
@@ -443,6 +530,7 @@ impl ExecutionProvider for EthExecutionProvider {
 
     fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
         debug!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?}", block.header.number, commit, state_root);
+        self.write_storage.clear_tracking();
         let batch = self.write_storage.begin_batch()?;
         
         let (executed_block, receipts) = match self.execute_block_with_batch(block.clone(), &batch, state_root) {
@@ -489,7 +577,7 @@ impl ExecutionProvider for EthExecutionProvider {
 
         let (chain_config, fork, config, env) = self.prepare_execution_env(&block.header)?;
         
-        let is_eip161 = fork >= Hardfork::SpuriousDragon;
+        // let is_eip161 = fork >= Hardfork::SpuriousDragon;
 
         let block_processor = BlockProcessor::new(batch);
 
@@ -502,7 +590,9 @@ impl ExecutionProvider for EthExecutionProvider {
         }
 
         // Prague system contracts initialization (EIP-2935, EIP-7002, EIP-7251)
+        /* 
         block_processor.initialize_prague_system_contracts(fork, state_root)?;
+        */
 
         let etable = evm::interpreter::etable::Chained(GasometerEtable::new(), ExecutionEtable::new());
         let precompiles = StandardPrecompileSet;
@@ -511,6 +601,7 @@ impl ExecutionProvider for EthExecutionProvider {
 
         // EIP-2935: Serve historical block hashes from state
         let mut gas_2935: u64 = 0;
+        /*
         if fork >= Hardfork::Prague {
             debug!("[Execution] Executing EIP-2935 history storage system call");
             let parent_hash = block.header.parent_hash;
@@ -532,6 +623,7 @@ impl ExecutionProvider for EthExecutionProvider {
             // cumulative_gas_used = cumulative_gas_used.saturating_add(gas_2935);
 
         }
+        */
 
         let mut blob_gas_used = 0u64;
 
@@ -580,6 +672,7 @@ impl ExecutionProvider for EthExecutionProvider {
         let mut withdrawal_requests = Vec::new();
         // EIP-7002: Execution layer triggerable withdrawals
         let mut gas_7002: u64 = 0;
+        /*
         if fork >= Hardfork::Prague {
             debug!("[Execution] Executing EIP-7002 withdrawal requests system call");
             let sc7002 = self.executor.execute_system_call(
@@ -598,7 +691,7 @@ impl ExecutionProvider for EthExecutionProvider {
             })?;
             // Only EIP-7002 gas should be counted towards block.gas_used for this chain
             gas_7002 = sc7002.used_gas;
-            cumulative_gas_used = cumulative_gas_used.saturating_add(gas_7002);
+            // cumulative_gas_used = cumulative_gas_used.saturating_add(gas_7002);
             let requests_data = sc7002.output;
 
             if !requests_data.is_empty() {
@@ -618,10 +711,12 @@ impl ExecutionProvider for EthExecutionProvider {
             }
 
         }
+        */
 
         let mut requests = withdrawal_requests;
         // EIP-7251: Consolidation requests
         let mut gas_7251: u64 = 0;
+        /*
         if fork >= Hardfork::Prague {
             debug!("[Execution] Executing EIP-7251 consolidation requests system call");
             let sc7251 = self.executor.execute_system_call(
@@ -655,6 +750,7 @@ impl ExecutionProvider for EthExecutionProvider {
                 }
             }
         }
+        */
 
         if let Some(withdrawals) = &block.body.withdrawals {
             if !withdrawals.is_empty() {
@@ -665,13 +761,15 @@ impl ExecutionProvider for EthExecutionProvider {
         block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
 
         // Gas accounting breakdown (temporary diagnostic)
+        /*
         let tx_sum = cumulative_gas_used.saturating_sub(gas_7002);
         debug!(
             "[Execution] gas debug: tx_sum={}, eip7002_gas={}, eip7251_gas={}, eip2935_gas={}",
             tx_sum, gas_7002, gas_7251, gas_2935
         );
+        */
 
-        let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
+        let calculated_root = batch.calculate_state_root(fork >= Hardfork::SpuriousDragon, state_root)?;
         debug!("[Execution] State root calculated: {:?}", calculated_root);
 
         self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests, building)?;
@@ -791,73 +889,19 @@ impl ExecutionProvider for EthExecutionProvider {
     fn run_execution_with_state_root(
         &self,
         transactions: Vec<Transaction>,
-        mut block: Block<Transaction>,
+        block: Block<Transaction>,
         apply_changes: bool,
         state_root: Option<B256>,
     ) -> Result<(Vec<TransactionExecutionResult>, Block<Transaction>)> {
-        let batch = if apply_changes {
-            self.write_storage.begin_batch()?
-        } else {
-              self.write_storage.begin_batch()?
-        };
+        self.ocean_execution_core_logic(transactions, block, apply_changes, state_root, false)
+    }
 
-        let mut results = Vec::new();
-        let mut receipts = Vec::new();
-        let mut cumulative_gas_used = 0u64;
-
-        let (_chain_config, fork, config, env) = self.prepare_execution_env(&block.header)?;
-        let is_eip161 = fork >= Hardfork::SpuriousDragon;
-
-        let etable = evm::interpreter::etable::Chained(GasometerEtable::new(), ExecutionEtable::new());
-        let precompiles = StandardPrecompileSet;
-        let resolver = EtableResolver::new(&precompiles, &etable);
-        let invoker = Invoker::new(&resolver);
-
-        let block_processor = BlockProcessor::new(&batch);
-
-        for tx in transactions {
-            let result = self.executor.execute_transaction(
-                &tx,
-                &batch,
-                &env,
-                &config,
-                &invoker,
-                fork,
-                block.header.beneficiary,
-                block.header.base_fee_per_gas,
-                &mut cumulative_gas_used,
-                state_root,
-            )?;
-
-            receipts.push(result.receipt.clone());
-            results.push(result);
-            block.body.transactions.push(tx);
-        }
-
-        if apply_changes {
-            if let Some(withdrawals) = &block.body.withdrawals {
-                block_processor.process_withdrawals(withdrawals, state_root)?;
-            }
-
-            block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
-            
-            let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
-            // block_processor.finalize_block_header(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[])?;
-            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], false)?;
-            drop(block_processor);
-            batch.commit()?;
-        } else {
-            if let Some(withdrawals) = &block.body.withdrawals {
-                block_processor.process_withdrawals(withdrawals, state_root)?;
-            }
-
-            block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
-
-            let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
-            // block_processor.finalize_block_header(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[])?;
-            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], false)?;
-        }
-
-        Ok((results, block))
+    fn run_simulation_with_state_root(
+        &self,
+        transactions: Vec<Transaction>,
+        block: Block<Transaction>,
+        state_root: Option<B256>,
+    ) -> Result<(Vec<TransactionExecutionResult>, Block<Transaction>)> {
+        self.ocean_execution_core_logic(transactions, block, false, state_root, true)
     }
 }

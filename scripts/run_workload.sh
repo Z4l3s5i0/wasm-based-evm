@@ -11,6 +11,7 @@ IS_CAMPAIGN=false
 TPS=10
 DURATION=60
 ACCOUNTS=10
+MIN_BALANCE="1 ether"
 GAS_LIMIT=""
 NETWORK=""
 CONTENDER_IMAGE="docker.io/z4l3s5i0/contender:latest"
@@ -27,6 +28,7 @@ usage() {
     echo "  --tps N          Transactions per second (for single scenario) (default: $TPS)"
     echo "  --duration N     Duration in seconds (for single scenario) (default: $DURATION)"
     echo "  --accounts N     Number of accounts per agent (default: $ACCOUNTS)"
+    echo "  --min-balance B  Minimum balance for accounts (default: $MIN_BALANCE)"
     echo "  --gas-limit N    Gas limit override for transactions"
     echo "  --network NAME   Docker network to join"
     echo "  --image NAME     Contender Docker image name (default: $CONTENDER_IMAGE)"
@@ -44,6 +46,7 @@ while [[ "$#" -gt 0 ]]; do
         --tps) TPS="$2"; shift ;;
         --duration) DURATION="$2"; shift ;;
         --accounts) ACCOUNTS="$2"; shift ;;
+        --min-balance) MIN_BALANCE="$2"; shift ;;
         --gas-limit) GAS_LIMIT="$2"; shift ;;
         --network) NETWORK="$2"; shift ;;
         --image) CONTENDER_IMAGE="$2"; shift ;;
@@ -70,6 +73,7 @@ else
     echo "Duration: $DURATION seconds"
 fi
 echo "Accounts per agent: $ACCOUNTS"
+echo "Min Balance: $MIN_BALANCE"
 if [ -n "$GAS_LIMIT" ]; then
     echo "Gas Limit: $GAS_LIMIT"
 fi
@@ -142,6 +146,10 @@ if [ "$SKIP_FUNDING" = true ]; then
     EXTRA_ARGS="$EXTRA_ARGS --skip-funding"
 fi
 
+if [ -n "$MIN_BALANCE" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --min-balance $MIN_BALANCE"
+fi
+
 # Run setup if private key is provided
 #if [ -n "$PRIVATE_KEY" ]; then
 #    echo "Running contender setup..."
@@ -163,7 +171,35 @@ else
     docker run $DOCKER_OPTS \
         -v "$STATE_DIR":/root/.local/state/contender \
         -w / \
-        "$CONTENDER_IMAGE" spam "$SCENARIO_REF" -r "$RPC_URL" --tps "$TPS" -d "$DURATION" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
+        "$CONTENDER_IMAGE" spam "$SCENARIO_REF" -r "$RPC_URL" --tps "$TPS" -d "$DURATION" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS --pending-timeout 36
 fi
 
 echo "Workload finished."
+
+#
+#wasm@test1:~$ ./eth-dev/run_workload.sh --network wasm_blockchain-net --campaign uber_workload --accounts 6 --min-balance 10000000000000000000 --rpc http://wasm-el-node-0-1:8545
+#--- Contender Workload Configuration ---
+#RPC URL: http://wasm-el-node-0-1:8545
+#Campaign: uber_workload
+#Accounts per agent: 6
+#Min Balance: 10000000000000000000
+#Network: wasm_blockchain-net
+#State Dir: /home/wasm/.contender_state
+#---------------------------------------
+#Starting workload (campaign)...
+#2026-07-08T20:26:50.498996Z  INFO data directory: /root/.local/state/contender
+#2026-07-08T20:26:50.502826Z  INFO connecting to http://wasm-el-node-0-1:8545/
+#2026-07-08T20:26:50.520795Z  INFO Funding agent accounts from 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+#2026-07-08T20:26:51.569164Z  INFO simulate_setup_cost: beginning setup simulation
+#2026-07-08T20:26:51.662777Z  INFO simulate_setup_cost: anvil ready at http://localhost:35135/
+#2026-07-08T20:26:51.702622Z  INFO simulate_setup_cost: deploying contract: "ContractUber"
+#deploying contract with wallet address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+#2026-07-08T20:26:58.742898Z  INFO simulate_setup_cost: syncing nonces from RPC...
+#2026-07-08T20:26:58.744757Z  INFO simulate_setup_cost: setup simulation complete. estimated setup cost: 0.000000000000000000 ether
+#2026-07-08T20:26:58.853546Z  INFO Deploying contracts...
+#2026-07-08T20:26:58.854706Z  INFO deploying contract: "ContractUber"
+#deploying contract with wallet address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
+#Error:   x core error
+#  |-> failed to find pending tx
+#  `-> transaction was not confirmed within the timeout
+

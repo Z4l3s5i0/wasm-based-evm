@@ -147,7 +147,6 @@ impl EvmExecutor {
             gas_limit: EvmU256::from(30_000_000u64),
             gas_price: TransactGasPrice::Legacy(EvmU256::zero()),
             access_list: Vec::new(),
-            authorization_list: Vec::new(),
             value: EvmU256::zero(),
             call_create: TransactArgsCallCreate::Call {
                 address: to_h160,

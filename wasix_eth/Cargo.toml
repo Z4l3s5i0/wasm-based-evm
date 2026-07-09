@@ -8,7 +8,7 @@ members = [
     "wasix_eth_app",
     "wasix_eth_utils",
     "wasix_eth_core",
-    #"testing",
+    "testing",
 ]
 resolver = "3"
 
@@ -62,9 +62,9 @@ alloy-rlp = { version = "=0.3.15", default-features = false, features = ["derive
 scopeguard = { version = "1.2", default-features =  false}
 
 
-evm = { git = "https://github.com/Z4l3s5i0/evm.git", branch = "metrics", default-features = false, features = ["serde", "std"] }
-evm-precompile = { git = "https://github.com/Z4l3s5i0/evm.git", branch = "metrics", default-features = false, features = ["std"] }
-evm-interpreter = { git = "https://github.com/Z4l3s5i0/evm.git", branch = "metrics", default-features = false, features = ["serde", "std"] }
+evm = { git = "https://github.com/Z4l3s5i0/evm.git", branch = "master", default-features = false, features = ["serde", "std"] }
+evm-precompile = { git = "https://github.com/Z4l3s5i0/evm.git", branch = "master", default-features = false, features = ["std"] }
+evm-interpreter = { git = "https://github.com/Z4l3s5i0/evm.git", branch = "master", default-features = false, features = ["serde", "std"] }
 alloy-signer-local = { version = "=1.6.3", default-features = false }
 alloy-signer = { version = "=1.6.3", default-features = false }
 

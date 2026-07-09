@@ -187,7 +187,7 @@ impl RPCEngine {
         let tx_envelope = self.build_transaction_envelope(request, signature, hash)
             .map_err(|e| RpcError::Internal(format!("Failed to build transaction envelope: {:?}", e)))?;
 
-        let result = self.execution.run_execution_with_state_root(vec![tx_envelope], block, false, Some(header.state_root)).map(|v| v.0.into_iter().next().unwrap())
+        let result = self.execution.run_simulation_with_state_root(vec![tx_envelope], block, Some(header.state_root)).map(|v| v.0.into_iter().next().unwrap())
             .map_err(|e| RpcError::Internal(e.to_string()))?;
         Ok(U256::from(result.gas_used))
     }
@@ -209,7 +209,7 @@ impl RPCEngine {
         let tx_envelope = self.build_transaction_envelope(request, signature, hash)
             .map_err(|e| RpcError::Internal(format!("Failed to build transaction envelope: {:?}", e)))?;
 
-        let result = self.execution.run_execution_with_state_root(vec![tx_envelope], block, false, Some(header.state_root))
+        let result = self.execution.run_simulation_with_state_root(vec![tx_envelope], block, Some(header.state_root))
             .map(|v| v.0.into_iter().next().unwrap()).map_err(|e| RpcError::Internal(e.to_string()))?;
 
         match result.call_create {
