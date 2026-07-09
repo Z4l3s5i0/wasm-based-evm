@@ -148,9 +148,11 @@ impl RPCEngine {
         }
         
         if self.mempool.add_transaction(tx.clone(), current_nonce).await {
-            debug!("[Engine] Added transaction {:?} to mempool", hash);
+            debug!("[Engine] Added transaction {:?} (nonce: {}) to mempool", hash, tx.nonce());
             // Broadcast the new transaction
             let _ = self.event_tx.send(EngineEvent::NewTransaction(tx));
+        } else{
+            warn!("[Engine] Rejected transaction {:?} due to nonce collision", hash);
         }
 
         Ok(hash)

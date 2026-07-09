@@ -137,7 +137,7 @@ impl PayloadBuilder {
         let mut event_rx = self.event_tx.subscribe();
         tokio::spawn(async move {
             let start_time = std::time::Instant::now();
-            let slot_duration = std::time::Duration::from_millis(12000); // SLOT_DURATION_MS
+            let slot_duration = std::time::Duration::from_millis(10000); // SLOT_DURATION_MS
             
             while !token.is_cancelled() {
                 tokio::task::yield_now().await;
@@ -151,7 +151,7 @@ impl PayloadBuilder {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
                     Ok(EngineEvent::NewTransaction(_)) = event_rx.recv() => {
                         // Debounce: wait a bit for more transactions to arrive
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         // Drain extra events
                         let mut count = 1;
                         while let Ok(_) = event_rx.try_recv() {
@@ -336,12 +336,18 @@ impl PayloadBuilder {
 
         // 5. Check if new block is better
         let new_value = self.calculate_block_value(&finalized_block, &receipts);
-        if new_value <= old_value && !finalized_block.body.transactions.is_empty() && !payload_block.body.transactions.is_empty() {
-            return Ok(());
-        }
         
-        // If the old one was empty and new one is not, or new one has higher value, replace it.
-        if new_value <= old_value && !payload_block.body.transactions.is_empty() {
+        // If the new one has higher value, replace it.
+        // If values are equal, but new one has more transactions, prefer it to maximize throughput.
+        let should_replace = if new_value > old_value {
+            true
+        } else if new_value == old_value {
+            finalized_block.body.transactions.len() > payload_block.body.transactions.len()
+        } else {
+            false
+        };
+
+        if !should_replace && !payload_block.body.transactions.is_empty() {
             return Ok(());
         }
 
@@ -376,13 +382,11 @@ impl PayloadBuilder {
     }
 
     pub fn get_payload(&self, payload_id: &PayloadId) -> RpcResult<(Block<Transaction>, Vec<Receipt>, BlobsBundleV1)> {
-        // Stop continuous building when payload is requested
-        if let Some(token) = self.cancel_tokens.write().unwrap().remove(payload_id) {
-            token.cancel();
-        }
-
-        self.read_storage.get_payload(payload_id)
-            .ok_or_else(|| RpcError::BlockNotFound(wasix_eth_types::BlockId::Hash(B256::from_slice(&payload_id.0[..]).into())))
+        let payload = self.read_storage.get_payload(payload_id)
+            .ok_or_else(|| RpcError::BlockNotFound(wasix_eth_types::BlockId::Hash(B256::from_slice(&payload_id.0[..]).into())))?;
+        
+        info!("[PayloadBuilder] Returning payload {:?} with {} transactions", payload_id, payload.0.body.transactions.len());
+        Ok(payload)
     }
 
     pub fn calculate_block_value(&self, block: &Block<Transaction>, receipts: &[Receipt]) -> U256 {

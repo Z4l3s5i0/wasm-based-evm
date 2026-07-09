@@ -86,6 +86,10 @@ impl MempoolInner {
             self.insert_into_queue(from, tx, false)
         };
 
+        // Try to promote queued transactions anyway, in case we just filled a gap that wasn't immediately obvious
+        // or if we replaced a transaction that now allows promotion.
+        self.promote_queued(from, tx_nonce + 1);
+
         if added {
             MEMPOOL_SIZE.set(self.len() as f64);
         } else {

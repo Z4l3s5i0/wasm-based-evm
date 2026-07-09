@@ -25,14 +25,19 @@ impl MempoolListener {
         let base_fee = block.header.base_fee_per_gas.unwrap_or_default();
         let tx_hashes: Vec<B256> = block.body.transactions.iter().map(|tx| *tx.hash()).collect();
 
-        // 1. Update base fee
-        self.mempool.update_base_fee(U256::from(base_fee), &self.read_storage).await;
-
-        // 2. Remove included transactions
+        // 1. Remove included transactions FIRST
+        // This prevents them from being marked as "invalid" during revalidation
         if !tx_hashes.is_empty() {
             info!("[MempoolListener] Removing {} transactions included in canonical block #{}", tx_hashes.len(), block.header.number);
             self.mempool.remove_transactions(&tx_hashes).await;
         }
+
+        // 2. Update base fee (which might trigger revalidation if it increased)
+        self.mempool.update_base_fee(U256::from(base_fee), &self.read_storage).await;
+
+        // 3. Always revalidate to promote queued transactions, even if base fee didn't increase
+        // Note: update_base_fee might have already done this if fee increased, but revalidate is idempotent-ish
+        self.mempool.revalidate(&self.read_storage).await;
     }
     
     pub async fn handle_reorg(&self, head_hash: B256) {

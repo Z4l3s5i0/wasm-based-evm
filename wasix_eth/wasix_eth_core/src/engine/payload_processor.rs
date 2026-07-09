@@ -190,7 +190,7 @@ impl PayloadProcessor {
             }
         }
 
-        let result = self.new_payload_internal_inner(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
+        let result = self.new_payload_internal_inner(block.clone(), expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
 
         {
             let mut processing = self.processing_payloads.write().unwrap();
