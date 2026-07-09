@@ -58,7 +58,10 @@ use crate::mempool::listener::MempoolListener;
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
     NewBlock(Block<Transaction>),
-    NewTransaction(Transaction),
+    NewTransaction {
+        tx: Transaction,
+        is_local: bool,
+    },
 }
 
 #[derive(Clone)]
@@ -113,7 +116,7 @@ impl SyncProvider for Engine {
 
     async fn process_gossip_transactions(&self, txs: Vec<Transaction>) -> wasix_eth_types::Result<()> {
         for tx in txs {
-            let _ = self.rpc_engine.submit_transaction(tx).await;
+            let _ = self.rpc_engine.submit_transaction_with_source(tx, false).await;
         }
         Ok(())
     }
@@ -122,7 +125,7 @@ impl SyncProvider for Engine {
         for tx in txs {
             let mut data = Vec::new();
             tx.encode(&mut data);
-            let _ = self.rpc_engine.import_pooled_transaction(tx, data).await;
+            let _ = self.rpc_engine.import_pooled_transaction_with_source(tx, data, false).await;
         }
         Ok(())
     }
@@ -736,7 +739,7 @@ impl Engine {
 
         // Re-add in reverse order (oldest discarded first)
         for tx in all_discarded_txs.into_iter().rev() {
-            let _ = self.event_tx.send(EngineEvent::NewTransaction(tx));
+            let _ = self.event_tx.send(EngineEvent::NewTransaction { tx, is_local: true });
         }
     }
 

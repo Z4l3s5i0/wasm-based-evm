@@ -5,6 +5,7 @@ use alloy_rlp::Decodable;
 use wasix_eth_utils::{debug, error, info};
 use wasix_eth_utils::metrics::GOSSIP_MESSAGES_RECEIVED;
 use wasix_eth_types::{Block, ChainManager, Result, Transaction};
+use wasix_eth_types::sync::SyncProvider;
 use crate::sync::registry::SyncRegistry;
 use crate::gossip::engine_sink::EngineSink;
 use crate::Engine;
@@ -97,7 +98,7 @@ impl GossipService {
         let tx_hash = tx.hash().clone();
         debug!("[Gossip] Received transaction via gossip: {:?}", tx_hash);
 
-        self.engine.ingest_transaction(tx).await;
+        let _ = self.engine.process_gossip_transactions(vec![tx]).await;
 
         Ok(())
     }

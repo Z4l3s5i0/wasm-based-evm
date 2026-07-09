@@ -121,7 +121,7 @@ async fn test_eip6110_deposit_requests() {
     let (fork, _config, _env) = prepare_execution_env(1, &config.config, &block.header, None);
     assert_eq!(fork, Hardfork::Prague);
 
-    eth_exec.finalize_block_header_with_requests(&mut block, &[receipt_with_log], 42000, calculated_root, fork, &[]).expect("Finalization failed");
+    eth_exec.finalize_block_header_with_requests(&mut block, &[receipt_with_log], 42000, calculated_root, fork).expect("Finalization failed");
 
     assert!(block.header.requests_hash.is_some());
     assert_ne!(block.header.requests_hash.unwrap(), alloy_eips::eip7685::EMPTY_REQUESTS_HASH);

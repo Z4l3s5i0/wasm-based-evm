@@ -16,7 +16,11 @@ impl GossipBridge {
         info!("[GossipBridge] Starting Engine-to-P2P event bridge");
         while let Ok(event) = event_rx.recv().await {
             match event {
-                EngineEvent::NewTransaction(tx) => self.gossip.broadcast_transaction(&tx).await,
+                EngineEvent::NewTransaction { tx, is_local } => {
+                    if is_local {
+                        self.gossip.broadcast_transaction(&tx).await;
+                    }
+                }
                 EngineEvent::NewBlock(block) => self.gossip.broadcast_block(&block).await,
             }
         }

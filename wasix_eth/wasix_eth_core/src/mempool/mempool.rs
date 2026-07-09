@@ -73,6 +73,9 @@ impl MempoolInner {
         // Potential addition: check balance against current state
         // This would require passing storage or balance to this method.
 
+        // Before adding, try to promote queued transactions in case current_nonce has caught up
+        self.promote_queued(from, current_nonce);
+
         // Determine if it should be pending or queued based on existing transactions from this sender
         let next_pending_nonce = self.pending_transactions.get(&from)
             .and_then(|q| q.back().map(|t| t.nonce() + 1))
@@ -224,25 +227,34 @@ impl MempoolInner {
         let mut current_blobs: u32 = 0;
         let max_blobs = max_blobs_per_block.unwrap_or(6);
         
-        // We use a simplified version of the greedy algorithm.
-        let mut copy = self.pending_transactions.clone();
+        // Use a persistent map of iterators to avoid cloning the entire queues
+        // We only need to clone the structure of the map and the VecDeque (which is a clone of pointers/references if using Arc, 
+        // but here it's clones of Transaction objects).
+        // Optimization: instead of cloning all queues, we can just keep track of the index per sender.
+        let mut sender_indices: HashMap<Address, usize> = HashMap::new();
+        let mut active_senders: Vec<Address> = self.pending_transactions.keys().cloned().collect();
         
-        while current_gas < target_gas_limit {
+        while current_gas < target_gas_limit && !active_senders.is_empty() {
             let mut best_sender: Option<Address> = None;
             let mut best_tip: u128 = 0;
             let mut best_blobs: u32 = 0;
 
-            for (address, queue) in &copy {
-                if let Some(tx) = queue.front() {
+            // Re-implementing more efficiently:
+            let mut to_remove = Vec::new();
+            for (idx, sender) in active_senders.iter().enumerate() {
+                let current_idx = sender_indices.get(sender).unwrap_or(&0);
+                let queue = self.pending_transactions.get(sender).unwrap();
+                
+                if let Some(tx) = queue.get(*current_idx) {
                     let tip = Self::calculate_effective_tip(tx, base_fee);
-                    // Skip transactions that can't pay the base fee
                     if tip == 0 && tx.max_fee_per_gas() < base_fee.to::<u128>() {
+                        to_remove.push(idx);
                         continue;
                     }
                     
-                    // Skip EIP-4844 transactions that can't pay the blob base fee
                     if let (Some(blob_fee), Transaction::Eip4844(s)) = (blob_base_fee, tx) {
                         if s.max_fee_per_blob_gas().unwrap_or_default() < blob_fee.to::<u128>() {
+                            to_remove.push(idx);
                             continue;
                         }
                     }
@@ -253,82 +265,56 @@ impl MempoolInner {
                         0
                     };
 
-                    let fits = current_gas + tx.gas_limit() <= target_gas_limit && current_blobs + tx_blobs <= max_blobs;
-
-                    if fits {
-                        if tip > best_tip {
+                    if current_gas + tx.gas_limit() <= target_gas_limit && current_blobs + tx_blobs <= max_blobs {
+                        if tip > best_tip || (tip == best_tip && (best_sender.is_none() || tx_blobs > best_blobs)) {
                             best_tip = tip;
-                            best_sender = Some(*address);
+                            best_sender = Some(*sender);
                             best_blobs = tx_blobs;
-                        } else if tip == best_tip {
-                            // If tips are equal, prioritize the transaction that uses more blobs
-                            // to help reach the target/max blob count.
-                            if tx_blobs > best_blobs {
-                                best_sender = Some(*address);
-                                best_blobs = tx_blobs;
-                            } else if best_sender.is_none() {
-                                best_sender = Some(*address);
-                                best_blobs = tx_blobs;
-                            }
                         }
+                    } else {
+                        // Doesn't fit, and since nonces must be sequential, no more txs from this sender can fit.
+                        to_remove.push(idx);
                     }
+                } else {
+                    to_remove.push(idx);
                 }
             }
 
-            if let Some(sender) = best_sender {
-                let queue = copy.get_mut(&sender).unwrap();
-                let tx = queue.pop_front().unwrap();
-                
-                let tx_gas = tx.gas_limit();
-                let tx_blobs = if let Transaction::Eip4844(signed_tx) = &tx {
-                    signed_tx.tx().blob_versioned_hashes().map(|h| h.len()).unwrap_or(0) as u32
-                } else {
-                    0
-                };
+            // Remove exhausted senders in reverse order
+            to_remove.sort_unstable_by(|a, b| b.cmp(a));
+            for idx in to_remove {
+                active_senders.swap_remove(idx);
+            }
 
-                if current_gas + tx_gas <= target_gas_limit && current_blobs + tx_blobs <= max_blobs {
-                    // Check if all blobs are present if it's an EIP-4844 transaction
-                    let mut all_blobs_present = true;
-                    if let Transaction::Eip4844(signed_tx) = &tx {
-                        if let Some(hashes) = signed_tx.tx().blob_versioned_hashes() {
-                            for hash in hashes {
-                                if !self.blobs.contains_key(hash) {
-                                    debug!("[Mempool] Missing blob {:?} for transaction {:?}, skipping", hash, tx.hash());
-                                    all_blobs_present = false;
-                                    break;
-                                }
+            if let Some(sender) = best_sender {
+                let current_idx = sender_indices.entry(sender).or_insert(0);
+                let queue = self.pending_transactions.get(&sender).unwrap();
+                let tx = &queue[*current_idx];
+                
+                let mut all_blobs_present = true;
+                if let Transaction::Eip4844(signed_tx) = tx {
+                    if let Some(hashes) = signed_tx.tx().blob_versioned_hashes() {
+                        for hash in hashes {
+                            if !self.blobs.contains_key(hash) {
+                                all_blobs_present = false;
+                                break;
                             }
                         }
                     }
-
-                    if all_blobs_present {
-                        current_gas += tx_gas;
-                        current_blobs += tx_blobs;
-                        result.push(tx);
-                    } else {
-                        // If blobs are missing, we skip this transaction and its sender
-                        copy.remove(&sender);
-                    }
-                } else {
-                    // If it doesn't fit due to gas or blobs, we skip this sender for this block
-                    // but we could technically try the next transaction from this sender if it's not blob-heavy?
-                    // Actually no, because we must respect nonce order. If this transaction doesn't fit,
-                    // no subsequent transaction from this sender can be included.
-                    // IMPORTANT: We remove the sender from 'copy' but NOT from the original mempool, 
-                    // allowing us to continue searching other senders in the next iteration of 'while'.
-                    copy.remove(&sender);
                 }
-                
-                if let Some(q) = copy.get(&sender) {
-                    if q.is_empty() {
-                        copy.remove(&sender);
-                    }
+
+                if all_blobs_present {
+                    current_gas += tx.gas_limit();
+                    current_blobs += best_blobs;
+                    result.push(tx.clone());
+                    *current_idx += 1;
+                } else {
+                    active_senders.retain(|s| *s != sender);
                 }
             } else {
                 break;
             }
         }
-        
         result
     }
 

@@ -32,7 +32,7 @@ impl BlockProcessor {
     }
 
     pub async fn process_transaction(&self, tx: Transaction) -> anyhow::Result<()> {
-        self.engine.rpc_engine.submit_transaction(tx).await
+        self.engine.rpc_engine.submit_transaction_with_source(tx, false).await
             .map_err(|e| anyhow::anyhow!("Failed to submit transaction: {:?}", e))?;
         Ok(())
     }
@@ -44,7 +44,7 @@ impl BlockProcessor {
         tx.encode(&mut data);
         
         // Pass the already decoded tx to import_pooled_transaction
-        self.engine.rpc_engine.import_pooled_transaction(tx, data).await
+        self.engine.rpc_engine.import_pooled_transaction_with_source(tx, data, false).await
             .map_err(|e| anyhow::anyhow!("Failed to import pooled transaction: {:?}", e))?;
         Ok(())
     }

@@ -1,17 +1,17 @@
-use wasix_eth_types::*;
-use wasix_eth_utils::{info, debug, error};
-use sha2::{Sha256, Digest};
-use wasix_eth_storage::read_traits::{ChainProvider, HeaderProvider, AccountProvider};
-use wasix_eth_storage::write_traits::{AccountWriter, ChangeSetWriter, BlockWriter};
-use wasix_eth_storage::write::BatchWriter;
-use evm::backend::InMemoryEnvironment;
-use evm::standard::{Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker};
-pub use evm::standard::TransactValueCallCreate;
-use evm_precompile::StandardPrecompileSet;
 use crate::block::BlockProcessor;
+use evm::backend::InMemoryEnvironment;
+pub use evm::standard::TransactValueCallCreate;
+use evm::standard::{Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker};
+use evm_precompile::StandardPrecompileSet;
+use sha2::{Digest, Sha256};
+use wasix_eth_storage::read_traits::{AccountProvider, ChainProvider, HeaderProvider};
+use wasix_eth_storage::write::BatchWriter;
+use wasix_eth_storage::write_traits::{AccountWriter, ChangeSetWriter};
+use wasix_eth_types::*;
+use wasix_eth_utils::{debug, info};
 
-pub use crate::executor::{EvmExecutor, TransactionExecutionResult};
 use crate::config::prepare_execution_env;
+pub use crate::executor::{EvmExecutor, TransactionExecutionResult};
 
 pub trait ExecutionProvider: Send + Sync {
     fn execute_block(&self, block: Block<Transaction>) -> Result<(Block<Transaction>, Vec<Receipt>)>;
@@ -96,7 +96,6 @@ impl EthExecutionProvider {
         cumulative_gas_used: u64,
         calculated_root: B256,
         fork: Hardfork,
-        additional_requests: &[Vec<u8>],
         building: bool,
     ) -> Result<()> {
         let transactions_root = proofs::calculate_transaction_root(&block.body.transactions);
@@ -501,7 +500,7 @@ impl EthExecutionProvider {
             block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
             
             let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
-            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], is_simulation)?;
+            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, is_simulation)?;
             drop(block_processor);
             batch.commit()?;
         } else {
@@ -512,7 +511,7 @@ impl EthExecutionProvider {
             block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
 
             let calculated_root = batch.calculate_state_root(is_eip161, state_root)?;
-            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &[], is_simulation)?;
+            self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, is_simulation)?;
         }
 
         Ok((results, block))
@@ -589,41 +588,11 @@ impl ExecutionProvider for EthExecutionProvider {
             }
         }
 
-        // Prague system contracts initialization (EIP-2935, EIP-7002, EIP-7251)
-        /* 
-        block_processor.initialize_prague_system_contracts(fork, state_root)?;
-        */
 
         let etable = evm::interpreter::etable::Chained(GasometerEtable::new(), ExecutionEtable::new());
         let precompiles = StandardPrecompileSet;
         let resolver = EtableResolver::new(&precompiles, &etable);
         let invoker = Invoker::new(&resolver);
-
-        // EIP-2935: Serve historical block hashes from state
-        let mut gas_2935: u64 = 0;
-        /*
-        if fork >= Hardfork::Prague {
-            debug!("[Execution] Executing EIP-2935 history storage system call");
-            let parent_hash = block.header.parent_hash;
-            let _sc2935 = self.executor.execute_system_call(
-                SYSTEM_ADDRESS,
-                HISTORY_STORAGE_ADDRESS,
-                parent_hash.0.to_vec().into(),
-                batch,
-                &env,
-                &config,
-                &invoker,
-                fork,
-                state_root,
-            ).map_err(|e| {
-                error!("[Execution] EIP-2935 system call FAILED: {}. Block MUST be invalidated.", e);
-                e
-            })?;
-            gas_2935 = _sc2935.used_gas;
-            // cumulative_gas_used = cumulative_gas_used.saturating_add(gas_2935);
-
-        }
-        */
 
         let mut blob_gas_used = 0u64;
 
@@ -669,88 +638,6 @@ impl ExecutionProvider for EthExecutionProvider {
 
         // Note: do not log gas_used_total yet; post-block system calls may contribute
 
-        let mut withdrawal_requests = Vec::new();
-        // EIP-7002: Execution layer triggerable withdrawals
-        let mut gas_7002: u64 = 0;
-        /*
-        if fork >= Hardfork::Prague {
-            debug!("[Execution] Executing EIP-7002 withdrawal requests system call");
-            let sc7002 = self.executor.execute_system_call(
-                SYSTEM_ADDRESS,
-                WITHDRAWAL_REQUEST_PREDEPLOY_ADDRESS,
-                Bytes::new(),
-                batch,
-                &env,
-                &config,
-                &invoker,
-                fork,
-                state_root,
-            ).map_err(|e| {
-                error!("[Execution] EIP-7002 system call FAILED: {}. Block MUST be invalidated.", e);
-                e
-            })?;
-            // Only EIP-7002 gas should be counted towards block.gas_used for this chain
-            gas_7002 = sc7002.used_gas;
-            // cumulative_gas_used = cumulative_gas_used.saturating_add(gas_7002);
-            let requests_data = sc7002.output;
-
-            if !requests_data.is_empty() {
-                debug!("[Execution] EIP-7002 withdrawal requests received: len={}", requests_data.len());
-                if requests_data.len() % 76 != 0 {
-                    return Err(anyhow::anyhow!("EIP-7002 system call returned malformed data length: {}", requests_data.len()));
-                }
-
-                for chunk in requests_data.chunks_exact(76) {
-                    let mut request = Vec::with_capacity(77);
-                    request.push(constants::WITHDRAWAL_REQUEST_TYPE);
-                    request.extend_from_slice(chunk);
-                    withdrawal_requests.push(request);
-                }
-            } else {
-                debug!("[Execution] No withdrawal requests returned from system call");
-            }
-
-        }
-        */
-
-        let mut requests = withdrawal_requests;
-        // EIP-7251: Consolidation requests
-        let mut gas_7251: u64 = 0;
-        /*
-        if fork >= Hardfork::Prague {
-            debug!("[Execution] Executing EIP-7251 consolidation requests system call");
-            let sc7251 = self.executor.execute_system_call(
-                SYSTEM_ADDRESS,
-                CONSOLIDATION_REQUEST_PREDEPLOY_ADDRESS,
-                Bytes::new(),
-                batch,
-                &env,
-                &config,
-                &invoker,
-                fork,
-                state_root,
-            ).map_err(|e| {
-                error!("[Execution] EIP-7251 system call FAILED: {}. Block MUST be invalidated.", e);
-                e
-            })?;
-            gas_7251 = sc7251.used_gas;
-            // cumulative_gas_used = cumulative_gas_used.saturating_add(gas_7251);
-
-            let result = sc7251.output;
-            
-            if !result.is_empty() {
-                if result.len() % 76 != 0 {
-                    return Err(anyhow::anyhow!("EIP-7251 system call returned malformed data length: {}", result.len()));
-                }
-                for chunk in result.chunks_exact(76) {
-                    let mut request = Vec::with_capacity(77);
-                    request.push(constants::CONSOLIDATION_REQUEST_TYPE);
-                    request.extend_from_slice(chunk);
-                    requests.push(request);
-                }
-            }
-        }
-        */
 
         if let Some(withdrawals) = &block.body.withdrawals {
             if !withdrawals.is_empty() {
@@ -760,19 +647,11 @@ impl ExecutionProvider for EthExecutionProvider {
 
         block_processor.apply_block_rewards(fork, block.header.beneficiary, &block.body.ommers, state_root, block.header.number)?;
 
-        // Gas accounting breakdown (temporary diagnostic)
-        /*
-        let tx_sum = cumulative_gas_used.saturating_sub(gas_7002);
-        debug!(
-            "[Execution] gas debug: tx_sum={}, eip7002_gas={}, eip7251_gas={}, eip2935_gas={}",
-            tx_sum, gas_7002, gas_7251, gas_2935
-        );
-        */
 
         let calculated_root = batch.calculate_state_root(fork >= Hardfork::SpuriousDragon, state_root)?;
         debug!("[Execution] State root calculated: {:?}", calculated_root);
 
-        self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, &requests, building)?;
+        self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, building)?;
         info!("[Execution] Block header finalized for block {}", block.header.number);
         Ok((block, receipts))
     }

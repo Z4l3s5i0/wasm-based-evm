@@ -1,3 +1,4 @@
+use alloy_primitives::Address;
 use wasix_eth_types::{async_trait, ConsensusTransaction, Transaction, B256, U256, Blob, Bytes48, TxPooledEnvelope, Bytes};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::AccountProvider;
@@ -13,6 +14,7 @@ pub trait MempoolProvider: Send + Sync {
     async fn peek_transactions(&self, n: usize) -> Vec<Transaction>;
     async fn remove_transactions(&self, tx_hashes: &[B256]);
     async fn get_all_transactions(&self) -> Vec<Transaction>;
+    async fn get_transactions_by_sender(&self, address: Address) -> Vec<Transaction>;
     async fn len(&self) -> usize;
     async fn is_empty(&self) -> bool;
     async fn clear(&self);
@@ -189,6 +191,18 @@ impl MempoolProvider for Mempool {
         inner.get_all_transactions()
     }
 
+    async fn get_transactions_by_sender(&self, address: Address) -> Vec<Transaction> {
+        let inner = self.inner.read().await;
+        let mut txs = Vec::new();
+        if let Some(pending) = inner.pending_transactions.get(&address) {
+            txs.extend(pending.iter().cloned());
+        }
+        if let Some(queued) = inner.queued_transactions.get(&address) {
+            txs.extend(queued.iter().cloned());
+        }
+        txs
+    }
+
     async fn len(&self) -> usize {
         let inner = self.inner.read().await;
         inner.len()
@@ -270,6 +284,7 @@ impl MempoolProvider for NoopMempoolProvider {
     async fn peek_transactions(&self, _n: usize) -> Vec<Transaction> { Vec::new() }
     async fn remove_transactions(&self, _tx_hashes: &[B256]) {}
     async fn get_all_transactions(&self) -> Vec<Transaction> { Vec::new() }
+    async fn get_transactions_by_sender(&self, _address: Address) -> Vec<Transaction> { Vec::new() }
     async fn len(&self) -> usize { 0 }
     async fn is_empty(&self) -> bool { true }
     async fn clear(&self) {}

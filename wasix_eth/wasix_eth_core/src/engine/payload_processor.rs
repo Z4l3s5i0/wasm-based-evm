@@ -200,18 +200,13 @@ impl PayloadProcessor {
         if let Ok(ref status) = result {
             if status.status == PayloadStatusEnum::Valid {
                 self.revalidate_dependent_payloads(actual_hash).await;
-
-                // let self_clone = self.clone();
-                // tokio::spawn(async move {
-                //     self_clone.revalidate_dependent_payloads(actual_hash).await;
-                // });
+                
+                info!("[PayloadProcessor] Successfully imported block {} (hash: {})", block.number, actual_hash);
+                let tx_count = block.body.transactions.len();
+                TRANSACTIONS_COMMITTED_TOTAL.inc_by(tx_count as f64);
+                BLOCKS_IMPORTED_TOTAL.inc();
             }
         }
-        info!("[PayloadProcessor] Successfully imported block {} (hash: {})", block.number, actual_hash);
-        let tx_count = block.body.transactions.len();
-
-        TRANSACTIONS_COMMITTED_TOTAL.inc_by(tx_count as f64);
-        BLOCKS_IMPORTED_TOTAL.inc();
         result
     }
 
@@ -696,7 +691,7 @@ impl PayloadProcessor {
                                 processing.insert(child_hash);
                             }
 
-                            let result = self.new_payload_internal_inner(block, child_hash, None, None).await;
+                            let result = self.new_payload_internal_inner(block.clone(), child_hash, None, None).await;
 
                             {
                                 let mut processing = self.processing_payloads.write().unwrap();
@@ -706,6 +701,7 @@ impl PayloadProcessor {
                             match result {
                                 Ok(status) => {
                                     if status.status == PayloadStatusEnum::Valid {
+                                        info!("[PayloadProcessor] Successfully revalidated child block {} (hash: {})", block.header.number, child_hash);
                                         parents_to_process.push(child_hash);
                                     }
                                 }

@@ -1,6 +1,6 @@
-use alloy_primitives::{B256, U256};
-use alloy_consensus::{Block, Transaction as TransactionTrait};
 use crate::{async_trait, Result, SyncStatus, Transaction};
+use alloy_consensus::Block;
+use alloy_primitives::{B256, U256};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum InvalidationReason {

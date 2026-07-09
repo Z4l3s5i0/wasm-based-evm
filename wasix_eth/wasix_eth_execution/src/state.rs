@@ -4,7 +4,6 @@ use wasix_eth_storage::read_traits::{AccountProvider, StorageProvider};
 use wasix_eth_storage::write_traits::{AccountWriter, BytecodeWriter, StorageWriter};
 use wasix_eth_utils::debug;
 use evm::backend::OverlayedChangeSet;
-use evm::uint::H160;
 use anyhow::Result;
 use crate::backend::SputnikBackend;
 
@@ -21,7 +20,6 @@ impl<'a> StateApplier<'a> {
         &self,
         changeset: &OverlayedChangeSet,
         eip161: bool,
-        coinbase: H160,
         state_root: Option<B256>,
     ) -> Result<()> {
         debug!("[Execution] Applying changeset: balances={}, nonces={}, codes={}, storages={}, deletes={}",
@@ -33,7 +31,7 @@ impl<'a> StateApplier<'a> {
         for (address, balance) in &changeset.balances {
             let addr = Address::from_slice(address.as_bytes());
             affected_accounts.insert(*address);
-            let mut trie_account = self.get_or_materialize_account(addr, state_root, "balance_update")?;
+            let mut trie_account = self.get_or_materialize_account(addr, state_root)?;
 
             let final_balance = {
                 let mut bytes = [0u8; 32];
@@ -49,7 +47,7 @@ impl<'a> StateApplier<'a> {
         for (address, nonce) in &changeset.nonces {
             let addr = Address::from_slice(address.as_bytes());
             affected_accounts.insert(*address);
-            let mut trie_account = self.get_or_materialize_account(addr, state_root, "nonce_increment")?;
+            let mut trie_account = self.get_or_materialize_account(addr, state_root)?;
             debug!("[Execution] Nonce update: addr={:?}, old={}, new={}", addr, trie_account.nonce, nonce.as_u64());
             trie_account.nonce = nonce.as_u64();
             self.batch.update_account(addr, trie_account)?;
@@ -59,7 +57,7 @@ impl<'a> StateApplier<'a> {
         for (address, code) in &changeset.codes {
             let addr = Address::from_slice(address.as_bytes());
             affected_accounts.insert(*address);
-            let mut trie_account = self.get_or_materialize_account(addr, state_root, "code_write")?;
+            let mut trie_account = self.get_or_materialize_account(addr, state_root)?;
             let code_hash = keccak256(code.as_slice());
             debug!("[Execution] Code update: addr={:?}, hash={:?}", addr, code_hash);
             trie_account.code_hash = code_hash;
@@ -132,7 +130,6 @@ impl<'a> StateApplier<'a> {
         &self,
         addr: Address,
         state_root: Option<B256>,
-        reason: &str,
     ) -> Result<TrieAccount> {
         Ok(self.batch.account(addr, state_root)?.unwrap_or_else(|| {
             TrieAccount {

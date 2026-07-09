@@ -10,7 +10,6 @@ pub mod engine_types;
 pub mod net;
 pub mod web3;
 
-pub use chain::*;
 pub use alloy_consensus::TxEip4844Variant;
 
 pub use alloy_eips::eip4788::{BEACON_ROOTS_CODE};

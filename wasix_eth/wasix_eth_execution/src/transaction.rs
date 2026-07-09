@@ -89,7 +89,7 @@ impl<'a> TransactionExecutor<'a> {
         };
 
         let (backend_final, changeset) = overlay.deconstruct();
-        let mut tx_gas_used = result.used_gas.as_u64();
+        let tx_gas_used = result.used_gas.as_u64();
         
         // Post-execution gas adjustments (EIP-7702, EIP-7623, etc)
         let elapsed = start_time.elapsed();
@@ -98,10 +98,10 @@ impl<'a> TransactionExecutor<'a> {
         *cumulative_gas_used += tx_gas_used;
 
         let consensus_logs = self.process_logs(&changeset);
-        let coinbase = H160::from_slice(beneficiary.as_slice());
+        H160::from_slice(beneficiary.as_slice());
 
         let state_applier = StateApplier::new(self.batch);
-        state_applier.apply_changeset(&changeset, eip161, coinbase, state_root)?;
+        state_applier.apply_changeset(&changeset, eip161, state_root)?;
 
         // Ensure beneficiary exists (EIP-158/161)
         self.batch.account(beneficiary, state_root)?;

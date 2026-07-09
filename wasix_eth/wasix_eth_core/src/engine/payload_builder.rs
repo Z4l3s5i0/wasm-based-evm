@@ -149,7 +149,7 @@ impl PayloadBuilder {
                 // Wait for a bit or until mempool change
                 tokio::select! {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
-                    Ok(EngineEvent::NewTransaction(_)) = event_rx.recv() => {
+                    Ok(EngineEvent::NewTransaction { .. }) = event_rx.recv() => {
                         // Debounce: wait a bit for more transactions to arrive
                         tokio::time::sleep(std::time::Duration::from_millis(250)).await;
                         // Drain extra events

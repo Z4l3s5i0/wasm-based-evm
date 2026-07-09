@@ -80,6 +80,10 @@ impl RPCEngine {
     }
 
     pub async fn submit_transaction(&self, tx: Transaction) -> RpcResult<B256> {
+        self.submit_transaction_with_source(tx, true).await
+    }
+
+    pub async fn submit_transaction_with_source(&self, tx: Transaction, is_local: bool) -> RpcResult<B256> {
         let hash = *tx.hash();
         debug!("[Engine] Submitting transaction: {:?}", hash);
 
@@ -132,27 +136,70 @@ impl RPCEngine {
         // we might get a stale nonce from the database.
         let mut current_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
         
-        // Fallback: If current_nonce is 0, check if the head_hash is in Payloads (might have a higher nonce)
-        if current_nonce == 0 {
-            if let Some((_block, _, _)) = self.read_storage.get_payload_by_block_hash(head_hash) {
-                // If the sender is in this block, we can get its next nonce from the state root if we had an execution provider here,
-                // but for now let's try to get it from the latest canonical block in DB if the head is "detached".
-                if let Ok(Some(latest_num)) = self.read_storage.latest_block_number() {
-                    if latest_num < head_number {
-                        // Head has moved forward in CanonicalState but DB is still at latest_num.
-                        // Try to get nonce from latest_num.
-                        current_nonce = self.read_storage.transaction_count(from, BlockId::Number(BlockNumberOrTag::Number(latest_num)), None).unwrap_or_default();
+        // Use higher nonce from Payloads if the head hash corresponds to a block that is still in flight
+        // Optimization: Use a more direct lookup if possible, or limit the scan.
+        let mut highest_nonce_in_flight = 0;
+        let mut found_in_flight = false;
+
+        // Check head payload first as it's most likely to contain relevant transactions
+        if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(head_hash) {
+            for block_tx in &block.body.transactions {
+                if block_tx.recover_signer().unwrap_or_default() == from {
+                    highest_nonce_in_flight = highest_nonce_in_flight.max(block_tx.nonce() + 1);
+                    found_in_flight = true;
+                }
+            }
+        }
+
+        // If not found in head, or to be absolutely sure, check other payloads but avoid full scan if we can.
+        // In high TPS, we usually only care about the very recent ones.
+        if !found_in_flight {
+            let all_payloads = self.read_storage.all_payload_ids();
+            // Limit scan to last few payloads if there are many? 
+            // For now, let's keep it but make it slightly more efficient by breaking early if we found something recent.
+            for id in all_payloads {
+                if let Some((block, _, _)) = self.read_storage.get_payload(&id) {
+                    let mut found_any_for_sender = false;
+                    for block_tx in &block.body.transactions {
+                        if block_tx.recover_signer().unwrap_or_default() == from {
+                            highest_nonce_in_flight = highest_nonce_in_flight.max(block_tx.nonce() + 1);
+                            found_in_flight = true;
+                            found_any_for_sender = true;
+                        }
+                    }
+                    // If we found transactions in a payload, they are likely the most recent.
+                    if found_any_for_sender {
+                        break;
                     }
                 }
             }
         }
+
+        if found_in_flight && highest_nonce_in_flight > current_nonce {
+            current_nonce = highest_nonce_in_flight;
+        }
+        
+        // Fallback: If DB is behind CanonicalState height, it's definitely stale
+        if let Ok(Some(latest_num)) = self.read_storage.latest_block_number() {
+            if latest_num < head_number {
+                // The DB hasn't even reached the head yet. 
+                // We should ideally use the nonce from the last canonical block state,
+                // but if we can't find it, we just have to trust what we found so far or 
+                // wait. For now, we've already checked the Payload for head_hash.
+            }
+        }
         
         if self.mempool.add_transaction(tx.clone(), current_nonce).await {
-            debug!("[Engine] Added transaction {:?} (nonce: {}) to mempool", hash, tx.nonce());
+            debug!("[Engine] Added transaction {:?} (nonce: {}) to mempool (is_local: {})", hash, tx.nonce(), is_local);
             // Broadcast the new transaction
-            let _ = self.event_tx.send(EngineEvent::NewTransaction(tx));
-        } else{
-            warn!("[Engine] Rejected transaction {:?} due to nonce collision", hash);
+            let _ = self.event_tx.send(EngineEvent::NewTransaction { tx, is_local });
+        } else {
+            if is_local {
+                warn!("[Engine] Rejected local transaction {:?} due to nonce collision or stale nonce (nonce: {}, current: {})", hash, tx.nonce(), current_nonce);
+                return Err(RpcError::InvalidParams(format!("Nonce too low: expected {}, got {}", current_nonce, tx.nonce())));
+            } else {
+                debug!("[Engine] Ignored remote transaction {:?} due to nonce collision or stale nonce", hash);
+            }
         }
 
         Ok(hash)
@@ -229,7 +276,7 @@ impl RPCEngine {
         let nonce = if let Some(n) = request.nonce {
             n
         } else {
-            self.get_transaction_count(from, BlockId::Number(BlockNumberOrTag::Latest)).await?
+            self.get_transaction_count(from, BlockId::Number(BlockNumberOrTag::Pending)).await?
         };
 
         // For eth_sendTransaction, we should handle gas and gas_price properly
@@ -299,6 +346,10 @@ impl RPCEngine {
     }
 
     pub async fn import_pooled_transaction(&self, pooled_tx: TxPooledEnvelope, data: Vec<u8>) -> RpcResult<B256> {
+        self.import_pooled_transaction_with_source(pooled_tx, data, true).await
+    }
+
+    pub async fn import_pooled_transaction_with_source(&self, pooled_tx: TxPooledEnvelope, data: Vec<u8>, is_local: bool) -> RpcResult<B256> {
         let hash = *pooled_tx.hash();
         debug!("[Engine] Importing pooled transaction: {:?}", hash);
 
@@ -344,7 +395,7 @@ impl RPCEngine {
             ));
         }
 
-        self.submit_transaction(signed_tx).await
+        self.submit_transaction_with_source(signed_tx, is_local).await
     }
 
     pub async fn sign_transaction(&self, request: TransactionRequest) -> RpcResult<Bytes> {
@@ -352,6 +403,11 @@ impl RPCEngine {
 
         if !self.account_manager.is_managed(&from) {
             return Err(RpcError::AccountNotFound(from));
+        }
+
+        let mut request = request;
+        if request.nonce.is_none() {
+            request.nonce = Some(self.get_transaction_count(from, BlockId::Number(BlockNumberOrTag::Pending)).await?);
         }
 
         let signed_tx: Transaction = self.build_transaction_envelope(request, Signature::test_signature(), B256::ZERO)
@@ -458,6 +514,8 @@ impl RPCEngine {
     }
 
     pub async fn get_balance(&self, address: Address, block_id: BlockId) -> RpcResult<U256> {
+        let is_pending = matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending));
+
         let header = self.read_storage.header(block_id)
             .map_err(|e| {
                 e.downcast_ref::<RpcError>().cloned().unwrap_or_else(|| RpcError::Internal(e.to_string()))
@@ -467,17 +525,47 @@ impl RPCEngine {
         let account = self.read_storage.account(address, state_root)
             .map_err(|e| RpcError::Internal(e.to_string()))?;
 
-        Ok(account.map(|a| a.balance).unwrap_or_default())
+        let mut balance = account.map(|a| a.balance).unwrap_or_default();
+
+        if is_pending {
+            let mempool_txs = self.mempool.get_transactions_by_sender(address).await;
+            for tx in mempool_txs {
+                let cost = tx.gas_limit() as u128 * tx.max_fee_per_gas() + tx.value().to::<u128>();
+                let cost_u256 = U256::from(cost);
+                if balance > cost_u256 {
+                    balance -= cost_u256;
+                } else {
+                    balance = U256::ZERO;
+                }
+            }
+        }
+
+        Ok(balance)
     }
 
     pub async fn get_transaction_count(&self, address: Address, block_id: BlockId) -> RpcResult<u64> {
+        let is_pending = matches!(block_id, BlockId::Number(BlockNumberOrTag::Pending));
+        
         let header = self.read_storage.header(block_id)
             .map_err(|e| {
                 e.downcast_ref::<RpcError>().cloned().unwrap_or_else(|| RpcError::Internal(e.to_string()))
             })?;
         let state_root = header.map(|h| h.state_root);
 
-        self.read_storage.transaction_count(address, block_id, state_root).map_err(|e| RpcError::Internal(e.to_string()))
+        let mut count = self.read_storage.transaction_count(address, block_id, state_root).map_err(|e| RpcError::Internal(e.to_string()))?;
+
+        if is_pending {
+            let mempool_txs = self.mempool.get_transactions_by_sender(address).await;
+            // The nonce of the last transaction in the mempool + 1 is the next expected nonce.
+            // If the mempool has transactions, we should return a value that reflects them.
+            if let Some(highest_nonce) = mempool_txs.iter().map(|tx| tx.nonce()).max() {
+                if highest_nonce + 1 > count {
+                    count = highest_nonce + 1;
+                }
+            }
+        }
+
+        Ok(count)
     }
 
     pub async fn get_code(&self, address: Address, block_id: BlockId) -> RpcResult<Bytes> {

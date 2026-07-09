@@ -175,13 +175,13 @@ impl EvmExecutor {
         let eip161 = fork >= Hardfork::SpuriousDragon;
         let coinbase = H160::from_slice(env.block_coinbase.as_bytes());
 
-        self.apply_changeset(batch, &filtered_changeset, eip161, coinbase, state_root)?;
+        self.apply_changeset(batch, &filtered_changeset, eip161, state_root)?;
 
         Ok(SystemCallResult { output: Bytes::from(retval), used_gas: result.used_gas.as_u64() })
     }
 
-pub fn apply_changeset(&self, batch: &BatchWriter, changeset: &OverlayedChangeSet, eip161: bool, coinbase: H160, state_root: Option<B256>) -> Result<()> {
+pub fn apply_changeset(&self, batch: &BatchWriter, changeset: &OverlayedChangeSet, eip161: bool, state_root: Option<B256>) -> Result<()> {
         let applier = StateApplier::new(batch);
-        applier.apply_changeset(changeset, eip161, coinbase, state_root)
+        applier.apply_changeset(changeset, eip161, state_root)
     }
 }
