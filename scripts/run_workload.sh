@@ -151,13 +151,13 @@ if [ -n "$MIN_BALANCE" ]; then
 fi
 
 # Run setup if private key is provided
-#if [ -n "$PRIVATE_KEY" ]; then
-#    echo "Running contender setup..."
-#    docker run $DOCKER_OPTS \
-#        -v "$STATE_DIR":/root/.local/state/contender \
-#        -w / \
-#        "$CONTENDER_IMAGE" setup "$SCENARIO_REF" -r "$RPC_URL" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
-#fi
+if [ "$IS_CAMPAIGN" = false ]; then
+    echo "Running contender setup..."
+    docker run $DOCKER_OPTS \
+        -v "$STATE_DIR":/root/.local/state/contender \
+        -w / \
+        "$CONTENDER_IMAGE" setup "$SCENARIO_REF" -r "$RPC_URL" -p "$PRIVATE_KEY" -a "$ACCOUNTS" $EXTRA_ARGS
+fi
 
 # Run workload
 if [ "$IS_CAMPAIGN" = true ]; then

@@ -3,8 +3,10 @@ use crate::storage::SharedStore;
 use crate::telemetry::registry::TelemetryRegistry;
 use crate::time::now_ms;
 use anyhow::Result;
+use dashmap::DashMap;
 use std::time::Duration;
 use std::collections::HashMap;
+use std::sync::Arc;
 
 #[derive(Clone)]
 pub struct PrometheusScraper {
@@ -12,11 +14,18 @@ pub struct PrometheusScraper {
     telemetry: TelemetryRegistry,
     timeout: Duration,
     experiment_id: Option<String>,
+    last_counter_values: Arc<DashMap<(String, String), u64>>,
 }
 
 impl PrometheusScraper {
     pub fn new(store: SharedStore, telemetry: TelemetryRegistry, timeout: Duration, experiment_id: Option<String>) -> Self {
-        Self { store, telemetry, timeout, experiment_id }
+        Self { 
+            store, 
+            telemetry, 
+            timeout, 
+            experiment_id,
+            last_counter_values: Arc::new(DashMap::new()),
+        }
     }
 
     pub async fn scrape_node(&self, node: Node) -> Result<()> {
@@ -113,17 +122,53 @@ impl PrometheusScraper {
 
     fn emit_telemetry(&self, node: &Node, sample: &MetricSample) {
         let labels = [node.id.as_str(), node.network.as_str(), node.client.as_str()];
+        
+        let get_delta = |metric_name: &str, current_val: f64| -> u64 {
+            let current_u64 = current_val as u64;
+            let key = (node.id.clone(), metric_name.to_string());
+            let mut entry = self.last_counter_values.entry(key).or_insert(0);
+            let prev_val = *entry;
+            
+            if current_u64 >= prev_val {
+                let delta = current_u64 - prev_val;
+                *entry = current_u64;
+                delta
+            } else {
+                // Counter reset
+                *entry = current_u64;
+                current_u64
+            }
+        };
+
         match sample.name.as_str() {
             "sync_status" => self.telemetry.node_sync_status.with_label_values(&labels).set(sample.value),
             "current_head_block" => self.telemetry.node_current_head_block.with_label_values(&labels).set(sample.value),
             "connected_peers" => self.telemetry.node_connected_peers.with_label_values(&labels).set(sample.value),
-            "blocks_imported_total" => self.telemetry.node_blocks_imported_total.with_label_values(&labels).inc_by(sample.value as u64),
-            "transactions_committed_total" => self.telemetry.node_transactions_committed_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "blocks_imported_total" => {
+                let delta = get_delta("blocks_imported_total", sample.value);
+                self.telemetry.node_blocks_imported_total.with_label_values(&labels).inc_by(delta);
+            },
+            "transactions_committed_total" => {
+                let delta = get_delta("transactions_committed_total", sample.value);
+                self.telemetry.node_transactions_committed_total.with_label_values(&labels).inc_by(delta);
+            },
             "mempool_size" => self.telemetry.node_mempool_size.with_label_values(&labels).set(sample.value),
-            "mempool_rejected_transactions_total" => self.telemetry.node_mempool_rejected_transactions_total.with_label_values(&labels).inc_by(sample.value as u64),
-            "gossip_messages_received_total" => self.telemetry.node_gossip_messages_received_total.with_label_values(&labels).inc_by(sample.value as u64),
-            "p2p_messages_sent_bytes_total" => self.telemetry.node_p2p_messages_sent_bytes_total.with_label_values(&labels).inc_by(sample.value as u64),
-            "rpc_requests_total" => self.telemetry.node_rpc_requests_total.with_label_values(&labels).inc_by(sample.value as u64),
+            "mempool_rejected_transactions_total" => {
+                let delta = get_delta("mempool_rejected_transactions_total", sample.value);
+                self.telemetry.node_mempool_rejected_transactions_total.with_label_values(&labels).inc_by(delta);
+            },
+            "gossip_messages_received_total" => {
+                let delta = get_delta("gossip_messages_received_total", sample.value);
+                self.telemetry.node_gossip_messages_received_total.with_label_values(&labels).inc_by(delta);
+            },
+            "p2p_messages_sent_bytes_total" => {
+                let delta = get_delta("p2p_messages_sent_bytes_total", sample.value);
+                self.telemetry.node_p2p_messages_sent_bytes_total.with_label_values(&labels).inc_by(delta);
+            },
+            "rpc_requests_total" => {
+                let delta = get_delta("rpc_requests_total", sample.value);
+                self.telemetry.node_rpc_requests_total.with_label_values(&labels).inc_by(delta);
+            },
             "sync_target_height" => self.telemetry.node_sync_target_height.with_label_values(&labels).set(sample.value),
             _ => {}
         }

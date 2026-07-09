@@ -14,6 +14,7 @@ clap = { version = "4.5.4", features = ["derive"] }
 chrono = "0.4"
 reqwest = { version = "0.11.8", features = ["json", "serde_json"] }
 prometheus = "0.14.0"
+dashmap = "6.1.0"
 redb = "4.1.0"
 md5 = "0.7"
 tower = { version = "0.5.3", features = ["full"] }

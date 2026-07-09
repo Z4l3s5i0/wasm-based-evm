@@ -36,7 +36,7 @@ calculate_counts() {
 is_validator() {
     local index=$1
     local total=$2
-    if [ $((index % 2)) -eq 0 ]; then
+    if [ $((index % 1)) -eq 0 ]; then ## modulo 1 for 100%
         echo "true"
     else
         echo "false"

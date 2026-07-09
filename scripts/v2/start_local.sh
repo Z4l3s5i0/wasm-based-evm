@@ -254,11 +254,8 @@ for i in $(seq 0 $((NODES - 1))); do
 EOF
 
     # Append Consensus Client (Lighthouse Beacon Node)
-    BOOT_NODES_FLAG=""
-    if [ "$i" -gt 0 ]; then
-        # Using a conditional variable to avoid passing empty --boot-nodes
-        BOOT_NODES_FLAG="\${BOOT_NODES_CONFIG:-}"
-    fi
+    BOOT_NODES_VAR="BOOT_NODES_CONFIG_$i"
+    BOOT_NODES_FLAG="\${$BOOT_NODES_VAR:-}"
 
     cat <<EOF >> "$COMPOSE_FILE"
   cl-node-$i:
@@ -326,40 +323,76 @@ volumes:
 EOF
 
 echo "Generated $COMPOSE_FILE"
-echo "Starting first beacon node to extract ENR..."
 COMPOSE_CMD=$(get_compose_cmd)
 
-# Start metrics server and first node
-export BOOT_NODES_CONFIG=""
-$COMPOSE_CMD -f "$COMPOSE_FILE" up -d --build metrics-server el-node-0 cl-node-0
+# Start metrics server and monitoring first
+echo "Starting metrics-server, prometheus, grafana, and node-exporter..."
+$COMPOSE_CMD -f "$COMPOSE_FILE" up -d metrics-server prometheus grafana node-exporter
 
-BN0_RPC_PORT=$(get_beacon_rpc_port 0)
-echo "Waiting for cl-node-0 to start on port $BN0_RPC_PORT..."
+CUMULATIVE_ENRS=""
 
-MAX_RETRIES=30
-RETRY_COUNT=0
-BOOT_NODE_ENR=""
-
-while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
-    # Use a subshell and || true to prevent set -e from exiting the script if curl or python fails
-    BOOT_NODE_ENR=$(curl -s http://localhost:$BN0_RPC_PORT/eth/v1/node/identity 2>/dev/null | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['enr'])" 2>/dev/null || echo "")
-    if [ -n "$BOOT_NODE_ENR" ]; then
-        echo "Extracted ENR: $BOOT_NODE_ENR"
-        break
+for i in $(seq 0 $((NODES - 1))); do
+    IS_VAL=$(is_validator "$i" "$NODES")
+    PEER_SERVICES="el-node-$i cl-node-$i"
+    if [ "$IS_VAL" = "true" ]; then
+        PEER_SERVICES="$PEER_SERVICES vc-node-$i"
     fi
-    echo "Waiting for ENR... ($((RETRY_COUNT + 1))/$MAX_RETRIES)"
-    sleep 2
-    RETRY_COUNT=$((RETRY_COUNT + 1))
+
+    echo "Starting node $i ($PEER_SERVICES)..."
+    
+    # Set the boot nodes for THIS node based on previous nodes
+    if [ -n "$CUMULATIVE_ENRS" ]; then
+        export "BOOT_NODES_CONFIG_$i=--boot-nodes $CUMULATIVE_ENRS"
+    fi
+
+    $COMPOSE_CMD -f "$COMPOSE_FILE" up -d $PEER_SERVICES
+
+    # Wait for the ENR of the newly started node
+    BN_RPC_PORT=$(get_beacon_rpc_port $i)
+    echo "Waiting for cl-node-$i to start on port $BN_RPC_PORT to extract ENR..."
+
+    MAX_RETRIES=30
+    RETRY_COUNT=0
+    CURRENT_ENR=""
+
+    while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        # Use a subshell and || true to prevent set -e from exiting the script if curl or python fails
+        CURRENT_ENR=$(curl -s http://localhost:$BN_RPC_PORT/eth/v1/node/identity 2>/dev/null | python3 -c "import sys, json; print(json.load(sys.stdin)['data']['enr'])" 2>/dev/null || echo "")
+        if [ -n "$CURRENT_ENR" ]; then
+            echo "Extracted ENR from node $i: $CURRENT_ENR"
+            if [ -z "$CUMULATIVE_ENRS" ]; then
+                CUMULATIVE_ENRS="$CURRENT_ENR"
+            else
+                CUMULATIVE_ENRS="$CUMULATIVE_ENRS,$CURRENT_ENR"
+            fi
+            break
+        fi
+        echo "Waiting for ENR... ($((RETRY_COUNT + 1))/$MAX_RETRIES)"
+        sleep 2
+        RETRY_COUNT=$((RETRY_COUNT + 1))
+    done
+
+    if [ -z "$CURRENT_ENR" ]; then
+        echo "Warning: Failed to extract ENR from cl-node-$i within timeout. Continuing anyway..."
+    fi
 done
 
-if [ -z "$BOOT_NODE_ENR" ]; then
-    echo "Error: Failed to extract ENR from cl-node-0"
-    exit 1
-fi
-
-export BOOT_NODES_CONFIG="--boot-nodes \"$BOOT_NODE_ENR\""
-
-echo "Starting remaining network..."
-$COMPOSE_CMD -f "$COMPOSE_FILE" up -d
-
 echo "Network started. Use '$COMPOSE_CMD -f $COMPOSE_FILE logs -f' to see logs."
+
+# --- Log Management Section ---
+# This section provides information about log locations and offers a CLI to manage background log dumping.
+
+echo ""
+echo "--- Log Information ---"
+echo "Client node logs are stored in containers and can be viewed using: $COMPOSE_CMD -f $COMPOSE_FILE logs"
+echo "Contender logs are typically output to stdout during execution of run_workload.sh."
+echo "If run_workload.sh was used, you can also check the container logs: docker logs <contender_container_id>"
+echo "Contender state/database is saved in: $(pwd)/.contender_state"
+
+echo ""
+echo "To start continuous background log dumping (splitting every 1000 lines):"
+echo "  $(dirname "$0")/manage_logs.sh start --chain-id $CHAIN_ID"
+echo "To stop it:"
+echo "  $(dirname "$0")/manage_logs.sh stop"
+echo "Logs will be saved in ./logs_dump"
+echo "-----------------------"
