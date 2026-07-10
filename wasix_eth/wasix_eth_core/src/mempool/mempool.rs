@@ -73,9 +73,6 @@ impl MempoolInner {
         // Potential addition: check balance against current state
         // This would require passing storage or balance to this method.
 
-        // Before adding, try to promote queued transactions in case current_nonce has caught up
-        self.promote_queued(from, current_nonce);
-
         // Determine if it should be pending or queued based on existing transactions from this sender
         let next_pending_nonce = self.pending_transactions.get(&from)
             .and_then(|q| q.back().map(|t| t.nonce() + 1))
@@ -88,16 +85,6 @@ impl MempoolInner {
             // There's a gap between pending transactions and this one
             self.insert_into_queue(from, tx, false)
         };
-
-        // Try to promote queued transactions anyway, in case we just filled a gap that wasn't immediately obvious
-        // or if we replaced a transaction that now allows promotion.
-        self.promote_queued(from, tx_nonce + 1);
-
-        // If we still have queued transactions for this sender, try promoting with the reported current_nonce too
-        // in case next_pending_nonce was stale.
-        if self.queued_transactions.contains_key(&from) {
-            self.promote_queued(from, current_nonce);
-        }
 
         if added {
             MEMPOOL_SIZE.set(self.len() as f64);
@@ -150,6 +137,8 @@ impl MempoolInner {
             
             // If we added to pending, we might be able to promote queued transactions
             if is_pending {
+                // Optimization: only promote if we added the next sequential nonce
+                // (or if it's the first one, which next_pending_nonce handled in add_transaction)
                 self.promote_queued(from, nonce + 1);
             }
             
@@ -237,13 +226,15 @@ impl MempoolInner {
 
         // First, try to promote any queued transactions for all senders who already have pending transactions
         // or whose next expected nonce is in queued.
+        // Optimization: only check senders that have something in queued pool.
         let queued_senders: Vec<Address> = self.queued_transactions.keys().cloned().collect();
         for sender in queued_senders {
-            let next_expected = self.pending_transactions.get(&sender)
-                .and_then(|q| q.back().map(|t| t.nonce() + 1));
-            
-            if let Some(next_nonce) = next_expected {
-                self.promote_queued(sender, next_nonce);
+            // If we have nothing in pending, we use base_nonce (which we don't have here easily, but promote_queued can be triggered by add_transaction)
+            // If we have something in pending, we try to fill the gap.
+            if let Some(pending_queue) = self.pending_transactions.get(&sender) {
+                if let Some(last_tx) = pending_queue.back() {
+                    self.promote_queued(sender, last_tx.nonce() + 1);
+                }
             }
         }
         

@@ -495,17 +495,6 @@ impl GossipProvider for SyncService {
             
             // Prefer original pooled envelope if available for accurate size advertisement
             let pooled = if let Some(pooled) = self.mempool.get_pooled_envelope(hash).await {
-                    {
-                        use alloy_rlp::Encodable;
-                        let mut buf = Vec::new();
-                        pooled.encode(&mut buf);
-                        debug!("[Sync] Broadcasting stored pooled transaction {} length: {}", hash, buf.len());
-                        if let TxPooledEnvelope::Eip4844(s) = &pooled {
-                             let inner_tx = s.tx();
-                             let sidecar = &inner_tx.sidecar;
-                             debug!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
-                        }
-                    }
                 pooled
             } else {
                 match &tx {
@@ -533,28 +522,14 @@ impl GossipProvider for SyncService {
                                 commitments,
                                 proofs,
                             };
-                            let pooled = match tx_variant {
+                            match tx_variant {
                                 TxEip4844Variant::TxEip4844(inner_tx) => {
                                     TxPooledEnvelope::Eip4844(Signed::new_unchecked(inner_tx.with_sidecar(BlobTransactionSidecarVariant::Eip4844(sidecar)), signature, hash))
                                 }
                                 TxEip4844Variant::TxEip4844WithSidecar(inner_tx) => {
                                     TxPooledEnvelope::Eip4844(Signed::new_unchecked(inner_tx.tx.with_sidecar(BlobTransactionSidecarVariant::Eip4844(sidecar)), signature, hash))
                                 }
-                            };
-
-                            {
-                                use alloy_rlp::Encodable;
-                                let mut buf = Vec::new();
-                                pooled.encode(&mut buf);
-                                info!("[Sync] Broadcasting reconstructed pooled transaction {} length: {}", hash, buf.len());
-                                if let TxPooledEnvelope::Eip4844(s) = &pooled {
-                                     let inner_tx = s.tx();
-                                     let sidecar = &inner_tx.sidecar;
-                                     debug!("[Sync]   Blobs: {}, first blob len: {}", sidecar.blobs().len(), sidecar.blobs().get(0).map(|b| b.len()).unwrap_or(0));
-                                }
                             }
-
-                            pooled
                         } else {
                             // If it's a blob tx but we don't have the sidecar, we can't accurately advertise its size
                             continue;
