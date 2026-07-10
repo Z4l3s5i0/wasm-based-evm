@@ -68,7 +68,7 @@ impl Downloader {
         let session = self.peer_provider.get_session(peer_id).await
             .ok_or_else(|| anyhow::anyhow!("Session not found for peer {}", peer_id))?;
 
-        let timeout = if amount > 1 { Duration::from_secs(5) } else { Duration::from_secs(2) };
+        let timeout = if amount > 1 { Duration::from_secs(10) } else { Duration::from_secs(5) };
 
         let response = tokio::time::timeout(timeout, session.get_block_headers(RequestPair {
             request_id: rand::random(),

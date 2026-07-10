@@ -93,6 +93,12 @@ impl MempoolInner {
         // or if we replaced a transaction that now allows promotion.
         self.promote_queued(from, tx_nonce + 1);
 
+        // If we still have queued transactions for this sender, try promoting with the reported current_nonce too
+        // in case next_pending_nonce was stale.
+        if self.queued_transactions.contains_key(&from) {
+            self.promote_queued(from, current_nonce);
+        }
+
         if added {
             MEMPOOL_SIZE.set(self.len() as f64);
         } else {
@@ -157,18 +163,20 @@ impl MempoolInner {
         
         while let Some(queued_queue) = self.queued_transactions.get_mut(&address) {
             // Since it's sorted, check the first one
-            if let Some(pos) = queued_queue.iter().position(|tx| tx.nonce() == next_nonce) {
-                let tx = queued_queue.remove(pos).unwrap();
-                info!("[Mempool] Promoting transaction {:?} (nonce: {}) for {} to pending", tx.hash(), tx.nonce(), address);
-                
-                let pending_queue = self.pending_transactions.entry(address).or_insert_with(VecDeque::new);
-                let p_pos = pending_queue.binary_search_by_key(&tx.nonce(), |t| t.nonce())
-                    .unwrap_or_else(|e| e);
-                pending_queue.insert(p_pos, tx);
-                
-                next_nonce += 1;
-            } else {
-                break;
+            // Use binary search for better performance if the queue is large
+            match queued_queue.binary_search_by_key(&next_nonce, |tx| tx.nonce()) {
+                Ok(pos) => {
+                    let tx = queued_queue.remove(pos).unwrap();
+                    info!("[Mempool] Promoting transaction {:?} (nonce: {}) for {} to pending", tx.hash(), tx.nonce(), address);
+                    
+                    let pending_queue = self.pending_transactions.entry(address).or_insert_with(VecDeque::new);
+                    let p_pos = pending_queue.binary_search_by_key(&tx.nonce(), |t| t.nonce())
+                        .unwrap_or_else(|e| e);
+                    pending_queue.insert(p_pos, tx);
+                    
+                    next_nonce += 1;
+                }
+                Err(_) => break,
             }
         }
         
@@ -221,11 +229,23 @@ impl MempoolInner {
 
     /// Peek at best transactions from the mempool for block building without removing them.
     /// Prioritizes by effective tip and respects nonce order, gas limit and blob gas limit (Cancun).
-    pub fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
+    pub fn peek_best_transactions(&mut self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
         let mut result = Vec::new();
         let mut current_gas: u64 = 0;
         let mut current_blobs: u32 = 0;
         let max_blobs = max_blobs_per_block.unwrap_or(6);
+
+        // First, try to promote any queued transactions for all senders who already have pending transactions
+        // or whose next expected nonce is in queued.
+        let queued_senders: Vec<Address> = self.queued_transactions.keys().cloned().collect();
+        for sender in queued_senders {
+            let next_expected = self.pending_transactions.get(&sender)
+                .and_then(|q| q.back().map(|t| t.nonce() + 1));
+            
+            if let Some(next_nonce) = next_expected {
+                self.promote_queued(sender, next_nonce);
+            }
+        }
         
         // Use a persistent map of iterators to avoid cloning the entire queues
         // We only need to clone the structure of the map and the VecDeque (which is a clone of pointers/references if using Arc, 
@@ -319,8 +339,20 @@ impl MempoolInner {
     }
 
     /// Peek at N transactions from the mempool for block building without removing them.
-    pub fn peek_transactions(&self, n: usize) -> Vec<Transaction> {
+    pub fn peek_transactions(&mut self, n: usize) -> Vec<Transaction> {
         let mut result = Vec::with_capacity(n);
+        
+        // Try to promote queued transactions before peeking
+        let queued_senders: Vec<Address> = self.queued_transactions.keys().cloned().collect();
+        for sender in queued_senders {
+            let next_expected = self.pending_transactions.get(&sender)
+                .and_then(|q| q.back().map(|t| t.nonce() + 1));
+            
+            if let Some(next_nonce) = next_expected {
+                self.promote_queued(sender, next_nonce);
+            }
+        }
+
         let mut copy = self.clone();
         
         while result.len() < n {

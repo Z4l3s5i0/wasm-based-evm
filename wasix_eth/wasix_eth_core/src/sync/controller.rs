@@ -176,6 +176,7 @@ impl SyncController {
 
                 self.sync_range(&best_peer_id, local_height + 1).await?;
             } else {
+                // Not actively syncing a range, set to None so ChainManagerImpl can return dynamic Info.
                 self.chain_manager.set_sync_status(SyncStatus::None).await;
                 SYNC_STATUS.set(1.0); // 1: synced
                 SYNC_TARGET_HEIGHT.set(local_height as f64);
@@ -655,10 +656,10 @@ impl SyncProvider for SyncController {
             return Ok(());
         }
 
-        let txs = self.downloader.download_pooled_transactions(&peer_id, hashes_to_download).await
+        let txs = self.downloader.download_pooled_transactions(&peer_id, hashes_to_download.clone()).await
             .map_err(|e| wasix_eth_types::error::RpcError::Internal(format!("Failed to download pooled transactions: {}", e)))?;
         
-        info!("[Sync] Downloaded {} pooled transactions from {}", txs.len(), peer_id);
+        info!("[Sync] Downloaded {} pooled transactions from {} (requested {})", txs.len(), peer_id, hashes_to_download.len());
         self.process_pooled_transactions(txs).await
     }
 

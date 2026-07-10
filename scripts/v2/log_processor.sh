@@ -37,7 +37,7 @@ process_container_logs() {
         echo "$line" >> "$current_out_file"
         line_count=$((line_count + 1))
         
-        if [ "$line_count" -ge 1000 ]; then
+        if [ "$line_count" -ge 10000 ]; then
             line_count=0
             file_number=$((file_number + 1))
             current_out_file="${dump_dir}/${container_name}_${chain_id}_${file_number}.log"

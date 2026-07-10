@@ -137,7 +137,7 @@ impl PayloadBuilder {
         let mut event_rx = self.event_tx.subscribe();
         tokio::spawn(async move {
             let start_time = std::time::Instant::now();
-            let slot_duration = std::time::Duration::from_millis(10000); // SLOT_DURATION_MS
+            let slot_duration = std::time::Duration::from_millis(11000); // SLOT_DURATION_MS
             
             while !token.is_cancelled() {
                 tokio::task::yield_now().await;
@@ -151,7 +151,7 @@ impl PayloadBuilder {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
                     Ok(EngineEvent::NewTransaction { .. }) = event_rx.recv() => {
                         // Debounce: wait a bit for more transactions to arrive
-                        tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         // Drain extra events
                         let mut count = 1;
                         while let Ok(_) = event_rx.try_recv() {

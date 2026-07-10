@@ -41,7 +41,23 @@ impl ChainManagerImpl {
 #[async_trait]
 impl ChainManager for ChainManagerImpl {
     async fn sync_status(&self) -> SyncStatus {
-        self.sync_status.read().await.clone()
+        let status = self.sync_status.read().await.clone();
+        
+        if let SyncStatus::Info(ref info) = status {
+            if info.stages.is_none() {
+                return status;
+            }
+        }
+        
+        let (_hash, number) = self.head_block().await;
+        SyncStatus::Info(Box::new(alloy_rpc_types::SyncInfo {
+            current_block: U256::from(number),
+            highest_block: U256::from(number),
+            starting_block: U256::ZERO,
+            stages: Some(Vec::new()),
+            warp_chunks_amount: None,
+            warp_chunks_processed: None,
+        }))
     }
 
     async fn set_sync_status(&self, status: SyncStatus) {

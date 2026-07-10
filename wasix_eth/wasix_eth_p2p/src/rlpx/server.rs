@@ -121,7 +121,7 @@ impl P2pServer {
                 },
             };
             match timeout(
-                Duration::from_secs(5),
+                Duration::from_secs(10),
                 session_clone.get_block_headers(request),
             ).await {
                 Ok(Ok(response)) => {

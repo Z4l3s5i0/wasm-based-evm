@@ -35,7 +35,7 @@ pub async fn create_local_status<S: AsyncReadExt + AsyncWriteExt + Unpin>(
 ) -> Result<StatusMessage> {
     let (head_hash, latest_height) = registry.chain_manager.head_block().await;
     
-    wasix_eth_utils::debug!("[P2P Handshake] Creating local status: head_hash={:?}, latest_height={}, genesis_hash={:?}", head_hash, latest_height, registry.genesis_hash);
+    wasix_eth_utils::info!("[P2P Handshake] Creating local status: head_hash={:?}, latest_height={}, genesis_hash={:?}", head_hash, latest_height, registry.genesis_hash);
 
     let head_td = registry.read_provider.header_td(head_hash).ok().flatten()
         .unwrap_or_default();

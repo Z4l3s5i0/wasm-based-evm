@@ -177,7 +177,7 @@ impl MempoolProvider for Mempool {
     }
 
     async fn peek_transactions(&self, n: usize) -> Vec<Transaction> {
-        let inner = self.inner.read().await;
+        let mut inner = self.inner.write().await;
         inner.peek_transactions(n)
     }
 
@@ -224,7 +224,7 @@ impl MempoolProvider for Mempool {
     }
 
     async fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
-        let inner = self.inner.read().await;
+        let mut inner = self.inner.write().await;
         inner.peek_best_transactions(target_gas_limit, base_fee, blob_base_fee, max_blobs_per_block)
     }
 

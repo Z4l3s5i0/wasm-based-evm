@@ -548,6 +548,10 @@ impl Engine {
 
             if let Some(header) = head_header {
                 if status.status == PayloadStatusEnum::Valid {
+                    // Reset sync status to None to ensure ChainManagerImpl returns dynamic height.
+                    // Previously we set it to a static Info, which could become stale.
+                    self.chain.set_sync_status(wasix_eth_types::SyncStatus::None).await;
+
                     // 1. Identify newly canonical blocks and handle reorgs
                     match self.chain.resolve_reorg(old_state.head_block_hash, forkchoice_state.head_block_hash).await {
                         Ok(context) => {
@@ -760,6 +764,11 @@ impl Engine {
         tokio::task::yield_now().await;
         let block_hash = block.header.hash_slow();
         info!("[Engine] import_block (sync path) for block {} hash {}", block.header.number, block_hash);
+
+        // Proactively update sync status to None if not actively syncing, so ChainManagerImpl can return dynamic height.
+        if let wasix_eth_types::SyncStatus::None | wasix_eth_types::SyncStatus::Info(_) = self.chain.sync_status().await {
+            self.chain.set_sync_status(wasix_eth_types::SyncStatus::None).await;
+        }
         
         // Delegate to new_payload_internal to ensure same validation and buffering logic
         let status = self.new_payload_internal(block, block_hash, None, None, false).await
