@@ -8,7 +8,8 @@ from datetime import datetime
 def parse_log_line(line):
     # Regex to match: [EXP] EVENT_NAME key1=value1 key2=value2 ...
     # Note: Some values might be in quotes like hash="0x..."
-    match = re.search(r'\[EXP\] (\w+)\s+(.*)', line)
+    # Improved pattern to handle [EXP] preceded by timestamp/metadata and more robust kv parsing
+    match = re.search(r'\[EXP\]\s+(\w+)\s+(.*)', line)
     if not match:
         return None
     
@@ -18,7 +19,8 @@ def parse_log_line(line):
     # Extract key-value pairs
     kv_pairs = {}
     # Handles key=value and key="value"
-    pattern = r'(\w+)=({[^}]+}|"[^"]*"|\S+)'
+    # Improved pattern to handle various value formats: hex, numbers, strings in quotes, etc.
+    pattern = r'(\w+)=({[^}]+}|"[^"]*"|0x[a-fA-F0-0]+|\S+)'
     for k, v in re.findall(pattern, kv_str):
         # Remove quotes if present
         if v.startswith('"') and v.endswith('"'):
@@ -27,7 +29,7 @@ def parse_log_line(line):
         
     return event_name, kv_pairs
 
-def process_logs(log_dir):
+def process_logs(log_dir, target_chain_id=None):
     tx_recv_times = defaultdict(dict)  # tx_hash -> {peer_id: timestamp}
     tx_exec_times = {}                 # tx_hash -> timestamp
     block_recv_times = defaultdict(dict) # block_hash -> {peer_id: timestamp}
@@ -46,20 +48,35 @@ def process_logs(log_dir):
     })
 
     # Sort files to process them in chronological order per node
-    files = sorted([f for f in os.listdir(log_dir) if f.endswith('.log')])
+    all_files = sorted([f for f in os.listdir(log_dir) if f.endswith('.log')])
+    files_to_process = []
     
-    for filename in files:
-        filepath = os.path.join(log_dir, filename)
+    for filename in all_files:
         # Assuming filename format: {container_name}_{chain_id}_{file_number}.log
-        node_id = filename.split('_')[0]
+        parts = filename.split('_')
+        if len(parts) < 2:
+            continue
+            
+        node_id = parts[0]
+        file_chain_id = parts[1]
         
+        if target_chain_id and file_chain_id != target_chain_id:
+            continue
+            
+        files_to_process.append((filename, node_id))
+    
+    for filename, node_id in files_to_process:
+        filepath = os.path.join(log_dir, filename)
         with open(filepath, 'r', errors='ignore') as f:
             for line in f:
                 # Basic timestamp extraction if present in the log line
                 # Standard log format often has timestamps at the beginning
-                # [2026-07-09 21:16:00,123] or [2026-07-09T21:16:00.123Z]
-                ts_match = re.search(r'\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]\d+Z?)\]', line)
-                timestamp = ts_match.group(1) if ts_match else None
+    # [2026-07-09 21:16:00,123] or [2026-07-09T21:16:00.123Z] or Jul 10 08:16:07.859
+                ts_match = re.search(r'(?:\[(\d{4}-\d{2}-\d{2}[T ]\d{2}:\d{2}:\d{2}[.,]\d+Z?)\]|^([A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\.\d{3}))', line)
+                if ts_match:
+                    timestamp = ts_match.group(1) or ts_match.group(2)
+                else:
+                    timestamp = None
                 
                 parsed = parse_log_line(line)
                 if not parsed:
@@ -67,7 +84,7 @@ def process_logs(log_dir):
                 
                 event, data = parsed
                 
-                if event == 'P2P_RECV_TX':
+                if event in ['P2P_RECV_TX', 'TX_RPC_RECV']:
                     tx_hash = data.get('hash')
                     node_stats[node_id]['tx_received'] += 1
                     if tx_hash and timestamp:
@@ -84,14 +101,19 @@ def process_logs(log_dir):
                     if tx_hash and timestamp:
                         if tx_hash not in tx_exec_times:
                             tx_exec_times[tx_hash] = timestamp
+                        # If we never saw this TX via P2P (e.g. it came in a block or was local),
+                        # use its execution time as a fallback for 'first_seen'
+                        if tx_hash not in tx_recv_times:
+                            tx_recv_times[tx_hash]['first_seen'] = timestamp
                             
                 elif event == 'TX_EXEC_END':
                     node_stats[node_id]['total_gas'] += int(data.get('gas_used', 0))
                     node_stats[node_id]['total_exec_ms'] += int(data.get('elapsed_ms', 0))
 
-                elif event == 'P2P_RECV_BLOCK':
+                elif event in ['P2P_RECV_BLOCK', 'BLOCK_RPC_RECV']:
                     block_hash = data.get('hash')
-                    node_stats[node_id]['blocks_received'] += 1
+                    if event == 'P2P_RECV_BLOCK':
+                        node_stats[node_id]['blocks_received'] += 1
                     if block_hash and timestamp:
                         if block_hash not in block_recv_times:
                             block_recv_times[block_hash]['first_seen'] = timestamp
@@ -99,6 +121,13 @@ def process_logs(log_dir):
 
                 elif event == 'P2P_SEND_BLOCK':
                     node_stats[node_id]['blocks_sent'] += 1
+
+                elif event == 'BLOCK_EXEC_START':
+                    block_hash = data.get('hash')
+                    if block_hash and timestamp:
+                        # Fallback for block first_seen if we didn't get P2P_RECV_BLOCK
+                        if block_hash not in block_recv_times:
+                            block_recv_times[block_hash]['first_seen'] = timestamp
 
                 elif event == 'BLOCK_EXEC_END':
                     block_hash = data.get('hash')
@@ -116,6 +145,12 @@ def process_logs(log_dir):
 
 def calculate_metrics(data):
     def parse_ts(ts_str):
+        # Handle format like Jul 10 08:16:07.859
+        if re.match(r'^[A-Z][a-z]{2}\s+\d+\s+\d{2}:\d{2}:\d{2}\.\d{3}$', ts_str):
+            # Assume current year if not provided
+            current_year = 2026
+            return datetime.strptime(f"{current_year} {ts_str}", "%Y %b %d %H:%M:%S.%f")
+
         ts_str = ts_str.replace(',', '.').replace(' ', 'T')
         if not ts_str.endswith('Z'):
             ts_str += 'Z'
@@ -143,7 +178,7 @@ def calculate_metrics(data):
             for node_id, ts_str in nodes.items():
                 if node_id == 'first_seen': continue
                 lat = (parse_ts(ts_str) - first_ts).total_seconds()
-                if lat > 0:
+                if lat >= 0:  # Changed from > 0 to >= 0
                     propagation_latencies.append(lat)
 
     # Summarize Node Stats
@@ -173,7 +208,7 @@ def calculate_metrics(data):
 
 if __name__ == "__main__":
     if len(sys.argv) < 2:
-        print("Usage: python evaluate_logs.py <log_dir>")
+        print("Usage: python evaluate_logs.py <log_dir> [chain_id]")
         sys.exit(1)
         
     log_dir = sys.argv[1]
@@ -181,8 +216,14 @@ if __name__ == "__main__":
         print(f"Error: {log_dir} is not a directory")
         sys.exit(1)
         
-    print(f"Processing logs in {log_dir}...")
-    data = process_logs(log_dir)
+    target_chain_id = sys.argv[2] if len(sys.argv) > 2 else None
+    
+    if target_chain_id:
+        print(f"Processing logs in {log_dir} for chain_id {target_chain_id}...")
+    else:
+        print(f"Processing all logs in {log_dir}...")
+        
+    data = process_logs(log_dir, target_chain_id)
     metrics = calculate_metrics(data)
     
     print("\n=== Experiment Metrics ===")

@@ -53,10 +53,22 @@ impl SyncController {
         info!("[Sync] Starting synchronization controller...");
         let notify = self.sync_registry.subscribe();
         loop {
-            if let Err(e) = self.sync_step().await {
-                error!("[Sync] Sync step failed: {}", e);
+            // Process all pending targets in a loop to catch up quickly
+            loop {
+                match self.sync_step().await {
+                    Ok(_) => {
+                        // If we have more targets, continue processing immediately
+                        if !self.sync_registry.has_targets().await {
+                            break;
+                        }
+                    }
+                    Err(e) => {
+                        error!("[Sync] Sync step failed: {}", e);
+                        break;
+                    }
+                }
             }
-            
+
             // Wait for 1s OR for a new target notification
             tokio::select! {
                 _ = tokio::time::sleep(tokio::time::Duration::from_secs(1)) => {},
@@ -87,54 +99,58 @@ impl SyncController {
             let affinity_peer = target.peer_id;
             let retries = target.retries;
 
-            debug!("[Sync] Attempting to sync specific target {:?} (affinity: {:?}, retries: {})", target_hash, affinity_peer, retries);
-            
-            let mut sync_peer: Option<String> = None;
-            if let Some(peer_id) = affinity_peer.as_ref() {
-                if let Some(_session) = self.downloader.peer_provider.get_session(peer_id).await {
-                    sync_peer = Some(peer_id.clone());
+            // B256::ZERO is used by trigger_sync to check for better peers.
+            // If it's not ZERO, we are looking for a specific block.
+            if target_hash != B256::ZERO {
+                debug!("[Sync] Attempting to sync specific target {:?} (affinity: {:?}, retries: {})", target_hash, affinity_peer, retries);
+                
+                let mut sync_peer: Option<String> = None;
+                if let Some(peer_id) = affinity_peer.as_ref() {
+                    if let Some(_session) = self.downloader.peer_provider.get_session(peer_id).await {
+                        sync_peer = Some(peer_id.clone());
+                    }
                 }
-            }
-            
-            if sync_peer.is_none() {
-                if let Some((best_peer_id, _, _)) = self.downloader.get_best_peer().await {
-                    sync_peer = Some(best_peer_id);
+                
+                if sync_peer.is_none() {
+                    if let Some((best_peer_id, _, _)) = self.downloader.get_best_peer().await {
+                        sync_peer = Some(best_peer_id);
+                    }
                 }
-            }
-            // If still none, pick any active peer to try fetching the specific target
-            if sync_peer.is_none() {
-                if let Some(any_peer_id) = self.downloader.get_any_peer().await {
-                    sync_peer = Some(any_peer_id);
+                // If still none, pick any active peer to try fetching the specific target
+                if sync_peer.is_none() {
+                    if let Some(any_peer_id) = self.downloader.get_any_peer().await {
+                        sync_peer = Some(any_peer_id);
+                    }
                 }
-            }
 
-            if let Some(peer_id) = sync_peer {
-                if let Err(e) = self.fetch_ancestors(&peer_id, target_hash, target_hash).await {
-                     error!("[Sync] Failed to fetch target ancestor {:?}: {}", target_hash, e);
-                     
-                     if retries < 5 {
-                         // Put it back if it's a transient error like a timeout
-                         let err_str = e.to_string();
-                         if err_str.contains("timed out") || err_str.contains("Session closed") || err_str.contains("channel closed") {
-                             debug!("[Sync] Transient error, putting target {:?} back in registry (retry {})", target_hash, retries + 1);
-                             tokio::time::sleep(Duration::from_secs(1)).await;
-                             self.sync_registry.add_target_with_retries(target_hash, None, retries + 1, self.chain_manager.clone()).await;
-                         } else {
-                             // Other error, maybe not found?
-                             debug!("[Sync] Non-transient error fetching target {:?}, retrying anyway (retry {})", target_hash, retries + 1);
-                             self.sync_registry.add_target_with_retries(target_hash, None, retries + 1, self.chain_manager.clone()).await;
-                         }
-                     } else {
-                         warn!("[Sync] Maximum retries reached for target {:?}, dropping it", target_hash);
-                     }
-                }
-            } else {
-                debug!("[Sync] No peers found for target {:?}, triggering broadened discovery", target_hash);
-                // Put it back if we haven't reached max retries
-                if retries < 5 {
-                    self.sync_registry.add_target_with_retries(target_hash, affinity_peer, retries + 1, self.chain_manager.clone()).await;
+                if let Some(peer_id) = sync_peer {
+                    if let Err(e) = self.fetch_ancestors(&peer_id, target_hash, target_hash).await {
+                        error!("[Sync] Failed to fetch target ancestor {:?}: {}", target_hash, e);
+                        
+                        if retries < 5 {
+                            // Put it back if it's a transient error like a timeout
+                            let err_str = e.to_string();
+                            if err_str.contains("timed out") || err_str.contains("Session closed") || err_str.contains("channel closed") {
+                                debug!("[Sync] Transient error, putting target {:?} back in registry (retry {})", target_hash, retries + 1);
+                                tokio::time::sleep(Duration::from_secs(1)).await;
+                                self.sync_registry.add_target_with_retries(target_hash, None, retries + 1, self.chain_manager.clone()).await;
+                            } else {
+                                // Other error, maybe not found?
+                                debug!("[Sync] Non-transient error fetching target {:?}, retrying anyway (retry {})", target_hash, retries + 1);
+                                self.sync_registry.add_target_with_retries(target_hash, None, retries + 1, self.chain_manager.clone()).await;
+                            }
+                        } else {
+                            warn!("[Sync] Maximum retries reached for target {:?}, dropping it", target_hash);
+                        }
+                    }
                 } else {
-                    warn!("[Sync] Maximum retries reached for target {:?} without finding peers, dropping it", target_hash);
+                    debug!("[Sync] No peers found for target {:?}, triggering broadened discovery", target_hash);
+                    // Put it back if we haven't reached max retries
+                    if retries < 5 {
+                        self.sync_registry.add_target_with_retries(target_hash, affinity_peer, retries + 1, self.chain_manager.clone()).await;
+                    } else {
+                        warn!("[Sync] Maximum retries reached for target {:?} without finding peers, dropping it", target_hash);
+                    }
                 }
             }
         }
@@ -172,7 +188,7 @@ impl SyncController {
     }
 
     async fn sync_range(&self, peer_id: &str, start: u64) -> anyhow::Result<()> {
-        const BATCH_SIZE: u64 = 64;
+        const BATCH_SIZE: u64 = 128;
         debug!("[Sync] Starting sync range from header {}", start);
         let local_height = self.read_storage.latest_block_number()?.unwrap_or(0);
         

@@ -363,6 +363,9 @@ impl PayloadProcessor {
         debug!("[PayloadProcessor] new_payload_internal_inner: block={}, hash={}, parent={}", block_number, actual_hash, parent_hash);
 
         exp!("[EXP] BLOCK_EXEC_START number={} hash={:?} parent={:?} tx_count={}", block_number, actual_hash, parent_hash, block.body.transactions.len());
+        if is_local {
+            wasix_eth_utils::exp!("[EXP] BLOCK_RPC_RECV hash={:?}", actual_hash);
+        }
 
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(31133),

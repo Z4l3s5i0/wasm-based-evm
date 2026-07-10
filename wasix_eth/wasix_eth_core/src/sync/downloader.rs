@@ -1,4 +1,5 @@
 use std::sync::Arc;
+use std::time::Duration;
 use wasix_eth_types::sync::PeerProvider;
 use wasix_eth_types::p2p::{GetBlockHeaders, BlockHashOrNumber, GetBlockBodies, RequestPair, GetPooledTransactions};
 use alloy_consensus::Block as ConsensusBlock;
@@ -67,7 +68,9 @@ impl Downloader {
         let session = self.peer_provider.get_session(peer_id).await
             .ok_or_else(|| anyhow::anyhow!("Session not found for peer {}", peer_id))?;
 
-        let response = session.get_block_headers(RequestPair {
+        let timeout = if amount > 1 { Duration::from_secs(5) } else { Duration::from_secs(2) };
+
+        let response = tokio::time::timeout(timeout, session.get_block_headers(RequestPair {
             request_id: rand::random(),
             message: GetBlockHeaders {
                 block: BlockHashOrNumber::Number(start),
@@ -75,7 +78,9 @@ impl Downloader {
                 skip: 0,
                 reverse: false,
             },
-        }).await.map_err(|e| {
+        })).await
+        .map_err(|_| anyhow::anyhow!("get_block_headers timed out after {:?}", timeout))?
+        .map_err(|e| {
             let err_str = e.to_string();
             if err_str.contains("channel closed") || err_str.contains("Session closed") {
                 let _ = self.peer_provider.disconnect_peer(peer_id);
@@ -95,10 +100,14 @@ impl Downloader {
         let session = self.peer_provider.get_session(peer_id).await
             .ok_or_else(|| anyhow::anyhow!("Session not found for peer {}", peer_id))?;
 
-        let response = session.get_block_bodies(RequestPair {
+        let timeout = Duration::from_secs(10);
+
+        let response = tokio::time::timeout(timeout, session.get_block_bodies(RequestPair {
             request_id: rand::random(),
             message: GetBlockBodies(hashes),
-        }).await.map_err(|e| {
+        })).await
+        .map_err(|_| anyhow::anyhow!("get_block_bodies timed out after {:?}", timeout))?
+        .map_err(|e| {
             let err_str = e.to_string();
             if err_str.contains("channel closed") || err_str.contains("Session closed") {
                 let _ = self.peer_provider.disconnect_peer(peer_id);

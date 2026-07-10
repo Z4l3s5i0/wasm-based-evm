@@ -86,6 +86,9 @@ impl RPCEngine {
     pub async fn submit_transaction_with_source(&self, tx: Transaction, is_local: bool) -> RpcResult<B256> {
         let hash = *tx.hash();
         debug!("[Engine] Submitting transaction: {:?}", hash);
+        if is_local {
+            wasix_eth_utils::exp!("[EXP] TX_RPC_RECV hash={:?}", hash);
+        }
 
         // Chain ID validation
         let network_chain_id = self.read_storage.chain_id().map_err(|e| RpcError::Internal(e.to_string()))?;
@@ -136,12 +139,10 @@ impl RPCEngine {
         // we might get a stale nonce from the database.
         let mut current_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
         
-        // Use higher nonce from Payloads if the head hash corresponds to a block that is still in flight
-        // Optimization: Use a more direct lookup if possible, or limit the scan.
+        // Check head payload first as it's most likely to contain relevant transactions
         let mut highest_nonce_in_flight = 0;
         let mut found_in_flight = false;
 
-        // Check head payload first as it's most likely to contain relevant transactions
         if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(head_hash) {
             for block_tx in &block.body.transactions {
                 if block_tx.recover_signer().unwrap_or_default() == from {
@@ -151,14 +152,11 @@ impl RPCEngine {
             }
         }
 
-        // If not found in head, or to be absolutely sure, check other payloads but avoid full scan if we can.
-        // In high TPS, we usually only care about the very recent ones.
+        // Optimization: Limit scan to last 5 payloads as in high TPS we usually only care about the very recent ones.
         if !found_in_flight {
             let all_payloads = self.read_storage.all_payload_ids();
-            // Limit scan to last few payloads if there are many? 
-            // For now, let's keep it but make it slightly more efficient by breaking early if we found something recent.
-            for id in all_payloads {
-                if let Some((block, _, _)) = self.read_storage.get_payload(&id) {
+            for id in all_payloads.iter().rev().take(5) {
+                if let Some((block, _, _)) = self.read_storage.get_payload(id) {
                     let mut found_any_for_sender = false;
                     for block_tx in &block.body.transactions {
                         if block_tx.recover_signer().unwrap_or_default() == from {
@@ -167,7 +165,6 @@ impl RPCEngine {
                             found_any_for_sender = true;
                         }
                     }
-                    // If we found transactions in a payload, they are likely the most recent.
                     if found_any_for_sender {
                         break;
                     }
