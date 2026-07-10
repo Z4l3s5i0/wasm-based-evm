@@ -40,7 +40,8 @@ impl PayloadProcessor {
         block: Block<Transaction>, 
         expected_block_hash: B256, 
         expected_blob_versioned_hashes: Option<Vec<B256>>, 
-        parent_beacon_block_root: Option<B256>
+        parent_beacon_block_root: Option<B256>,
+        is_local: bool,
     ) -> RpcResult<PayloadStatus> {
         tokio::task::yield_now().await;
         let actual_hash = block.header.hash_slow();
@@ -190,7 +191,7 @@ impl PayloadProcessor {
             }
         }
 
-        let result = self.new_payload_internal_inner(block.clone(), expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await;
+        let result = self.new_payload_internal_inner(block.clone(), expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root, is_local).await;
 
         {
             let mut processing = self.processing_payloads.write().unwrap();
@@ -352,7 +353,8 @@ impl PayloadProcessor {
         block: Block<Transaction>,
         _expected_block_hash: B256,
         expected_blob_versioned_hashes: Option<Vec<B256>>,
-        parent_beacon_block_root: Option<B256>
+        parent_beacon_block_root: Option<B256>,
+        is_local: bool,
     ) -> RpcResult<PayloadStatus> {
         tokio::task::yield_now().await;
         let actual_hash = block.header.hash_slow();
@@ -660,7 +662,10 @@ impl PayloadProcessor {
         }
 
 
-        let _ = self.event_tx.send(EngineEvent::NewBlock(final_block.clone()));
+        let _ = self.event_tx.send(EngineEvent::NewBlock {
+            block: final_block.clone(),
+            is_local,
+        });
 
         // If this block was previously marked as invalid (e.g. due to bad parameters in a previous call),
         // we should remove it from the invalid blocks list now that we've successfully validated and imported it.
@@ -695,7 +700,7 @@ impl PayloadProcessor {
                                 processing.insert(child_hash);
                             }
 
-                            let result = self.new_payload_internal_inner(block.clone(), child_hash, None, None).await;
+                            let result = self.new_payload_internal_inner(block.clone(), child_hash, None, None, false).await;
 
                             {
                                 let mut processing = self.processing_payloads.write().unwrap();

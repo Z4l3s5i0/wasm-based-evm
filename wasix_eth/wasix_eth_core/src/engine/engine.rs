@@ -47,6 +47,7 @@ use wasix_eth_types::U256;
 use wasix_eth_types::{async_trait};
 use wasix_eth_types::{BlobAndProofV1, BlobAndProofV2, BlobsBundleV1, Decodable2718};
 use wasix_eth_types::eip4895::Withdrawal;
+use wasix_eth_types::p2p::BlockHashAndNumber;
 use wasix_eth_utils::engine_mapper::EngineMapper;
 use wasix_eth_utils::metrics::CURRENT_HEAD_BLOCK;
 use wasix_eth_utils::warn;
@@ -57,7 +58,10 @@ use crate::mempool::listener::MempoolListener;
 
 #[derive(Clone, Debug)]
 pub enum EngineEvent {
-    NewBlock(Block<Transaction>),
+    NewBlock {
+        block: Block<Transaction>,
+        is_local: bool,
+    },
     NewTransaction {
         tx: Transaction,
         is_local: bool,
@@ -131,6 +135,10 @@ impl SyncProvider for Engine {
     }
 
     async fn handle_announced_pooled_transactions(&self, _peer_id: String, _hashes: Vec<B256>) -> wasix_eth_types::Result<()> {
+        // Engine doesn't have a downloader, it relies on the sync controller to fetch
+        Ok(())
+    }
+    async fn handle_announced_block_hashes(&self, _peer_id: String, _hashes: Vec<BlockHashAndNumber>) -> anyhow::Result<()> {
         // Engine doesn't have a downloader, it relies on the sync controller to fetch
         Ok(())
     }
@@ -752,9 +760,9 @@ impl Engine {
         tokio::task::yield_now().await;
         let block_hash = block.header.hash_slow();
         info!("[Engine] import_block (sync path) for block {} hash {}", block.header.number, block_hash);
-
+        
         // Delegate to new_payload_internal to ensure same validation and buffering logic
-        let status = self.new_payload_internal(block, block_hash, None, None).await
+        let status = self.new_payload_internal(block, block_hash, None, None, false).await
             .map_err(|e| anyhow::anyhow!("Payload internal failed: {}", e))?;
 
         match status.status {
@@ -796,7 +804,7 @@ impl Engine {
         let block = EngineMapper::payload_v3_to_block(&payload, transactions, parent_beacon_block_root, &chain_config);
         let expected_block_hash = payload.payload_inner.payload_inner.block_hash;
         
-        self.new_payload_internal(block, expected_block_hash, Some(expected_blob_versioned_hashes), Some(parent_beacon_block_root)).await
+        self.new_payload_internal(block, expected_block_hash, Some(expected_blob_versioned_hashes), Some(parent_beacon_block_root), true).await
     }
 
     pub async fn new_payload_v4(
@@ -823,7 +831,7 @@ impl Engine {
         let block = EngineMapper::payload_v4_to_block(&payload, transactions, parent_beacon_block_root, execution_requests, &chain_config);
         let expected_block_hash = payload.payload_inner.payload_inner.payload_inner.block_hash;
         
-        self.new_payload_internal(block, expected_block_hash, Some(expected_blob_versioned_hashes), Some(parent_beacon_block_root)).await
+        self.new_payload_internal(block, expected_block_hash, Some(expected_blob_versioned_hashes), Some(parent_beacon_block_root), true).await
     }
 
     pub async fn new_payload(&self, payload_v1: ExecutionPayloadV1, withdrawals: Option<Vec<alloy_rpc_types::Withdrawal>>) -> RpcResult<PayloadStatus> {
@@ -840,7 +848,7 @@ impl Engine {
         let transactions = self.decode_transactions(&payload_v1.transactions).await?;
         let block = EngineMapper::payload_v1_to_block(&payload_v1, transactions, withdrawals, &chain_config, None, None, None);
         let expected_block_hash = payload_v1.block_hash;
-        self.new_payload_internal(block, expected_block_hash, None, None).await
+        self.new_payload_internal(block, expected_block_hash, None, None, true).await
     }
 
     fn new_payload_fork_validation(payload_v1: &ExecutionPayloadV1, withdrawals: &Option<Vec<Withdrawal>>, chain_config: &ChainConfig) -> Option<RpcResult<PayloadStatus>> {
@@ -865,14 +873,15 @@ impl Engine {
         None
     }
 
-    async fn new_payload_internal(
+    pub async fn new_payload_internal(
         &self,
         block: Block<Transaction>,
         expected_block_hash: B256,
         expected_blob_versioned_hashes: Option<Vec<B256>>,
         parent_beacon_block_root: Option<B256>,
+        is_local: bool,
     ) -> RpcResult<PayloadStatus> {
-        self.payload_processor.new_payload_internal(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root).await
+        self.payload_processor.new_payload_internal(block, expected_block_hash, expected_blob_versioned_hashes, parent_beacon_block_root, is_local).await
     }
 
     // --- helper methods engine calls ---

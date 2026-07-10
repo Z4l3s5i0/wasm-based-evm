@@ -173,11 +173,17 @@ impl SyncService {
                     service.handle_get_node_data(peer_id, req).await;
                 });
             }
-            GossipMessage::NewBlockHashes(peer_id, session_id, _m) => {
+            GossipMessage::NewBlockHashes(peer_id, session_id, m) => {
                 if !self.peer_manager.registry.is_current_session(&peer_id, session_id).await {
                     return;
                 }
-                // Handle or ignore
+                debug!("[Sync Service] Received {} NewBlockHashes from {}", m.0.len(), peer_id);
+                let Some(sync) = self.sync_provider().await else {
+                    return;
+                };
+                if let Err(e) = sync.handle_announced_block_hashes(peer_id, m.0).await {
+                    error!("[Sync Service] Failed to handle announced block hashes: {}", e);
+                }
             }
         }
     }
@@ -585,18 +591,20 @@ impl GossipProvider for SyncService {
 
     async fn broadcast_block(&self, block: &Block<Transaction>) {
         let sessions = self.peer_manager.registry.get_all_sessions().await;
-        // Need TD
+        if sessions.is_empty() { return; }
+
         let block_hash = block.header.hash_slow();
         let head_td = self.read_provider.header_td(block_hash).ok().flatten()
             .unwrap_or(alloy_primitives::U256::ZERO);
-            
-        let msg = wasix_eth_types::p2p::NewBlock {
-            block: block.clone(),
-            total_difficulty: head_td,
-        };
+
+        let hash_msg = wasix_eth_types::p2p::NewBlockHashes(vec![wasix_eth_types::p2p::BlockHashAndNumber {
+            hash: block_hash,
+            number: block.header.number,
+        }]);
+
         for session in sessions {
             use wasix_eth_types::sync::P2pSession;
-            let _ = session.send_new_block(msg.clone()).await;
+            let _ = session.send_new_block_hashes(hash_msg.clone()).await;
         }
     }
 }

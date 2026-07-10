@@ -1,0 +1,212 @@
+let:
+
+  - !loop &account
+    sample: !account
+      number: 10000
+      stake: 1000000000
+
+  - !loop &l-ap-south-1     { sample: !location [ "ap-south-1"     ] }
+  - !loop &l-af-south-1     { sample: !location [ "af-south-1"     ] }
+  - !loop &l-eu-south-1     { sample: !location [ "eu-south-1"     ] }
+  - !loop &l-eu-north-1     { sample: !location [ "eu-north-1"     ] }
+  - !loop &l-us-east-2      { sample: !location [ "us-east-2"      ] }
+  - !loop &l-ap-northeast-1 { sample: !location [ "ap-northeast-1" ] }
+  - !loop &l-sa-east-1      { sample: !location [ "sa-east-1"      ] }
+  - !loop &l-ap-southeast-2 { sample: !location [ "ap-southeast-2" ] }
+  - !loop &l-me-south-1     { sample: !location [ "me-south-1"     ] }
+  - !loop &l-us-west-2      { sample: !location [ "us-west-2"      ] }
+
+  - !loop &e-ap-south-1     { sample: !endpoint [ "ap-south-1"     ] }
+  - !loop &e-af-south-1     { sample: !endpoint [ "af-south-1"     ] }
+  - !loop &e-eu-south-1     { sample: !endpoint [ "eu-south-1"     ] }
+  - !loop &e-eu-north-1     { sample: !endpoint [ "eu-north-1"     ] }
+  - !loop &e-us-east-2      { sample: !endpoint [ "us-east-2"      ] }
+  - !loop &e-ap-northeast-1 { sample: !endpoint [ "ap-northeast-1" ] }
+  - !loop &e-sa-east-1      { sample: !endpoint [ "sa-east-1"      ] }
+  - !loop &e-ap-southeast-2 { sample: !endpoint [ "ap-southeast-2" ] }
+  - !loop &e-me-south-1     { sample: !endpoint [ "me-south-1"     ] }
+  - !loop &e-us-west-2      { sample: !endpoint [ "us-west-2"      ] }
+
+  - &contract
+    sample: !contract
+      number: 1
+      name: "uber"
+
+  - &tps_0   { sample: !float { from: 81.0, to: 82.0 } }
+  - &tps_40  { sample: !float { from: 84.0, to: 85.0 } }
+  - &tps_75  { sample: !float { from: 88.5, to: 89.5 } }
+  - &tps_90  { sample: !float { from: 90.0, to: 91.0 } }
+  - &tps_120 { sample: !float { from: 85.0, to: 86.0 } }
+  - &tps_121 { sample: !float { from: 0.0, to: 1.0 } }
+
+workloads:
+
+  - number: 1
+    client:
+      location: *l-ap-south-1
+      view: *e-ap-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-af-south-1
+      view: *e-af-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-eu-south-1
+      view: *e-eu-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-eu-north-1
+      view: *e-eu-north-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract<
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-us-east-2
+      view: *e-us-east-2
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-ap-northeast-1
+      view: *e-ap-northeast-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-sa-east-1
+      view: *e-sa-east-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-ap-southeast-2
+      view: *e-ap-southeast-2
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-me-south-1
+      view: *e-me-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121
+
+  - number: 1
+    client:
+      location: *l-us-west-2
+      view: *e-us-west-2
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "find()"
+          load:
+            0: *tps_0
+            40: *tps_40
+            75: *tps_75
+            90: *tps_90
+            120: *tps_120
+            121: *tps_121

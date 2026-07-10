@@ -7,7 +7,6 @@ use wasix_eth_utils::metrics::GOSSIP_MESSAGES_RECEIVED;
 use wasix_eth_types::{Block, ChainManager, Result, Transaction};
 use wasix_eth_types::sync::SyncProvider;
 use crate::sync::registry::SyncRegistry;
-use crate::gossip::engine_sink::EngineSink;
 use crate::Engine;
 
 pub struct GossipService {
@@ -69,8 +68,8 @@ impl GossipService {
 
             debug!("[Gossip] Received block via gossip: {:?} (number {})", block_hash, block.header.number);
             
-            // Ingest block via sink
-            if self.engine.ingest_block(block).await {
+            // Ingest block via engine
+            if self.engine.import_block(block).await.is_ok() {
                 // Check if we have it in sync layer
                 let has_block = self.chain.has_block(block_hash).await;
                 if !has_block && !parent_exists {

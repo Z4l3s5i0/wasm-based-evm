@@ -21,7 +21,11 @@ impl GossipBridge {
                         self.gossip.broadcast_transaction(&tx).await;
                     }
                 }
-                EngineEvent::NewBlock(block) => self.gossip.broadcast_block(&block).await,
+                EngineEvent::NewBlock { block, is_local } => {
+                    if is_local {
+                        self.gossip.broadcast_block(&block).await;
+                    }
+                }
             }
         }
     }

@@ -2,16 +2,16 @@ use crate::mempool::mempool_provider::MempoolProvider;
 use crate::sync::downloader::Downloader;
 use crate::sync::processor::BlockProcessor;
 use crate::sync::registry::SyncRegistry;
-use alloy_primitives::{B256, U256};
 use alloy_rpc_types::engine::ForkchoiceState;
 use alloy_rpc_types::SyncInfo;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::Duration;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, TransactionProvider};
 use wasix_eth_storage::HeaderProvider;
 use wasix_eth_types::sync::{PeerProvider, SyncProvider};
-use wasix_eth_types::{async_trait, Block, ChainConfig, ChainManager, Hardfork, InvalidationReason, SyncStatus, Transaction};
+use wasix_eth_types::{async_trait, Block, ChainConfig, ChainManager, Hardfork, InvalidationReason, SyncStatus, Transaction, B256, U256};
 use wasix_eth_utils::metrics::{CURRENT_HEAD_BLOCK, SYNC_STATUS, SYNC_TARGET_HEIGHT};
 use wasix_eth_utils::{debug, error, info, warn};
 
@@ -23,6 +23,8 @@ pub struct SyncController {
     chain_manager: Arc<dyn ChainManager>,
     sync_registry: Arc<SyncRegistry>,
     sync_lock: tokio::sync::Mutex<()>,
+    seen_blocks: tokio::sync::Mutex<HashSet<B256>>,
+    seen_txs: tokio::sync::Mutex<HashSet<B256>>,
 }
 
 impl SyncController {
@@ -42,6 +44,8 @@ impl SyncController {
             chain_manager,
             sync_registry,
             sync_lock: tokio::sync::Mutex::new(()),
+            seen_blocks: tokio::sync::Mutex::new(HashSet::new()),
+            seen_txs: tokio::sync::Mutex::new(HashSet::new()),
         }
     }
 
@@ -612,16 +616,23 @@ impl SyncProvider for SyncController {
         }
 
         let mut hashes_to_download = Vec::with_capacity(hashes.len());
-        for hash in hashes {
-            // Skip if already in mempool
-            if self.mempool.get_transaction(hash).await.is_some() {
-                continue;
+        {
+            let mut seen = self.seen_txs.lock().await;
+            for hash in hashes {
+                // Skip if already in mempool
+                if self.mempool.get_transaction(hash).await.is_some() {
+                    continue;
+                }
+                // Skip if already on-chain
+                if self.read_storage.transaction(hash).unwrap_or_default().is_some() {
+                    continue;
+                }
+                // Skip if we've seen it recently
+                if !seen.insert(hash) {
+                    continue;
+                }
+                hashes_to_download.push(hash);
             }
-            // Skip if already on-chain
-            if self.read_storage.transaction(hash).unwrap_or_default().is_some() {
-                continue;
-            }
-            hashes_to_download.push(hash);
         }
 
         if hashes_to_download.is_empty() {
@@ -633,5 +644,35 @@ impl SyncProvider for SyncController {
         
         info!("[Sync] Downloaded {} pooled transactions from {}", txs.len(), peer_id);
         self.process_pooled_transactions(txs).await
+    }
+
+    async fn handle_announced_block_hashes(&self, peer_id: String, hashes: Vec<wasix_eth_types::p2p::BlockHashAndNumber>) -> wasix_eth_types::Result<()> {
+        debug!("[Sync Controller] Peer {} announced {} block hashes", peer_id, hashes.len());
+        for announcement in hashes {
+            let hash = announcement.hash;
+            {
+                let mut seen = self.seen_blocks.lock().await;
+                if !seen.insert(hash) {
+                    continue;
+                }
+            }
+
+            if !self.has_block(hash).await {
+                debug!("[Sync Controller] Don't have announced block {}, downloading", hash);
+                match self.downloader.download_block_by_hash(&peer_id, hash).await {
+                    Ok(block) => {
+                        // total_difficulty is unknown here, we might need to fetch it or use a default if it's not critical for process_gossip_block
+                        let _ = self.process_gossip_block(block, alloy_primitives::U256::ZERO).await;
+                    }
+                    Err(e) => {
+                        error!("[Sync Controller] Failed to download announced block {}: {}", hash, e);
+                        // Remove from seen so we can retry if another peer announces it
+                        let mut seen = self.seen_blocks.lock().await;
+                        seen.remove(&hash);
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }

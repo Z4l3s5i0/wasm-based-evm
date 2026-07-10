@@ -1,0 +1,322 @@
+let:
+
+  - !loop &account
+    sample: !account
+      number: 10000
+      stake: 1000000000
+
+  - !loop &l-ap-south-1     { sample: !location [ "ap-south-1"     ] }
+  - !loop &l-af-south-1     { sample: !location [ "af-south-1"     ] }
+  - !loop &l-eu-south-1     { sample: !location [ "eu-south-1"     ] }
+  - !loop &l-eu-north-1     { sample: !location [ "eu-north-1"     ] }
+  - !loop &l-us-east-2      { sample: !location [ "us-east-2"      ] }
+  - !loop &l-ap-northeast-1 { sample: !location [ "ap-northeast-1" ] }
+  - !loop &l-sa-east-1      { sample: !location [ "sa-east-1"      ] }
+  - !loop &l-ap-southeast-2 { sample: !location [ "ap-southeast-2" ] }
+  - !loop &l-me-south-1     { sample: !location [ "me-south-1"     ] }
+  - !loop &l-us-west-2      { sample: !location [ "us-west-2"      ] }
+
+  - !loop &e-ap-south-1     { sample: !endpoint [ "ap-south-1"     ] }
+  - !loop &e-af-south-1     { sample: !endpoint [ "af-south-1"     ] }
+  - !loop &e-eu-south-1     { sample: !endpoint [ "eu-south-1"     ] }
+  - !loop &e-eu-north-1     { sample: !endpoint [ "eu-north-1"     ] }
+  - !loop &e-us-east-2      { sample: !endpoint [ "us-east-2"      ] }
+  - !loop &e-ap-northeast-1 { sample: !endpoint [ "ap-northeast-1" ] }
+  - !loop &e-sa-east-1      { sample: !endpoint [ "sa-east-1"      ] }
+  - !loop &e-ap-southeast-2 { sample: !endpoint [ "ap-southeast-2" ] }
+  - !loop &e-me-south-1     { sample: !endpoint [ "me-south-1"     ] }
+  - !loop &e-us-west-2      { sample: !endpoint [ "us-west-2"      ] }
+
+  - &contract
+    sample: !contract
+      number: 1
+      name: "counter"
+
+  - &tps_0   { sample: !float { from: 340.6, to: 340.7 } }
+  - &tps_11  { sample: !float { from: 348.5, to: 348.6 } }
+  - &tps_27  { sample: !float { from: 278.7, to: 278.8 } }
+  - &tps_40  { sample: !float { from: 337.4, to: 337.5 } }
+  - &tps_56  { sample: !float { from: 141.6, to: 141.7 } }
+  - &tps_61  { sample: !float { from: 381.7, to: 381.8 } }
+  - &tps_74  { sample: !float { from: 348.2, to: 348.3 } }
+  - &tps_87  { sample: !float { from: 341.4, to: 341.5 } }
+  - &tps_104 { sample: !float { from: 409.7, to: 409.8 } }
+  - &tps_112 { sample: !float { from: 335.7, to: 335.8 } }
+  - &tps_121 { sample: !float { from: 337.8, to: 337.9 } }
+  - &tps_129 { sample: !float { from: 448.7, to: 448.8 } }
+  - &tps_147 { sample: !float { from: 337.3, to: 337.4 } }
+  - &tps_159 { sample: !float { from: 388.2, to: 388.3 } }
+  - &tps_176 { sample: !float { from: 530.5, to: 530.6 } }
+  - &tps_177 { sample: !float { from: 0, to: 1 } }
+
+workloads:
+
+  - number: 1
+    client:
+      location: *l-ap-south-1
+      view: *e-ap-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-af-south-1
+      view: *e-af-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-eu-south-1
+      view: *e-eu-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-eu-north-1
+      view: *e-eu-north-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-us-east-2
+      view: *e-us-east-2
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-ap-northeast-1
+      view: *e-ap-northeast-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-sa-east-1
+      view: *e-sa-east-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-ap-southeast-2
+      view: *e-ap-southeast-2
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-me-south-1
+      view: *e-me-south-1
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177
+
+  - number: 1
+    client:
+      location: *l-us-west-2
+      view: *e-us-west-2
+      behavior:
+        - interaction: !invoke
+            from: *account
+            contract: *contract
+            function: "add()"
+          load:
+            0: *tps_0
+            11: *tps_11
+            27: *tps_27
+            40: *tps_40
+            56: *tps_56
+            61: *tps_61
+            74: *tps_74
+            87: *tps_87
+            104: *tps_104
+            112: *tps_112
+            121: *tps_121
+            129: *tps_129
+            147: *tps_147
+            159: *tps_159
+            176: *tps_176
+            177: *tps_177

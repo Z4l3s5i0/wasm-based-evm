@@ -19,6 +19,7 @@ pub trait SyncProvider: Send + Sync {
     async fn process_gossip_transactions(&self, txs: Vec<Transaction>) -> Result<()>;
     async fn process_pooled_transactions(&self, txs: Vec<crate::TxPooledEnvelope>) -> Result<()>;
     async fn handle_announced_pooled_transactions(&self, peer_id: String, hashes: Vec<B256>) -> Result<()>;
+    async fn handle_announced_block_hashes(&self, peer_id: String, hashes: Vec<crate::p2p::BlockHashAndNumber>) -> Result<()>;
 }
 
 #[async_trait]
@@ -81,6 +82,9 @@ impl SyncProvider for NoopSync {
         Ok(())
     }
     async fn handle_announced_pooled_transactions(&self, _peer_id: String, _hashes: Vec<B256>) -> Result<()> {
+        Ok(())
+    }
+    async fn handle_announced_block_hashes(&self, _peer_id: String, _hashes: Vec<crate::p2p::BlockHashAndNumber>) -> Result<()> {
         Ok(())
     }
 }

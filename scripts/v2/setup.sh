@@ -50,15 +50,34 @@ else
     echo "Docker Compose (V2) is available."
 fi
 
+# Function to retry a command
+retry_command() {
+    local n=1
+    local max=5
+    local delay=5
+    while true; do
+        "$@" && break || {
+            if [[ $n -lt $max ]]; then
+                ((n++))
+                echo "Command failed. Attempt $n/$max:"
+                sleep $delay;
+            else
+                echo "The command has failed after $n attempts."
+                return 1
+            fi
+        }
+    done
+}
+
 # 4. Pull necessary common images to speed up first start
 echo "Pre-pulling common Docker images..."
-docker pull ethpandaops/ethereum-genesis-generator:master
-docker pull sigp/lighthouse:latest
-docker pull ghcr.io/ethstaker/ethstaker-deposit-cli:latest
-docker pull prom/node-exporter:v1.8.1
-docker pull grafana/grafana:11.1.0
-docker pull prom/prometheus:v2.53.1
-docker pull docker.io/z4l3s5i0/contender:latest
+retry_command docker pull ethpandaops/ethereum-genesis-generator:master
+retry_command docker pull sigp/lighthouse:latest
+retry_command docker pull ghcr.io/ethstaker/ethstaker-deposit-cli:latest
+retry_command docker pull prom/node-exporter:v1.8.1
+retry_command docker pull grafana/grafana:11.1.0
+retry_command docker pull prom/prometheus:v2.53.1
+retry_command docker pull docker.io/z4l3s5i0/contender:latest
 #docker pull ghcr.io/paradigmxyz/reth
 
 echo "Setup complete!"

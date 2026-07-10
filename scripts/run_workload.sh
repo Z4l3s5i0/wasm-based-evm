@@ -175,31 +175,3 @@ else
 fi
 
 echo "Workload finished."
-
-#
-#wasm@test1:~$ ./eth-dev/run_workload.sh --network wasm_blockchain-net --campaign uber_workload --accounts 6 --min-balance 10000000000000000000 --rpc http://wasm-el-node-0-1:8545
-#--- Contender Workload Configuration ---
-#RPC URL: http://wasm-el-node-0-1:8545
-#Campaign: uber_workload
-#Accounts per agent: 6
-#Min Balance: 10000000000000000000
-#Network: wasm_blockchain-net
-#State Dir: /home/wasm/.contender_state
-#---------------------------------------
-#Starting workload (campaign)...
-#2026-07-08T20:26:50.498996Z  INFO data directory: /root/.local/state/contender
-#2026-07-08T20:26:50.502826Z  INFO connecting to http://wasm-el-node-0-1:8545/
-#2026-07-08T20:26:50.520795Z  INFO Funding agent accounts from 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-#2026-07-08T20:26:51.569164Z  INFO simulate_setup_cost: beginning setup simulation
-#2026-07-08T20:26:51.662777Z  INFO simulate_setup_cost: anvil ready at http://localhost:35135/
-#2026-07-08T20:26:51.702622Z  INFO simulate_setup_cost: deploying contract: "ContractUber"
-#deploying contract with wallet address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-#2026-07-08T20:26:58.742898Z  INFO simulate_setup_cost: syncing nonces from RPC...
-#2026-07-08T20:26:58.744757Z  INFO simulate_setup_cost: setup simulation complete. estimated setup cost: 0.000000000000000000 ether
-#2026-07-08T20:26:58.853546Z  INFO Deploying contracts...
-#2026-07-08T20:26:58.854706Z  INFO deploying contract: "ContractUber"
-#deploying contract with wallet address: 0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266
-#Error:   x core error
-#  |-> failed to find pending tx
-#  `-> transaction was not confirmed within the timeout
-
