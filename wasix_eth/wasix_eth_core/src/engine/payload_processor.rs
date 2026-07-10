@@ -13,7 +13,7 @@ use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::{BlockWriter, HeaderWriter, TransactionWriter};
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::{Block, BlockId, ChainConfig, PayloadStatus, PayloadStatusEnum, Transaction, B256, U256, proofs, Header, Hardfork, ChainManager, InvalidationReason};
-use wasix_eth_utils::{debug, error, info, metrics::{TRANSACTIONS_COMMITTED_TOTAL, BLOCKS_IMPORTED_TOTAL}};
+use wasix_eth_utils::{debug, error, info, exp, metrics::{TRANSACTIONS_COMMITTED_TOTAL, BLOCKS_IMPORTED_TOTAL}};
 use crate::engine::engine::EngineEvent;
 
 #[derive(Clone)]
@@ -360,6 +360,8 @@ impl PayloadProcessor {
         let block_number = block.header.number;
         debug!("[PayloadProcessor] new_payload_internal_inner: block={}, hash={}, parent={}", block_number, actual_hash, parent_hash);
 
+        exp!("[EXP] BLOCK_EXEC_START number={} hash={:?} parent={:?} tx_count={}", block_number, actual_hash, parent_hash, block.body.transactions.len());
+
         let chain_config = self.read_storage.chain_config().ok().flatten().unwrap_or_else(|| ChainConfig {
             chain_id: self.read_storage.chain_id().unwrap_or(31133),
             ..Default::default()
@@ -573,6 +575,8 @@ impl PayloadProcessor {
         }).await.map_err(|e| RpcError::Internal(format!("Execution task panicked: {}", e)))?;
         let elapsed = start_time.elapsed();
         info!("[PayloadProcessor] Block {} executed in {:?}", block.header.number, elapsed);
+
+        exp!("[EXP] BLOCK_EXEC_END number={} hash={:?} elapsed_ms={}", block.header.number, actual_hash, elapsed.as_millis());
 
         
         let (final_block, receipts) = match exec_result {

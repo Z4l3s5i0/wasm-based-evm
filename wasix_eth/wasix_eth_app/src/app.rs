@@ -22,7 +22,7 @@ use wasix_eth_rpc::RpcServerFacade;
 use wasix_eth_types::genesis::GenesisConfiguration;
 use wasix_eth_utils::logging;
 use wasix_eth_utils::logging::LogLevel;
-use wasix_eth_utils::{debug, error, info};
+use wasix_eth_utils::{debug, error, info, exp};
 
 #[derive(Serialize, Deserialize, Debug)]
 struct RegisterNodeRequest {
@@ -309,7 +309,8 @@ impl AppBuilder {
         let level = match args.common.verbose {
             0 => LogLevel::None,
             1 => LogLevel::Info,
-            _ => LogLevel::Debug,
+            2 => LogLevel::Debug,
+            _ => LogLevel::Exp,
         };
         logging::set_log_level(level);
         wasix_eth_utils::metrics::init_metrics();

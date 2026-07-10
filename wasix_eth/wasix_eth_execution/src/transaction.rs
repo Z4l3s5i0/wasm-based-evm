@@ -2,7 +2,7 @@ use wasix_eth_types::*;
 use wasix_eth_storage::write::BatchWriter;
 use wasix_eth_storage::read_traits::AccountProvider;
 use wasix_eth_storage::write_traits::AccountWriter;
-use wasix_eth_utils::debug;
+use wasix_eth_utils::{debug, exp};
 use evm::backend::{OverlayedBackend, OverlayedChangeSet, InMemoryEnvironment, RuntimeBaseBackend, RuntimeEnvironment, RuntimeBackend};
 use evm::uint::{H160, H256, U256 as EvmU256};
 use evm::standard::{Config, EtableResolver, ExecutionEtable, GasometerEtable, Invoker, TransactArgs, TransactArgsCallCreate, TransactGasPrice, TransactValue, TransactValueCallCreate};
@@ -49,6 +49,8 @@ impl<'a> TransactionExecutor<'a> {
         let sender = recovered.signer();
         let tx_hash_final = recovered.hash();
 
+        exp!("[EXP] TX_EXEC_START hash={:?} sender={:?} nonce={}", tx_hash_final, sender, recovered.nonce());
+
         let mut backend = self.prepare_backend(tx, sender, state_root)?;
         let sender_h160 = H160::from_slice(sender.as_slice());
         let balance_before = backend.balance(sender_h160);
@@ -93,7 +95,10 @@ impl<'a> TransactionExecutor<'a> {
         
         // Post-execution gas adjustments (EIP-7702, EIP-7623, etc)
         let elapsed = start_time.elapsed();
-        debug!("[Execution] Transaction {:?} finished: success={}, gas_evm={}, cumulative={}, elapsed={:?}", tx_hash_final, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed);
+        debug!("[Execution) Transaction {:?} finished: success={}, gas_evm={}, cumulative={}, elapsed={:?}", tx_hash_final, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed);
+
+        exp!("[EXP] TX_EXEC_END hash={:?} success={} gas_used={} cumulative_gas={} elapsed_ms={}", 
+            tx_hash_final, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed.as_millis());
 
         *cumulative_gas_used += tx_gas_used;
 

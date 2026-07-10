@@ -5,7 +5,7 @@ use alloy_consensus::Block as ConsensusBlock;
 use alloy_consensus::TxEnvelope as Transaction;
 use alloy_primitives::{B256, U256};
 use rand::seq::SliceRandom;
-use wasix_eth_utils::debug;
+use wasix_eth_utils::{debug, exp};
 
 pub struct Downloader {
     pub(crate) peer_provider: Arc<dyn PeerProvider>,
@@ -63,6 +63,7 @@ impl Downloader {
     }
 
     pub async fn download_headers(&self, peer_id: &str, start: u64, amount: u64) -> anyhow::Result<Vec<wasix_eth_types::Header>> {
+        exp!("[EXP] DOWNLOAD_HEADERS_START peer={} start={} amount={}", peer_id, start, amount);
         let session = self.peer_provider.get_session(peer_id).await
             .ok_or_else(|| anyhow::anyhow!("Session not found for peer {}", peer_id))?;
 
@@ -82,10 +83,15 @@ impl Downloader {
             e
         })?;
 
-        Ok(response.message.0)
+        let res = Ok(response.message.0);
+        if let Ok(headers) = &res {
+            exp!("[EXP] DOWNLOAD_HEADERS_END peer={} count={}", peer_id, headers.len());
+        }
+        res
     }
 
     pub async fn download_bodies(&self, peer_id: &str, hashes: Vec<B256>) -> anyhow::Result<Vec<wasix_eth_types::BlockBody<Transaction>>> {
+        exp!("[EXP] DOWNLOAD_BODIES_START peer={} count={}", peer_id, hashes.len());
         let session = self.peer_provider.get_session(peer_id).await
             .ok_or_else(|| anyhow::anyhow!("Session not found for peer {}", peer_id))?;
 
@@ -100,7 +106,11 @@ impl Downloader {
             e
         })?;
 
-        Ok(response.message.0)
+        let res = Ok(response.message.0);
+        if let Ok(bodies) = &res {
+            exp!("[EXP] DOWNLOAD_BODIES_END peer={} count={}", peer_id, bodies.len());
+        }
+        res
     }
 
     pub async fn download_block_by_hash(&self, peer_id: &str, hash: B256) -> anyhow::Result<ConsensusBlock<Transaction>> {
@@ -149,6 +159,10 @@ impl Downloader {
             e
         })?;
 
-        Ok(response.message.0)
+        let res = Ok(response.message.0);
+        if let Ok(txs) = &res {
+            exp!("[EXP] DOWNLOAD_POOLED_TXS_END peer={} count={}", peer_id, txs.len());
+        }
+        res
     }
 }

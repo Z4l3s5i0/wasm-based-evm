@@ -10,7 +10,7 @@ use std::time::{Duration, Instant};
 use tokio::io::{AsyncRead, AsyncWrite};
 use tokio::sync::{mpsc, oneshot, Mutex};
 use wasix_eth_types::p2p::{BlockBodies, BlockHeaders, BlockRangeUpdate, Disconnect, EthMessageID, GetBlockBodies, GetBlockHeaders, GetNodeData, GetPooledTransactions, GetReceipts, GossipMessage, NewBlock, NewBlockHashes, NewPooledTransactionHashes, NewPooledTransactionHashes66, NodeData, Ping, Pong, PooledTransactions, Receipts, RequestPair, Status, StatusEth69, StatusMessage, Transactions};
-use wasix_eth_utils::{debug, error, info};
+use wasix_eth_utils::{debug, error, info, exp};
 
 pub struct SessionTask<S> {
     stream: RlpxStream<S>,
@@ -185,8 +185,16 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
                 }
             }
             SessionRequest::SendNewBlockHashes(m) => { let _ = self.stream.send_eth(&m, EthMessageID::NewBlockHashes.to_u8()).await; }
-            SessionRequest::SendTransactions(m) => { let _ = self.stream.send_eth(&m, EthMessageID::Transactions.to_u8()).await; }
-            SessionRequest::SendNewBlock(m) => { let _ = self.stream.send_eth(&m, EthMessageID::NewBlock.to_u8()).await; }
+            SessionRequest::SendTransactions(m) => { 
+                for tx_item in &m.0 {
+                    exp!("[EXP] P2P_SEND_TX peer={} hash={:?}", self.peer_id, tx_item.hash());
+                }
+                let _ = self.stream.send_eth(&m, EthMessageID::Transactions.to_u8()).await; 
+            }
+            SessionRequest::SendNewBlock(m) => { 
+                exp!("[EXP] P2P_SEND_BLOCK peer={} number={} hash={:?}", self.peer_id, m.block.header.number, m.block.header.hash_slow());
+                let _ = self.stream.send_eth(&m, EthMessageID::NewBlock.to_u8()).await; 
+            }
             SessionRequest::SendNewPooledTransactionHashes(m) => {
                 let version = self.stream.eth_version();
                 if version.as_ref().map(|v| v.is_eth68_or_newer()).unwrap_or(false) {
@@ -510,6 +518,9 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
     async fn handle_transactions(&mut self, payload: Vec<u8>) -> bool {
         if let (Some(tx), Ok(m)) = (&self.gossip_tx, Transactions::decode(&mut &payload[..])) {
             debug!("[P2P Session] Received {} Transactions from {}", m.0.len(), self.peer_id);
+            for tx_item in &m.0 {
+                exp!("[EXP] P2P_RECV_TX peer={} hash={:?}", self.peer_id, tx_item.hash());
+            }
             let _ = tx.send(GossipMessage::Transactions(self.peer_id.clone(), self.session_id, m)).await;
         }
         true
@@ -648,7 +659,9 @@ where S: AsyncRead + AsyncWrite + Unpin + Send + Sync + 'static
 
     async fn handle_new_block(&mut self, payload: Vec<u8>) -> bool {
         if let Ok(m) = NewBlock::decode(&mut &payload[..]) {
-            debug!("[P2P Session] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, m.block.header.hash_slow(), self.peer_id);
+            let block_hash = m.block.header.hash_slow();
+            debug!("[P2P Session] Received NewBlock {} (hash: {:?}) from {}", m.block.header.number, block_hash, self.peer_id);
+            exp!("[EXP] P2P_RECV_BLOCK peer={} number={} hash={:?}", self.peer_id, m.block.header.number, block_hash);
             let mut h_guard = self.best_height.lock().await;
             if m.block.header.number > *h_guard {
                 *h_guard = m.block.header.number;

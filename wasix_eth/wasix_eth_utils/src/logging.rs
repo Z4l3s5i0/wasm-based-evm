@@ -7,6 +7,7 @@ pub enum LogLevel {
     None = 0,
     Info = 1,
     Debug = 2,
+    Exp = 3,
 }
 
 pub static mut LOG_LEVEL: LogLevel = LogLevel::Info;
@@ -32,6 +33,21 @@ pub fn add_log(log: String) {
 }
 
 pub use chrono;
+
+#[macro_export]
+macro_rules! exp {
+    ($($arg:tt)*) => {
+        {
+            if $crate::logging::get_log_level() >= $crate::logging::LogLevel::Exp {
+                let now = $crate::logging::chrono::Local::now();
+                let timestamp = now.format("%b %d %H:%M:%S%.3f").to_string();
+                let log = format!($($arg)*);
+                println!("{} EXP   {}", timestamp, log);
+                $crate::logging::add_log(format!("{} [EXP] {}", timestamp, log));
+            }
+        }
+    };
+}
 
 #[macro_export]
 macro_rules! info {
