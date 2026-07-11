@@ -1,61 +1,58 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Arc;
 use tokio::sync::RwLock;
+use dashmap::DashMap;
 use wasix_eth_types::{Address, SignerRecoverable, ConsensusTransaction, B256, U256, Transaction, Blob, Bytes48, TxPooledEnvelope, Bytes};
 use wasix_eth_utils::{debug, info, metrics::{MEMPOOL_SIZE, MEMPOOL_REJECTED_TRANSACTIONS}};
 
 #[derive(Debug, Default, Clone)]
 pub struct Mempool {
-    pub inner: Arc<RwLock<MempoolInner>>,
+    pub inner: Arc<MempoolInner>,
 }
 
 impl Mempool {
     /// Create a new mempool with the given base fee.
     pub fn new(base_fee: U256) -> Self {
         Self {
-            inner: Arc::new(RwLock::new(MempoolInner {
-                pending_transactions: HashMap::new(),
-                queued_transactions: HashMap::new(),
-                pooled_envelopes: HashMap::new(),
-                pooled_bytes: HashMap::new(),
-                blobs: HashMap::new(),
-                base_fee,
-            })),
+            inner: Arc::new(MempoolInner {
+                pending_transactions: DashMap::new(),
+                queued_transactions: DashMap::new(),
+                pooled_envelopes: DashMap::new(),
+                pooled_bytes: DashMap::new(),
+                blobs: DashMap::new(),
+                base_fee: RwLock::new(base_fee),
+            }),
         }
     }
 
-    pub fn add_transaction_no_nonce_sync(&self, tx: Transaction) -> bool {
-        if let Ok(mut inner) = self.inner.try_write() {
-            inner.add_transaction(tx, 0)
-        } else {
-            false
-        }
+    pub async fn add_transaction_no_nonce_sync(&self, tx: Transaction) -> bool {
+        // We can't easily get current_nonce here without state, so we use 0 or let it be handled by add_transaction
+        self.inner.add_transaction(tx, 0).await
     }
 
     /// Get the next expected nonce for an address, considering pending transactions in the mempool.
     /// If no pending transactions exist, returns the provided state nonce.
     pub async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64 {
-        let inner = self.inner.read().await;
-        inner.pending_transactions.get(&address)
+        self.inner.pending_transactions.get(&address)
             .and_then(|q| q.back().map(|t| t.nonce() + 1))
             .unwrap_or(state_nonce)
     }
 }
 
-#[derive(Debug, Default, Clone)]
+#[derive(Debug, Default)]
 pub struct MempoolInner {
     /// Transactions ready for inclusion (no nonce gaps, sufficient balance).
-    pub pending_transactions: HashMap<Address, VecDeque<Transaction>>,
+    pub pending_transactions: DashMap<Address, VecDeque<Transaction>>,
     /// Transactions waiting for a previous nonce to arrive.
-    pub queued_transactions: HashMap<Address, VecDeque<Transaction>>,
+    pub queued_transactions: DashMap<Address, VecDeque<Transaction>>,
     /// Original pooled envelopes for re-serving over P2P.
-    pub pooled_envelopes: HashMap<B256, TxPooledEnvelope>,
+    pub pooled_envelopes: DashMap<B256, TxPooledEnvelope>,
     /// Original pooled bytes as received over RPC (wire-identical replay).
-    pub pooled_bytes: HashMap<B256, Bytes>,
+    pub pooled_bytes: DashMap<B256, Bytes>,
     /// Blobs, commitments and proofs associated with EIP-4844 transactions, indexed by versioned hash.
-    pub blobs: HashMap<B256, (Blob, Bytes48, Bytes48)>,
+    pub blobs: DashMap<B256, (Blob, Bytes48, Bytes48)>,
     /// Current base fee for transactions in the mempool.
-    pub base_fee: U256,
+    pub base_fee: RwLock<U256>,
 }
 
 /// Metadata for a transaction in the mempool.
@@ -68,7 +65,7 @@ pub struct TxMetadata {
 impl MempoolInner {
     /// Add a transaction to the mempool, considering its nonce and the current state nonce.
     /// Returns true if the transaction was newly added or replaced an existing one.
-    pub fn add_transaction(&mut self, tx: Transaction, current_nonce: u64) -> bool {
+    pub async fn add_transaction(&self, tx: Transaction, current_nonce: u64) -> bool {
         let hash = tx.hash();
         let from = tx.recover_signer().unwrap_or_default();
         let tx_nonce = tx.nonce();
@@ -79,9 +76,6 @@ impl MempoolInner {
             return false;
         }
 
-        // Potential addition: check balance against current state
-        // This would require passing storage or balance to this method.
-
         // Determine if it should be pending or queued based on existing transactions from this sender
         let next_pending_nonce = self.pending_transactions.get(&from)
             .and_then(|q| q.back().map(|t| t.nonce() + 1))
@@ -89,10 +83,10 @@ impl MempoolInner {
 
         let added = if tx_nonce <= next_pending_nonce {
             // It either fills the next expected nonce or it's a replacement (handled in insert_into_queue)
-            self.insert_into_queue(from, tx, true)
+            self.insert_into_queue(from, tx, true).await
         } else {
             // There's a gap between pending transactions and this one
-            self.insert_into_queue(from, tx, false)
+            self.insert_into_queue(from, tx, false).await
         };
 
         if added {
@@ -106,14 +100,14 @@ impl MempoolInner {
 
 
     /// Internal helper to insert a transaction into pending or queued maps.
-    fn insert_into_queue(&mut self, from: Address, tx: Transaction, is_pending: bool) -> bool {
+    async fn insert_into_queue(&self, from: Address, tx: Transaction, is_pending: bool) -> bool {
         let hash = tx.hash();
         let nonce = tx.nonce();
         
         // Enforce capacity before adding
-        self.enforce_capacity(5000); // MAX_MEMPOOL_SIZE
+        self.enforce_capacity(5000).await; // MAX_MEMPOOL_SIZE
 
-        let queue = if is_pending {
+        let mut queue = if is_pending {
             self.pending_transactions.entry(from).or_insert_with(VecDeque::new)
         } else {
             self.queued_transactions.entry(from).or_insert_with(VecDeque::new)
@@ -148,6 +142,7 @@ impl MempoolInner {
             if is_pending {
                 // Optimization: only promote if we added the next sequential nonce
                 // (or if it's the first one, which next_pending_nonce handled in add_transaction)
+                drop(queue);
                 self.promote_queued(from, nonce + 1);
             }
             
@@ -156,67 +151,69 @@ impl MempoolInner {
     }
 
     /// Move transactions from queued to pending if the nonce gap is filled.
-    pub fn promote_queued(&mut self, address: Address, next_expected_nonce: u64) {
+    pub fn promote_queued(&self, address: Address, next_expected_nonce: u64) {
         let mut next_nonce = next_expected_nonce;
         
-        while let Some(queued_queue) = self.queued_transactions.get_mut(&address) {
-            // Since it's sorted, check the first one
-            // Use binary search for better performance if the queue is large
-            match queued_queue.binary_search_by_key(&next_nonce, |tx| tx.nonce()) {
-                Ok(pos) => {
-                    let tx = queued_queue.remove(pos).unwrap();
-                    info!("[Mempool] Promoting transaction {:?} (nonce: {}) for {} to pending", tx.hash(), tx.nonce(), address);
-                    
-                    let pending_queue = self.pending_transactions.entry(address).or_insert_with(VecDeque::new);
-                    let p_pos = pending_queue.binary_search_by_key(&tx.nonce(), |t| t.nonce())
-                        .unwrap_or_else(|e| e);
-                    pending_queue.insert(p_pos, tx);
-                    
-                    next_nonce += 1;
+        loop {
+            let tx = {
+                let mut queued_queue = match self.queued_transactions.get_mut(&address) {
+                    Some(q) => q,
+                    None => break,
+                };
+                
+                match queued_queue.binary_search_by_key(&next_nonce, |tx| tx.nonce()) {
+                    Ok(pos) => queued_queue.remove(pos),
+                    Err(_) => None,
                 }
-                Err(_) => break,
+            };
+
+            if let Some(tx) = tx {
+                info!("[Mempool] Promoting transaction {:?} (nonce: {}) for {} to pending", tx.hash(), tx.nonce(), address);
+                
+                let mut pending_queue = self.pending_transactions.entry(address).or_insert_with(VecDeque::new);
+                let p_pos = pending_queue.binary_search_by_key(&tx.nonce(), |t| t.nonce())
+                    .unwrap_or_else(|e| e);
+                pending_queue.insert(p_pos, tx);
+                
+                next_nonce += 1;
+            } else {
+                break;
             }
         }
         
         // Cleanup if empty
-        if let Some(q) = self.queued_transactions.get(&address) {
-            if q.is_empty() {
-                self.queued_transactions.remove(&address);
-            }
-        }
+        self.queued_transactions.remove_if(&address, |_, q| q.is_empty());
     }
 
     /// Get all transactions currently in the mempool (both pending and queued).
     pub fn get_all_transactions(&self) -> Vec<Transaction> {
-        let mut all = self.pending_transactions
-            .values()
-            .flat_map(|q: &VecDeque<Transaction>| q.iter().cloned())
-            .collect::<Vec<_>>();
-        
-        all.extend(self.queued_transactions
-            .values()
-            .flat_map(|q: &VecDeque<Transaction>| q.iter().cloned()));
-            
+        let mut all = Vec::new();
+        for r in self.pending_transactions.iter() {
+            all.extend(r.value().iter().cloned());
+        }
+        for r in self.queued_transactions.iter() {
+            all.extend(r.value().iter().cloned());
+        }
         all
     }
 
     /// Clear the mempool.
-    pub fn clear(&mut self) {
+    pub fn clear(&self) {
         self.pending_transactions.clear();
         self.queued_transactions.clear();
         MEMPOOL_SIZE.set(0.0);
     }
 
     /// Remove transactions that have been included in a block.
-    pub fn remove_transactions(&mut self, tx_hashes: &[B256]) {
+    pub fn remove_transactions(&self, tx_hashes: &[B256]) {
         if !tx_hashes.is_empty() {
             info!("[Mempool] Removing {} transactions from mempool", tx_hashes.len());
         }
-        for queue in self.pending_transactions.values_mut() {
-            queue.retain(|tx| !tx_hashes.contains(&tx.hash()));
+        for mut r in self.pending_transactions.iter_mut() {
+            r.value_mut().retain(|tx| !tx_hashes.contains(tx.hash()));
         }
-        for queue in self.queued_transactions.values_mut() {
-            queue.retain(|tx| !tx_hashes.contains(&tx.hash()));
+        for mut r in self.queued_transactions.iter_mut() {
+            r.value_mut().retain(|tx| !tx_hashes.contains(tx.hash()));
         }
         // Clean up empty queues
         self.pending_transactions.retain(|_, queue| !queue.is_empty());
@@ -227,7 +224,7 @@ impl MempoolInner {
 
     /// Peek at best transactions from the mempool for block building without removing them.
     /// Prioritizes by effective tip and respects nonce order, gas limit and blob gas limit (Cancun).
-    pub fn peek_best_transactions(&mut self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
+    pub async fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
         let mut result = Vec::new();
         let mut current_gas: u64 = 0;
         let mut current_blobs: u32 = 0;
@@ -235,35 +232,35 @@ impl MempoolInner {
 
         // First, try to promote any queued transactions for all senders who already have pending transactions
         // or whose next expected nonce is in queued.
-        // Optimization: only check senders that have something in queued pool.
-        let queued_senders: Vec<Address> = self.queued_transactions.keys().cloned().collect();
+        let queued_senders: Vec<Address> = self.queued_transactions.iter().map(|r| *r.key()).collect();
         for sender in queued_senders {
-            // If we have nothing in pending, we use base_nonce (which we don't have here easily, but promote_queued can be triggered by add_transaction)
-            // If we have something in pending, we try to fill the gap.
             if let Some(pending_queue) = self.pending_transactions.get(&sender) {
                 if let Some(last_tx) = pending_queue.back() {
-                    self.promote_queued(sender, last_tx.nonce() + 1);
+                    let next_nonce = last_tx.nonce() + 1;
+                    drop(pending_queue);
+                    self.promote_queued(sender, next_nonce);
                 }
             }
         }
         
-        // Use a persistent map of iterators to avoid cloning the entire queues
-        // We only need to clone the structure of the map and the VecDeque (which is a clone of pointers/references if using Arc, 
-        // but here it's clones of Transaction objects).
-        // Optimization: instead of cloning all queues, we can just keep track of the index per sender.
         let mut sender_indices: HashMap<Address, usize> = HashMap::new();
-        let mut active_senders: Vec<Address> = self.pending_transactions.keys().cloned().collect();
+        let mut active_senders: Vec<Address> = self.pending_transactions.iter().map(|r| *r.key()).collect();
         
         while current_gas < target_gas_limit && !active_senders.is_empty() {
             let mut best_sender: Option<Address> = None;
             let mut best_tip: u128 = 0;
             let mut best_blobs: u32 = 0;
 
-            // Re-implementing more efficiently:
             let mut to_remove = Vec::new();
             for (idx, sender) in active_senders.iter().enumerate() {
                 let current_idx = sender_indices.get(sender).unwrap_or(&0);
-                let queue = self.pending_transactions.get(sender).unwrap();
+                let queue = match self.pending_transactions.get(sender) {
+                    Some(q) => q,
+                    None => {
+                        to_remove.push(idx);
+                        continue;
+                    }
+                };
                 
                 if let Some(tx) = queue.get(*current_idx) {
                     let tip = Self::calculate_effective_tip(tx, base_fee);
@@ -292,7 +289,6 @@ impl MempoolInner {
                             best_blobs = tx_blobs;
                         }
                     } else {
-                        // Doesn't fit, and since nonces must be sequential, no more txs from this sender can fit.
                         to_remove.push(idx);
                     }
                 } else {
@@ -300,7 +296,6 @@ impl MempoolInner {
                 }
             }
 
-            // Remove exhausted senders in reverse order
             to_remove.sort_unstable_by(|a, b| b.cmp(a));
             for idx in to_remove {
                 active_senders.swap_remove(idx);
@@ -339,11 +334,10 @@ impl MempoolInner {
     }
 
     /// Peek at N transactions from the mempool for block building without removing them.
-    pub fn peek_transactions(&mut self, n: usize) -> Vec<Transaction> {
+    pub fn peek_transactions(&self, n: usize) -> Vec<Transaction> {
         let mut result = Vec::with_capacity(n);
         
-        // Try to promote queued transactions before peeking
-        let queued_senders: Vec<Address> = self.queued_transactions.keys().cloned().collect();
+        let queued_senders: Vec<Address> = self.queued_transactions.iter().map(|r| *r.key()).collect();
         for sender in queued_senders {
             let next_expected = self.pending_transactions.get(&sender)
                 .and_then(|q| q.back().map(|t| t.nonce() + 1));
@@ -353,13 +347,14 @@ impl MempoolInner {
             }
         }
 
-        let mut copy = self.clone();
+        let mut pending_copy: HashMap<Address, VecDeque<Transaction>> = self.pending_transactions.iter()
+            .map(|r| (*r.key(), r.value().clone())).collect();
         
         while result.len() < n {
             let mut best_sender: Option<Address> = None;
             let mut best_gas_price: u128 = 0;
 
-            for (address, queue) in &copy.pending_transactions {
+            for (address, queue) in &pending_copy {
                 if let Some(tx) = queue.front() {
                     let gas_price = tx.gas_price().unwrap_or_default();
                     if gas_price > best_gas_price {
@@ -370,12 +365,12 @@ impl MempoolInner {
             }
 
             if let Some(sender) = best_sender {
-                if let Some(queue) = copy.pending_transactions.get_mut(&sender) {
+                if let Some(queue) = pending_copy.get_mut(&sender) {
                     if let Some(tx) = queue.pop_front() {
                         result.push(tx);
                     }
                     if queue.is_empty() {
-                        copy.pending_transactions.remove(&sender);
+                        pending_copy.remove(&sender);
                     }
                 }
             } else {
@@ -387,32 +382,32 @@ impl MempoolInner {
     }
 
     /// Pop N transactions from the mempool for inclusion in a block.
-    /// Transactions are prioritized by effective tip while strictly respecting nonce order for each sender.
-    pub fn pop_transactions(&mut self, n: usize) -> Vec<Transaction> {
+    pub async fn pop_transactions(&self, n: usize) -> Vec<Transaction> {
         let mut result = Vec::with_capacity(n);
+        let base_fee = *self.base_fee.read().await;
         
         while result.len() < n {
             let mut best_sender: Option<Address> = None;
             let mut best_tip: u128 = 0;
 
-            for (address, queue) in &self.pending_transactions {
-                if let Some(tx) = queue.front() {
-                    let tip = Self::calculate_effective_tip(tx, self.base_fee);
+            for r in self.pending_transactions.iter() {
+                if let Some(tx) = r.value().front() {
+                    let tip = Self::calculate_effective_tip(tx, base_fee);
                     if tip > best_tip || (tip == best_tip && best_sender.is_none()) {
                         best_tip = tip;
-                        best_sender = Some(*address);
+                        best_sender = Some(*r.key());
                     }
                 }
             }
 
             if let Some(sender) = best_sender {
-                if let Some(queue) = self.pending_transactions.get_mut(&sender) {
-                    if let Some(tx) = queue.pop_front() {
-                        result.push(tx);
-                    }
-                    if queue.is_empty() {
-                        self.pending_transactions.remove(&sender);
-                    }
+                let mut queue = self.pending_transactions.get_mut(&sender).unwrap();
+                if let Some(tx) = queue.pop_front() {
+                    result.push(tx);
+                }
+                if queue.is_empty() {
+                    drop(queue);
+                    self.pending_transactions.remove(&sender);
                 }
             } else {
                 break;
@@ -439,34 +434,35 @@ impl MempoolInner {
     }
 
     /// Evict transactions with the lowest effective tip when the mempool is over capacity.
-    pub fn enforce_capacity(&mut self, max_size: usize) {
+    pub async fn enforce_capacity(&self, max_size: usize) {
         if self.len() <= max_size {
             return;
         }
         
+        let base_fee = *self.base_fee.read().await;
         while self.len() > max_size {
             let mut worst_sender: Option<(Address, bool)> = None; // (address, is_pending)
             let mut worst_tip: u128 = u128::MAX;
 
             // Prioritize evicting from queued first
-            for (address, queue) in &self.queued_transactions {
-                if let Some(tx) = queue.back() {
-                    let tip = Self::calculate_effective_tip(tx, self.base_fee);
+            for r in self.queued_transactions.iter() {
+                if let Some(tx) = r.value().back() {
+                    let tip = Self::calculate_effective_tip(tx, base_fee);
                     if tip < worst_tip {
                         worst_tip = tip;
-                        worst_sender = Some((*address, false));
+                        worst_sender = Some((*r.key(), false));
                     }
                 }
             }
 
             // If still over capacity and queued is empty or we have even worse pending
             if worst_sender.is_none() || self.queued_transactions.is_empty() {
-                for (address, queue) in &self.pending_transactions {
-                    if let Some(tx) = queue.back() {
-                        let tip = Self::calculate_effective_tip(tx, self.base_fee);
+                for r in self.pending_transactions.iter() {
+                    if let Some(tx) = r.value().back() {
+                        let tip = Self::calculate_effective_tip(tx, base_fee);
                         if tip < worst_tip {
                             worst_tip = tip;
-                            worst_sender = Some((*address, true));
+                            worst_sender = Some((*r.key(), true));
                         }
                     }
                 }
@@ -479,12 +475,13 @@ impl MempoolInner {
                     self.queued_transactions.get_mut(&address)
                 };
 
-                if let Some(q) = queue {
+                if let Some(mut q) = queue {
                     if let Some(tx) = q.pop_back() {
                         info!("[Mempool] Evicting transaction {:?} (nonce: {}) from {} pool due to capacity (tip: {})", 
                             tx.hash(), tx.nonce(), if is_pending { "pending" } else { "queued" }, worst_tip);
                     }
                     if q.is_empty() {
+                        drop(q);
                         if is_pending {
                             self.pending_transactions.remove(&address);
                         } else {
@@ -500,15 +497,14 @@ impl MempoolInner {
 
     /// Get the total count of transactions in the mempool (pending + queued).
     pub fn len(&self) -> usize {
-        self.pending_transactions.values().map(|q: &VecDeque<Transaction>| q.len()).sum::<usize>() +
-        self.queued_transactions.values().map(|q: &VecDeque<Transaction>| q.len()).sum::<usize>()
+        self.pending_transactions.iter().map(|r| r.value().len()).sum::<usize>() +
+        self.queued_transactions.iter().map(|r| r.value().len()).sum::<usize>()
     }
 
     /// Check if the mempool is empty.
     pub fn is_empty(&self) -> bool {
         self.len() == 0
     }
-
 }
 
 #[cfg(test)]
@@ -547,12 +543,12 @@ mod tests {
                 input: Default::default(),
                 chain_id: None,
             },
-            Signature::test_signature(),
+            Signature::new(U256::from(1), U256::from(1), true),
             B256::repeat_byte(1),
         ));
 
-        mempool.inner.write().await.add_transaction(tx1.clone(), 0);
-        mempool.inner.write().await.add_transaction(tx2.clone(), 0);
+        mempool.inner.add_transaction(tx1.clone(), 0).await;
+        mempool.inner.add_transaction(tx2.clone(), 0).await;
 
         // Peek with gas limit enough for both
         let best = mempool.peek_best_transactions(50000, U256::from(100), None, None).await;
@@ -600,15 +596,14 @@ mod tests {
                 input: Default::default(),
                 chain_id: None,
             },
-            Signature::test_signature(),
+            Signature::new(U256::from(1), U256::from(1), true),
             B256::repeat_byte(1),
         ));
 
-        let mut inner = mempool.inner.write().await;
+        let inner = &mempool.inner;
         let from = tx1.recover_signer().unwrap_or_default();
-        inner.add_transaction(tx1.clone(), 0);
+        inner.add_transaction(tx1.clone(), 0).await;
         inner.pending_transactions.entry(from).or_default().push_back(tx2.clone());
-        drop(inner);
 
         let best = mempool.peek_best_transactions(100000, U256::from(100), None, None).await;
         assert_eq!(best.len(), 2);
@@ -619,8 +614,8 @@ mod tests {
     #[tokio::test]
     async fn test_mempool_new() {
         let mempool = Mempool::new(U256::from(100));
-        assert_eq!(mempool.inner.read().await.base_fee, U256::from(100));
-        assert!(mempool.inner.read().await.len() == 0);
+        assert_eq!(*mempool.inner.base_fee.read().await, U256::from(100));
+        assert!(mempool.inner.len() == 0);
     }
 
     #[tokio::test]
@@ -632,8 +627,8 @@ mod tests {
         }.into_signed(Signature::test_signature()));
         
         // current_nonce = 10, tx_nonce = 5 -> should be rejected (false)
-        assert!(!mempool.inner.write().await.add_transaction(tx, 10));
-        assert!(mempool.inner.read().await.is_empty());
+        assert!(!mempool.inner.add_transaction(tx, 10).await);
+        assert!(mempool.inner.is_empty());
     }
 
     #[tokio::test]
@@ -645,9 +640,9 @@ mod tests {
         }.into_signed(Signature::test_signature()));
         
         // current_nonce = 10, tx_nonce = 10 -> should be pending
-        assert!(mempool.inner.write().await.add_transaction(tx, 10));
-        assert_eq!(mempool.inner.read().await.len(), 1);
-        assert_eq!(mempool.inner.read().await.pending_transactions.len(), 1);
+        assert!(mempool.inner.add_transaction(tx, 10).await);
+        assert_eq!(mempool.inner.len(), 1);
+        assert_eq!(mempool.inner.pending_transactions.len(), 1);
     }
 
     #[tokio::test]
@@ -659,9 +654,9 @@ mod tests {
         }.into_signed(Signature::test_signature()));
         
         // current_nonce = 10, tx_nonce = 15 -> should be queued
-        assert!(mempool.inner.write().await.add_transaction(tx, 10));
-        assert_eq!(mempool.inner.read().await.len(), 1);
-        assert_eq!(mempool.inner.read().await.queued_transactions.len(), 1);
+        assert!(mempool.inner.add_transaction(tx, 10).await);
+        assert_eq!(mempool.inner.len(), 1);
+        assert_eq!(mempool.inner.queued_transactions.len(), 1);
     }
 
     #[tokio::test]
@@ -674,7 +669,7 @@ mod tests {
         let addr = tx.recover_signer().unwrap();
         
         {
-            let mut inner = mempool.inner.write().await;
+            let inner = &mempool.inner;
             inner.queued_transactions.entry(addr).or_default().push_back(tx);
             assert_eq!(inner.queued_transactions.len(), 1);
             
@@ -693,10 +688,10 @@ mod tests {
         }.into_signed(Signature::test_signature()));
         let hash = *tx.hash();
         
-        mempool.inner.write().await.add_transaction(tx, 10);
-        assert_eq!(mempool.inner.read().await.len(), 1);
+        mempool.inner.add_transaction(tx, 10).await;
+        assert_eq!(mempool.inner.len(), 1);
         
-        mempool.inner.write().await.remove_transactions(&[hash]);
-        assert_eq!(mempool.inner.read().await.len(), 0);
+        mempool.inner.remove_transactions(&[hash]);
+        assert_eq!(mempool.inner.len(), 0);
     }
 }

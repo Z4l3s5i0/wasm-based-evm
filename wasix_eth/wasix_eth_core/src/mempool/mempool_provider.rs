@@ -9,7 +9,7 @@ use wasix_eth_utils::info;
 pub trait MempoolProvider: Send + Sync {
     async fn add_transaction(&self, tx: Transaction, current_nonce: u64) -> bool;
     async fn update_base_fee(&self, new_base_fee: U256, state: &DatabaseReadProvider);
-    async fn revalidate(&self, state: &DatabaseReadProvider);
+    async fn revalidate(&self, state: &DatabaseReadProvider, addresses: Option<Vec<Address>>);
     async fn pop_transactions(&self, n: usize) -> Vec<Transaction>;
     async fn peek_transactions(&self, n: usize) -> Vec<Transaction>;
     async fn remove_transactions(&self, tx_hashes: &[B256]);
@@ -33,46 +33,44 @@ pub trait MempoolProvider: Send + Sync {
 #[async_trait]
 impl MempoolProvider for Mempool {
     async fn add_transaction(&self, tx: Transaction, current_nonce: u64) -> bool {
-        let mut inner = self.inner.write().await;
-        inner.add_transaction(tx, current_nonce)
+        self.inner.add_transaction(tx, current_nonce).await
     }
 
     async fn update_base_fee(&self, new_base_fee: U256, state: &DatabaseReadProvider) {
         let (increased, old_fee) = {
-            let mut inner = self.inner.write().await;
-            let increased = new_base_fee > inner.base_fee;
-            let old_fee = inner.base_fee;
-            inner.base_fee = new_base_fee;
+            let mut base_fee_lock = self.inner.base_fee.write().await;
+            let increased = new_base_fee > *base_fee_lock;
+            let old_fee = *base_fee_lock;
+            *base_fee_lock = new_base_fee;
             (increased, old_fee)
         };
 
         if increased {
             info!("[Mempool] Base fee increased from {} to {}. Revalidating mempool...", old_fee, new_base_fee);
-            self.revalidate(state).await;
+            self.revalidate(state, None).await;
         }
     }
 
     /// Revalidate the mempool against the latest state.
     /// Removes transactions that are no longer valid (e.g. nonce too low, insufficient balance).
-    async fn revalidate(&self, state: &DatabaseReadProvider) {
+    /// If `addresses` is provided, only those accounts are revalidated.
+    async fn revalidate(&self, state: &DatabaseReadProvider, addresses: Option<Vec<Address>>) {
         let mut to_remove = Vec::new();
         let mut addresses_to_promote = Vec::new();
 
-        {
-            let inner = self.inner.read().await;
-            let base_fee = inner.base_fee;
+        let base_fee = *self.inner.base_fee.read().await;
+
+        let process_address = |address: Address, to_remove: &mut Vec<B256>, addresses_to_promote: &mut Vec<Address>| {
+            let (current_nonce, current_balance) = if let Ok(Some(acc)) = state.account(address, None) {
+                (acc.nonce, acc.balance)
+            } else {
+                (0, U256::ZERO)
+            };
 
             // Check pending transactions
-            for (address, queue) in &inner.pending_transactions {
-                let (current_nonce, current_balance) = if let Ok(Some(acc)) = state.account(*address, None) {
-                    (acc.nonce, acc.balance)
-                } else {
-                    (0, U256::ZERO)
-                };
-
-                for tx in queue {
+            if let Some(queue) = self.inner.pending_transactions.get(&address) {
+                for tx in queue.iter() {
                     let tx_nonce = tx.nonce();
-                    // Check if transaction can pay the base fee
                     let max_fee = tx.max_fee_per_gas();
 
                     if max_fee < base_fee.to::<u128>() {
@@ -82,7 +80,6 @@ impl MempoolProvider for Mempool {
                         continue;
                     }
 
-                    // For EIP-1559 transactions, the absolute maximum a user might pay is gas_limit * max_fee_per_gas + value.
                     let gas_limit = tx.gas_limit() as u128;
                     let max_fee_per_gas = tx.max_fee_per_gas();
                     let value = tx.value().to::<u128>();
@@ -93,11 +90,10 @@ impl MempoolProvider for Mempool {
                         continue;
                     }
 
-                    // Check blobs for EIP-4844 transactions
                     if tx.is_eip4844() {
                         if let Some(hashes) = tx.blob_versioned_hashes() {
                             for hash in hashes {
-                                if !inner.blobs.contains_key(hash) {
+                                if !self.inner.blobs.contains_key(hash) {
                                     info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
                                     to_remove.push(*tx.hash());
                                     break;
@@ -109,16 +105,9 @@ impl MempoolProvider for Mempool {
             }
 
             // Check queued transactions
-            for (address, queue) in &inner.queued_transactions {
-                let (current_nonce, current_balance) = if let Ok(Some(acc)) = state.account(*address, None) {
-                    (acc.nonce, acc.balance)
-                } else {
-                    (0, U256::ZERO)
-                };
-
-                for tx in queue {
+            if let Some(queue) = self.inner.queued_transactions.get(&address) {
+                for tx in queue.iter() {
                     let tx_nonce = tx.nonce();
-                    // Check if transaction can pay the base fee
                     let max_fee = tx.max_fee_per_gas();
 
                     if max_fee < base_fee.to::<u128>() {
@@ -138,11 +127,10 @@ impl MempoolProvider for Mempool {
                         continue;
                     }
 
-                    // Check blobs for EIP-4844 transactions
                     if tx.is_eip4844() {
                         if let Some(hashes) = tx.blob_versioned_hashes() {
                             for hash in hashes {
-                                if !inner.blobs.contains_key(hash) {
+                                if !self.inner.blobs.contains_key(hash) {
                                     info!("[Mempool] Evicting transaction {:?} because blob {:?} is missing", tx.hash(), hash);
                                     to_remove.push(*tx.hash());
                                     break;
@@ -151,7 +139,23 @@ impl MempoolProvider for Mempool {
                         }
                     }
                 }
-                addresses_to_promote.push(*address);
+                addresses_to_promote.push(address);
+            }
+        };
+
+        if let Some(addrs) = addresses {
+            for addr in addrs {
+                process_address(addr, &mut to_remove, &mut addresses_to_promote);
+            }
+        } else {
+            // Full revalidation
+            for r in self.inner.pending_transactions.iter() {
+                process_address(*r.key(), &mut to_remove, &mut addresses_to_promote);
+            }
+            for r in self.inner.queued_transactions.iter() {
+                if !self.inner.pending_transactions.contains_key(r.key()) {
+                    process_address(*r.key(), &mut to_remove, &mut addresses_to_promote);
+                }
             }
         }
 
@@ -167,87 +171,73 @@ impl MempoolProvider for Mempool {
             } else {
                 0
             };
-            let mut inner = self.inner.write().await;
-            inner.promote_queued(address, current_nonce);
+            self.inner.promote_queued(address, current_nonce);
         }
     }
 
     async fn pop_transactions(&self, n: usize) -> Vec<Transaction> {
-        let mut inner = self.inner.write().await;
-        inner.pop_transactions(n)
+        self.inner.pop_transactions(n).await
     }
 
     async fn peek_transactions(&self, n: usize) -> Vec<Transaction> {
-        let mut inner = self.inner.write().await;
-        inner.peek_transactions(n)
+        self.inner.peek_transactions(n)
     }
 
     async fn remove_transactions(&self, tx_hashes: &[B256]) {
-        let mut inner = self.inner.write().await;
-        inner.remove_transactions(tx_hashes);
+        self.inner.remove_transactions(tx_hashes);
     }
 
     async fn get_all_transactions(&self) -> Vec<Transaction> {
-        let inner = self.inner.read().await;
-        inner.get_all_transactions()
+        self.inner.get_all_transactions()
     }
 
     async fn get_transactions_by_sender(&self, address: Address) -> Vec<Transaction> {
-        let inner = self.inner.read().await;
         let mut txs = Vec::new();
-        if let Some(pending) = inner.pending_transactions.get(&address) {
+        if let Some(pending) = self.inner.pending_transactions.get(&address) {
             txs.extend(pending.iter().cloned());
         }
-        if let Some(queued) = inner.queued_transactions.get(&address) {
+        if let Some(queued) = self.inner.queued_transactions.get(&address) {
             txs.extend(queued.iter().cloned());
         }
         txs
     }
 
     async fn len(&self) -> usize {
-        let inner = self.inner.read().await;
-        inner.len()
+        self.inner.len()
     }
 
     async fn is_empty(&self) -> bool {
-        let inner = self.inner.read().await;
-        inner.is_empty()
+        self.inner.is_empty()
     }
 
     async fn clear(&self) {
-        let mut inner = self.inner.write().await;
-        inner.clear();
+        self.inner.clear();
     }
 
     async fn base_fee(&self) -> U256 {
-        let inner = self.inner.read().await;
-        inner.base_fee
+        *self.inner.base_fee.read().await
     }
 
     async fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
-        let mut inner = self.inner.write().await;
-        inner.peek_best_transactions(target_gas_limit, base_fee, blob_base_fee, max_blobs_per_block)
+        self.inner.peek_best_transactions(target_gas_limit, base_fee, blob_base_fee, max_blobs_per_block).await
     }
 
     async fn add_blob(&self, versioned_hash: B256, blob: Blob, commitment: Bytes48, proof: Bytes48) {
-        let mut inner = self.inner.write().await;
-        inner.blobs.insert(versioned_hash, (blob, commitment, proof));
+        self.inner.blobs.insert(versioned_hash, (blob, commitment, proof));
     }
 
     async fn get_blob(&self, versioned_hash: B256) -> Option<(Blob, Bytes48, Bytes48)> {
-        let inner = self.inner.read().await;
-        inner.blobs.get(&versioned_hash).cloned()
+        self.inner.blobs.get(&versioned_hash).map(|r| r.value().clone())
     }
 
     async fn get_transaction(&self, hash: B256) -> Option<Transaction> {
-        let inner = self.inner.read().await;
-        for queue in inner.pending_transactions.values() {
-            if let Some(tx) = queue.iter().find(|tx| *tx.hash() == hash) {
+        for r in self.inner.pending_transactions.iter() {
+            if let Some(tx) = r.value().iter().find(|tx| *tx.hash() == hash) {
                 return Some(tx.clone());
             }
         }
-        for queue in inner.queued_transactions.values() {
-            if let Some(tx) = queue.iter().find(|tx| *tx.hash() == hash) {
+        for r in self.inner.queued_transactions.iter() {
+            if let Some(tx) = r.value().iter().find(|tx| *tx.hash() == hash) {
                 return Some(tx.clone());
             }
         }
@@ -255,23 +245,19 @@ impl MempoolProvider for Mempool {
     }
 
     async fn add_pooled_envelope(&self, hash: B256, pooled: TxPooledEnvelope) {
-        let mut inner = self.inner.write().await;
-        inner.pooled_envelopes.insert(hash, pooled);
+        self.inner.pooled_envelopes.insert(hash, pooled);
     }
 
     async fn get_pooled_envelope(&self, hash: B256) -> Option<TxPooledEnvelope> {
-        let inner = self.inner.read().await;
-        inner.pooled_envelopes.get(&hash).cloned()
+        self.inner.pooled_envelopes.get(&hash).map(|r| r.value().clone())
     }
 
     async fn add_pooled_bytes(&self, hash: B256, bytes: Bytes) {
-        let mut inner = self.inner.write().await;
-        inner.pooled_bytes.insert(hash, bytes);
+        self.inner.pooled_bytes.insert(hash, bytes);
     }
 
     async fn get_pooled_bytes(&self, hash: B256) -> Option<Bytes> {
-        let inner = self.inner.read().await;
-        inner.pooled_bytes.get(&hash).cloned()
+        self.inner.pooled_bytes.get(&hash).map(|r| r.value().clone())
     }
 
     async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64 {
@@ -284,7 +270,7 @@ pub struct NoopMempoolProvider;
 impl MempoolProvider for NoopMempoolProvider {
     async fn add_transaction(&self, _tx: Transaction, _current_nonce: u64) -> bool { true }
     async fn update_base_fee(&self, _new_base_fee: U256, _state: &DatabaseReadProvider) {}
-    async fn revalidate(&self, _state: &DatabaseReadProvider) {}
+    async fn revalidate(&self, _state: &DatabaseReadProvider, _addresses: Option<Vec<Address>>) {}
     async fn pop_transactions(&self, _n: usize) -> Vec<Transaction> { Vec::new() }
     async fn peek_transactions(&self, _n: usize) -> Vec<Transaction> { Vec::new() }
     async fn remove_transactions(&self, _tx_hashes: &[B256]) {}
