@@ -637,8 +637,10 @@ impl PayloadProcessor {
         let block_hash = final_block.header.hash_slow();
         let block_number = final_block.header.number;
 
-        self.write_storage.insert_header(block_hash, final_block.header.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
-
+        let storage = self.write_storage.clone();
+        let final_block_clone = final_block.clone();
+        let receipts_clone = receipts.clone();
+        
         let parent_td = if block_number == 0 {
             U256::ZERO
         } else {
@@ -649,21 +651,24 @@ impl PayloadProcessor {
             }
         };
         let td = parent_td + U256::from(final_block.header.difficulty);
-        self.write_storage.insert_header_td(block_hash, td).map_err(|e| RpcError::Internal(e.to_string()))?;
 
-        self.write_storage.insert_block_body(block_hash, block_number, final_block.body.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
-        self.write_storage.insert_block_hash(block_hash, block_number).map_err(|e| RpcError::Internal(e.to_string()))?;
+        tokio::task::spawn_blocking(move || -> wasix_eth_types::error::RpcResult<()> {
+            storage.insert_header(block_hash, final_block_clone.header.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+            storage.insert_header_td(block_hash, td).map_err(|e| RpcError::Internal(e.to_string()))?;
+            storage.insert_block_body(block_hash, block_number, final_block_clone.body.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+            storage.insert_block_hash(block_hash, block_number).map_err(|e| RpcError::Internal(e.to_string()))?;
 
-        // Persist receipts and transaction lookup
-        for (i, tx) in final_block.body.transactions.iter().enumerate() {
-            let tx_hash = *tx.hash();
-            self.write_storage.insert_transaction(tx_hash, tx.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
-            if let Some(receipt) = receipts.get(i) {
-                self.write_storage.insert_receipt(block_hash, i as u64, receipt.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+            // Persist receipts and transaction lookup
+            for (i, tx) in final_block_clone.body.transactions.iter().enumerate() {
+                let tx_hash = *tx.hash();
+                storage.insert_transaction(tx_hash, tx.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+                if let Some(receipt) = receipts_clone.get(i) {
+                    storage.insert_receipt(block_hash, i as u64, receipt.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+                }
+                storage.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
             }
-            self.write_storage.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
-        }
-
+            Ok(())
+        }).await.map_err(|e| RpcError::Internal(format!("Storage task panicked: {}", e)))??;
 
         let _ = self.event_tx.send(EngineEvent::NewBlock {
             block: final_block.clone(),

@@ -59,7 +59,10 @@ impl CanonicalState {
         lock.0.head_block_hash = hash;
         lock.1 = number;
         let state = lock.0;
-        self.write_storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))?;
+        let storage = self.write_storage.clone();
+        tokio::task::spawn_blocking(move || {
+            storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))
+        }).await.map_err(|e| anyhow::anyhow!("Storage task panicked: {}", e))??;
         Ok(())
     }
 
@@ -70,7 +73,10 @@ impl CanonicalState {
         }
         lock.0.safe_block_hash = hash;
         let state = lock.0;
-        self.write_storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))?;
+        let storage = self.write_storage.clone();
+        tokio::task::spawn_blocking(move || {
+            storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))
+        }).await.map_err(|e| anyhow::anyhow!("Storage task panicked: {}", e))??;
         Ok(())
     }
 
@@ -81,7 +87,10 @@ impl CanonicalState {
         }
         lock.0.finalized_block_hash = hash;
         let state = lock.0;
-        self.write_storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))?;
+        let storage = self.write_storage.clone();
+        tokio::task::spawn_blocking(move || {
+            storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))
+        }).await.map_err(|e| anyhow::anyhow!("Storage task panicked: {}", e))??;
         Ok(())
     }
 
@@ -91,7 +100,10 @@ impl CanonicalState {
             return Ok(());
         }
         *lock = (state, head_number);
-        self.write_storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))?;
+        let storage = self.write_storage.clone();
+        tokio::task::spawn_blocking(move || {
+            storage.update_forkchoice(state.head_block_hash, Some(state.safe_block_hash), Some(state.finalized_block_hash))
+        }).await.map_err(|e| anyhow::anyhow!("Storage task panicked: {}", e))??;
         Ok(())
     }
 }

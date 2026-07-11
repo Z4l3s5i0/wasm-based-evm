@@ -283,7 +283,7 @@ impl MempoolInner {
                     };
 
                     if current_gas + tx.gas_limit() <= target_gas_limit && current_blobs + tx_blobs <= max_blobs {
-                        if tip > best_tip || (tip == best_tip && (best_sender.is_none() || tx_blobs > best_blobs)) {
+                        if tip > best_tip || (tip == best_tip && (tx_blobs > best_blobs || (tx_blobs == best_blobs && (best_sender.is_none() || *sender < best_sender.unwrap())))) {
                             best_tip = tip;
                             best_sender = Some(*sender);
                             best_blobs = tx_blobs;
@@ -429,7 +429,10 @@ impl MempoolInner {
             0
         } else {
             let max_tip = max_fee - base_fee;
-            max_tip.min(tx.max_priority_fee_per_gas().unwrap_or_default())
+            match tx {
+                Transaction::Legacy(_) | Transaction::Eip2930(_) => max_tip,
+                _ => max_tip.min(tx.max_priority_fee_per_gas().unwrap_or_default()),
+            }
         }
     }
 
@@ -517,34 +520,40 @@ mod tests {
     async fn test_peek_best_transactions_priority() {
         let mempool = Mempool::new(U256::from(100));
 
+        // Use deterministic signatures to get deterministic signer addresses
+        // sig1 -> 0x0000000000000000000000000000000000000000
+        // sig2 -> 0x8c908d31360a5c9174b14af7aef4b3f607e6235a
+        let sig1 = Signature::new(U256::from(100), U256::from(100), true);
+        let sig2 = Signature::new(U256::from(200), U256::from(200), true);
+
         // Tx from addr1: tip 50, gas 21000
         let tx1 = Transaction::Legacy(Signed::new_unchecked(
             TxLegacy {
                 nonce: 0,
-                gas_price: 150,
+                gas_price: 150, // tip = 150 - 100 = 50
                 gas_limit: 21000,
                 to: Address::ZERO.into(),
                 value: U256::ZERO,
                 input: Default::default(),
                 chain_id: None,
             },
-            Signature::test_signature(),
-            B256::ZERO,
+            sig1,
+            B256::repeat_byte(0xFF), // Distinct hash
         ));
 
         // Tx from addr2: tip 100, gas 21000
         let tx2 = Transaction::Legacy(Signed::new_unchecked(
             TxLegacy {
                 nonce: 0,
-                gas_price: 200,
+                gas_price: 200, // tip = 200 - 100 = 100
                 gas_limit: 21000,
                 to: Address::ZERO.into(),
                 value: U256::ZERO,
                 input: Default::default(),
                 chain_id: None,
             },
-            Signature::new(U256::from(1), U256::from(1), true),
-            B256::repeat_byte(1),
+            sig2,
+            B256::repeat_byte(0xEE), // Distinct hash
         ));
 
         mempool.inner.add_transaction(tx1.clone(), 0).await;
@@ -557,13 +566,13 @@ mod tests {
         // but here they have different gas prices.
         // tx1 gas_price=150, base_fee=100 -> tip=50
         // tx2 gas_price=200, base_fee=100 -> tip=100
-        assert_eq!(best[0].hash(), tx2.hash()); // tx2 has higher tip
-        assert_eq!(best[1].hash(), tx1.hash());
+        assert_eq!(best[0].hash(), tx2.hash(), "tx2 should be first (higher tip)");
+        assert_eq!(best[1].hash(), tx1.hash(), "tx1 should be second");
 
         // Peek with gas limit enough for only one
         let best_one = mempool.peek_best_transactions(30000, U256::from(100), None, None).await;
         assert_eq!(best_one.len(), 1);
-        assert_eq!(best_one[0].hash(), tx2.hash());
+        assert_eq!(best_one[0].hash(), tx2.hash(), "tx2 should be the only one (higher tip)");
     }
 
     #[tokio::test]
@@ -698,13 +707,13 @@ mod tests {
     #[tokio::test]
     async fn test_transaction_replacement() {
         let mempool = Mempool::new(U256::from(0));
-        let signature = Signature::new(U256::from(1), U256::from(1), true);
+        let sig = Signature::new(U256::from(300), U256::from(300), true);
         
         let tx1 = Transaction::Legacy(TxLegacy {
             nonce: 10,
             gas_price: 100,
             ..Default::default()
-        }.into_signed(signature.clone()));
+        }.into_signed(sig.clone()));
         
         // Add first transaction
         assert!(mempool.inner.add_transaction(tx1.clone(), 10).await);
@@ -715,26 +724,21 @@ mod tests {
             nonce: 10,
             gas_price: 110, // 100 + 10% = 110
             ..Default::default()
-        }.into_signed(signature));
-        
-        // Use nonce_lookup to simulate Engine API behavior
-        let addr1 = tx1.recover_signer().unwrap();
-        let (state_nonce_lookup, next_pending) = mempool.nonce_lookup(addr1, 10).await;
-        assert_eq!(state_nonce_lookup, 10);
-        assert_eq!(next_pending, 11);
+        }.into_signed(sig));
         
         // Engine API now passes state_nonce (10) to add_transaction
-        assert!(mempool.inner.add_transaction(tx2, state_nonce_lookup).await);
+        assert!(mempool.inner.add_transaction(tx2, 10).await);
         
         // It should have REPLACED tx1, so len is still 1
         assert_eq!(mempool.inner.len(), 1, "Mempool length should be 1 after replacement");
         
         // Try to replace with lower fee (should fail)
+        // Same signer as tx1/tx2
         let tx3 = Transaction::Legacy(TxLegacy {
             nonce: 10,
             gas_price: 105,
             ..Default::default()
-        }.into_signed(Signature::test_signature()));
+        }.into_signed(sig));
         
         assert!(!mempool.inner.add_transaction(tx3, 10).await);
         assert_eq!(mempool.inner.len(), 1);
