@@ -1,8 +1,10 @@
 use alloy_primitives::Address;
+use std::collections::HashMap;
+use std::sync::Arc;
 use wasix_eth_types::{async_trait, ConsensusTransaction, Transaction, B256, U256, Blob, Bytes48, TxPooledEnvelope, Bytes};
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::AccountProvider;
-use crate::mempool::mempool::Mempool;
+use crate::mempool::mempool::{Mempool, MempoolSnapshot};
 use wasix_eth_utils::info;
 
 #[async_trait]
@@ -22,6 +24,7 @@ pub trait MempoolProvider: Send + Sync {
     async fn clear(&self);
     async fn base_fee(&self) -> U256;
     async fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction>;
+    fn snapshot(&self) -> MempoolSnapshot;
     async fn add_blob(&self, versioned_hash: B256, blob: Blob, commitment: Bytes48, proof: Bytes48);
     async fn get_blob(&self, versioned_hash: B256) -> Option<(Blob, Bytes48, Bytes48)>;
     async fn get_transaction(&self, hash: B256) -> Option<Transaction>;
@@ -221,15 +224,19 @@ impl MempoolProvider for Mempool {
     }
 
     async fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
-        self.inner.peek_best_transactions(target_gas_limit, base_fee, blob_base_fee, max_blobs_per_block).await
+        self.peek_best_transactions(target_gas_limit, base_fee, blob_base_fee, max_blobs_per_block).await
+    }
+
+    fn snapshot(&self) -> MempoolSnapshot {
+        self.snapshot()
     }
 
     async fn add_blob(&self, versioned_hash: B256, blob: Blob, commitment: Bytes48, proof: Bytes48) {
-        self.inner.blobs.insert(versioned_hash, (blob, commitment, proof));
+        self.inner.blobs.insert(versioned_hash, Arc::new((blob, commitment, proof)));
     }
 
     async fn get_blob(&self, versioned_hash: B256) -> Option<(Blob, Bytes48, Bytes48)> {
-        self.inner.blobs.get(&versioned_hash).map(|r| r.value().clone())
+        self.inner.blobs.get(&versioned_hash).map(|r| (**r.value()).clone())
     }
 
     async fn get_transaction(&self, hash: B256) -> Option<Transaction> {
@@ -290,6 +297,7 @@ impl MempoolProvider for NoopMempoolProvider {
     async fn clear(&self) {}
     async fn base_fee(&self) -> U256 { U256::ZERO }
     async fn peek_best_transactions(&self, _target_gas_limit: u64, _base_fee: U256, _blob_base_fee: Option<U256>, _max_blobs_per_block: Option<u32>) -> Vec<Transaction> { Vec::new() }
+    fn snapshot(&self) -> MempoolSnapshot { MempoolSnapshot { pending: HashMap::new(), blobs: Arc::new(HashMap::new()) } }
     async fn add_blob(&self, _versioned_hash: B256, _blob: Blob, _commitment: Bytes48, _proof: Bytes48) {}
     async fn get_blob(&self, _versioned_hash: B256) -> Option<(Blob, Bytes48, Bytes48)> { None }
     async fn get_transaction(&self, _hash: B256) -> Option<Transaction> { None }

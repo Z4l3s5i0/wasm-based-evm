@@ -1,9 +1,105 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::{HashMap, BinaryHeap};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use dashmap::DashMap;
+use im::Vector;
 use wasix_eth_types::{Address, SignerRecoverable, ConsensusTransaction, B256, U256, Transaction, Blob, Bytes48, TxPooledEnvelope, Bytes};
 use wasix_eth_utils::{debug, info, metrics::{MEMPOOL_SIZE, MEMPOOL_REJECTED_TRANSACTIONS}};
+
+/// A read-optimized, immutable snapshot of the mempool for block building.
+#[derive(Clone, Debug)]
+pub struct MempoolSnapshot {
+    pub pending: HashMap<Address, Vector<Transaction>>,
+    pub blobs: Arc<HashMap<B256, Arc<(Blob, Bytes48, Bytes48)>>>,
+}
+
+impl MempoolSnapshot {
+    /// Optimized transaction selection using a Priority Queue.
+    /// Complexity: O(M log N) where M is target tx count and N is active senders.
+    pub fn peek_best_transactions(
+        &self,
+        target_gas_limit: u64,
+        base_fee: U256,
+        _blob_base_fee: Option<U256>,
+        max_blobs_per_block: Option<u32>,
+    ) -> Vec<Transaction> {
+        let mut result = Vec::new();
+        let mut current_gas: u64 = 0;
+        let mut current_blobs: u32 = 0;
+        let max_blobs = max_blobs_per_block.unwrap_or(6);
+        let base_fee_u64 = base_fee.to::<u64>();
+
+        // Sender-indexed pointers into their pending queues
+        let mut sender_cursors: HashMap<Address, usize> = HashMap::new();
+
+        // Max-heap to store the best next transaction from each sender.
+        // Stores (effective_tip, address).
+        let mut pq = BinaryHeap::new();
+
+        for (addr, queue) in &self.pending {
+            if let Some(tx) = queue.get(0) {
+                let tip = tx.effective_tip_per_gas(base_fee_u64).unwrap_or(0);
+                pq.push((tip, *addr));
+                sender_cursors.insert(*addr, 0);
+            }
+        }
+
+        while current_gas < target_gas_limit {
+            let (_tip, addr) = match pq.pop() {
+                Some(entry) => entry,
+                None => break, // No more transactions
+            };
+
+            let queue = self.pending.get(&addr).unwrap();
+            let cursor = sender_cursors.get_mut(&addr).unwrap();
+            let tx = queue.get(*cursor).unwrap();
+
+            // Validate against current block limits
+            let gas_limit = tx.gas_limit();
+            if current_gas + gas_limit > target_gas_limit {
+                // This sender's next tx is too big. 
+                // We don't re-add to PQ because nonces must be sequential.
+                continue;
+            }
+
+            if tx.is_eip4844() {
+                let blobs_count = tx.blob_versioned_hashes().map(|h| h.len() as u32).unwrap_or(0);
+                if current_blobs + blobs_count > max_blobs {
+                    continue;
+                }
+                
+                // Check if blobs are actually present
+                let mut all_blobs_present = true;
+                if let Some(hashes) = tx.blob_versioned_hashes() {
+                    for hash in hashes {
+                        if !self.blobs.contains_key(hash) {
+                            all_blobs_present = false;
+                            break;
+                        }
+                    }
+                }
+                if !all_blobs_present {
+                    continue;
+                }
+                
+                current_blobs += blobs_count;
+            }
+
+            // Transaction is eligible
+            result.push(tx.clone());
+            current_gas += gas_limit;
+
+            // Advance cursor for this sender and re-add to PQ if they have more transactions
+            *cursor += 1;
+            if let Some(next_tx) = queue.get(*cursor) {
+                let next_tip = next_tx.effective_tip_per_gas(base_fee_u64).unwrap_or(0);
+                pq.push((next_tip, addr));
+            }
+        }
+
+        result
+    }
+}
 
 #[derive(Debug, Default, Clone)]
 pub struct Mempool {
@@ -37,20 +133,42 @@ impl Mempool {
             .and_then(|q| q.back().map(|t| t.nonce() + 1))
             .unwrap_or(state_nonce)
     }
+
+    /// Optimized transaction selection using a Priority Queue.
+    /// Complexity: O(M log N) where M is target tx count and N is active senders.
+    pub async fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
+        self.snapshot().peek_best_transactions(target_gas_limit, base_fee, blob_base_fee, max_blobs_per_block)
+    }
+
+    /// Take a read-optimized snapshot of the current pending transactions and blobs.
+    pub fn snapshot(&self) -> MempoolSnapshot {
+        let pending: HashMap<Address, Vector<Transaction>> = self.inner.pending_transactions.iter()
+            .map(|r| (*r.key(), r.value().clone()))
+            .collect();
+            
+        let blobs_map: HashMap<B256, Arc<(Blob, Bytes48, Bytes48)>> = self.inner.blobs.iter()
+            .map(|r| (*r.key(), Arc::clone(r.value())))
+            .collect();
+            
+        MempoolSnapshot { 
+            pending, 
+            blobs: Arc::new(blobs_map)
+        }
+    }
 }
 
 #[derive(Debug, Default)]
 pub struct MempoolInner {
     /// Transactions ready for inclusion (no nonce gaps, sufficient balance).
-    pub pending_transactions: DashMap<Address, VecDeque<Transaction>>,
+    pub pending_transactions: DashMap<Address, Vector<Transaction>>,
     /// Transactions waiting for a previous nonce to arrive.
-    pub queued_transactions: DashMap<Address, VecDeque<Transaction>>,
+    pub queued_transactions: DashMap<Address, Vector<Transaction>>,
     /// Original pooled envelopes for re-serving over P2P.
     pub pooled_envelopes: DashMap<B256, TxPooledEnvelope>,
     /// Original pooled bytes as received over RPC (wire-identical replay).
     pub pooled_bytes: DashMap<B256, Bytes>,
     /// Blobs, commitments and proofs associated with EIP-4844 transactions, indexed by versioned hash.
-    pub blobs: DashMap<B256, (Blob, Bytes48, Bytes48)>,
+    pub blobs: DashMap<B256, Arc<(Blob, Bytes48, Bytes48)>>,
     /// Current base fee for transactions in the mempool.
     pub base_fee: RwLock<U256>,
 }
@@ -108,9 +226,9 @@ impl MempoolInner {
         self.enforce_capacity(5000).await; // MAX_MEMPOOL_SIZE
 
         let mut queue = if is_pending {
-            self.pending_transactions.entry(from).or_insert_with(VecDeque::new)
+            self.pending_transactions.entry(from).or_insert_with(Vector::new)
         } else {
-            self.queued_transactions.entry(from).or_insert_with(VecDeque::new)
+            self.queued_transactions.entry(from).or_insert_with(Vector::new)
         };
 
         // Insert in nonce order
@@ -125,8 +243,22 @@ impl MempoolInner {
             let min_replacement_price = old_gas_price + (old_gas_price / 10);
             
             if gas_price >= min_replacement_price {
+                let old_tx = &queue[pos];
+                let old_hash = *old_tx.hash();
                 debug!("[Mempool] Replacing transaction {:?} (nonce: {}) with {:?} (price: {} -> {})",
-                    queue[pos].hash(), nonce, hash, old_gas_price, gas_price);
+                    old_hash, nonce, hash, old_gas_price, gas_price);
+
+                // Clean up old transaction from other maps to avoid memory leaks
+                if old_tx.is_eip4844() {
+                    if let Some(hashes) = old_tx.blob_versioned_hashes() {
+                        for h in hashes {
+                            self.blobs.remove(h);
+                        }
+                    }
+                }
+                self.pooled_envelopes.remove(&old_hash);
+                self.pooled_bytes.remove(&old_hash);
+
                 queue[pos] = tx;
                 return true;
             }
@@ -162,7 +294,7 @@ impl MempoolInner {
                 };
                 
                 match queued_queue.binary_search_by_key(&next_nonce, |tx| tx.nonce()) {
-                    Ok(pos) => queued_queue.remove(pos),
+                    Ok(pos) => Some(queued_queue.remove(pos)),
                     Err(_) => None,
                 }
             };
@@ -170,7 +302,7 @@ impl MempoolInner {
             if let Some(tx) = tx {
                 info!("[Mempool] Promoting transaction {:?} (nonce: {}) for {} to pending", tx.hash(), tx.nonce(), address);
                 
-                let mut pending_queue = self.pending_transactions.entry(address).or_insert_with(VecDeque::new);
+                let mut pending_queue = self.pending_transactions.entry(address).or_insert_with(Vector::new);
                 let p_pos = pending_queue.binary_search_by_key(&tx.nonce(), |t| t.nonce())
                     .unwrap_or_else(|e| e);
                 pending_queue.insert(p_pos, tx);
@@ -209,130 +341,55 @@ impl MempoolInner {
         if !tx_hashes.is_empty() {
             info!("[Mempool] Removing {} transactions from mempool", tx_hashes.len());
         }
+        
+        let mut removed_txs = Vec::new();
+
         for mut r in self.pending_transactions.iter_mut() {
-            r.value_mut().retain(|tx| !tx_hashes.contains(tx.hash()));
+            let queue = r.value_mut();
+            queue.retain(|tx| {
+                if tx_hashes.contains(tx.hash()) {
+                    removed_txs.push(tx.clone());
+                    false
+                } else {
+                    true
+                }
+            });
         }
         for mut r in self.queued_transactions.iter_mut() {
-            r.value_mut().retain(|tx| !tx_hashes.contains(tx.hash()));
+            let queue = r.value_mut();
+            queue.retain(|tx| {
+                if tx_hashes.contains(tx.hash()) {
+                    removed_txs.push(tx.clone());
+                    false
+                } else {
+                    true
+                }
+            });
         }
+
+        // Clean up associated data for removed transactions
+        for tx in removed_txs {
+            let hash = tx.hash();
+            if tx.is_eip4844() {
+                if let Some(hashes) = tx.blob_versioned_hashes() {
+                    for h in hashes {
+                        self.blobs.remove(h);
+                    }
+                }
+            }
+            self.pooled_envelopes.remove(hash);
+            self.pooled_bytes.remove(hash);
+        }
+
         // Clean up empty queues
         self.pending_transactions.retain(|_, queue| !queue.is_empty());
         self.queued_transactions.retain(|_, queue| !queue.is_empty());
         
         MEMPOOL_SIZE.set(self.len() as f64);
     }
+}
 
-    /// Peek at best transactions from the mempool for block building without removing them.
-    /// Prioritizes by effective tip and respects nonce order, gas limit and blob gas limit (Cancun).
-    pub async fn peek_best_transactions(&self, target_gas_limit: u64, base_fee: U256, blob_base_fee: Option<U256>, max_blobs_per_block: Option<u32>) -> Vec<Transaction> {
-        let mut result = Vec::new();
-        let mut current_gas: u64 = 0;
-        let mut current_blobs: u32 = 0;
-        let max_blobs = max_blobs_per_block.unwrap_or(6);
-
-        // First, try to promote any queued transactions for all senders who already have pending transactions
-        // or whose next expected nonce is in queued.
-        let queued_senders: Vec<Address> = self.queued_transactions.iter().map(|r| *r.key()).collect();
-        for sender in queued_senders {
-            if let Some(pending_queue) = self.pending_transactions.get(&sender) {
-                if let Some(last_tx) = pending_queue.back() {
-                    let next_nonce = last_tx.nonce() + 1;
-                    drop(pending_queue);
-                    self.promote_queued(sender, next_nonce);
-                }
-            }
-        }
-        
-        let mut sender_indices: HashMap<Address, usize> = HashMap::new();
-        let mut active_senders: Vec<Address> = self.pending_transactions.iter().map(|r| *r.key()).collect();
-        
-        while current_gas < target_gas_limit && !active_senders.is_empty() {
-            let mut best_sender: Option<Address> = None;
-            let mut best_tip: u128 = 0;
-            let mut best_blobs: u32 = 0;
-
-            let mut to_remove = Vec::new();
-            for (idx, sender) in active_senders.iter().enumerate() {
-                let current_idx = sender_indices.get(sender).unwrap_or(&0);
-                let queue = match self.pending_transactions.get(sender) {
-                    Some(q) => q,
-                    None => {
-                        to_remove.push(idx);
-                        continue;
-                    }
-                };
-                
-                if let Some(tx) = queue.get(*current_idx) {
-                    let tip = Self::calculate_effective_tip(tx, base_fee);
-                    if tip == 0 && tx.max_fee_per_gas() < base_fee.to::<u128>() {
-                        to_remove.push(idx);
-                        continue;
-                    }
-                    
-                    if let (Some(blob_fee), Transaction::Eip4844(s)) = (blob_base_fee, tx) {
-                        if s.max_fee_per_blob_gas().unwrap_or_default() < blob_fee.to::<u128>() {
-                            to_remove.push(idx);
-                            continue;
-                        }
-                    }
-
-                    let tx_blobs = if let Transaction::Eip4844(signed_tx) = tx {
-                        signed_tx.tx().blob_versioned_hashes().map(|h| h.len()).unwrap_or(0) as u32
-                    } else {
-                        0
-                    };
-
-                    if current_gas + tx.gas_limit() <= target_gas_limit && current_blobs + tx_blobs <= max_blobs {
-                        if tip > best_tip || (tip == best_tip && (tx_blobs > best_blobs || (tx_blobs == best_blobs && (best_sender.is_none() || *sender < best_sender.unwrap())))) {
-                            best_tip = tip;
-                            best_sender = Some(*sender);
-                            best_blobs = tx_blobs;
-                        }
-                    } else {
-                        to_remove.push(idx);
-                    }
-                } else {
-                    to_remove.push(idx);
-                }
-            }
-
-            to_remove.sort_unstable_by(|a, b| b.cmp(a));
-            for idx in to_remove {
-                active_senders.swap_remove(idx);
-            }
-
-            if let Some(sender) = best_sender {
-                let current_idx = sender_indices.entry(sender).or_insert(0);
-                let queue = self.pending_transactions.get(&sender).unwrap();
-                let tx = &queue[*current_idx];
-                
-                let mut all_blobs_present = true;
-                if let Transaction::Eip4844(signed_tx) = tx {
-                    if let Some(hashes) = signed_tx.tx().blob_versioned_hashes() {
-                        for hash in hashes {
-                            if !self.blobs.contains_key(hash) {
-                                all_blobs_present = false;
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                if all_blobs_present {
-                    current_gas += tx.gas_limit();
-                    current_blobs += best_blobs;
-                    result.push(tx.clone());
-                    *current_idx += 1;
-                } else {
-                    active_senders.retain(|s| *s != sender);
-                }
-            } else {
-                break;
-            }
-        }
-        result
-    }
-
+impl MempoolInner {
     /// Peek at N transactions from the mempool for block building without removing them.
     pub fn peek_transactions(&self, n: usize) -> Vec<Transaction> {
         let mut result = Vec::with_capacity(n);
@@ -347,7 +404,7 @@ impl MempoolInner {
             }
         }
 
-        let mut pending_copy: HashMap<Address, VecDeque<Transaction>> = self.pending_transactions.iter()
+        let mut pending_copy: HashMap<Address, Vector<Transaction>> = self.pending_transactions.iter()
             .map(|r| (*r.key(), r.value().clone())).collect();
         
         while result.len() < n {
@@ -403,6 +460,18 @@ impl MempoolInner {
             if let Some(sender) = best_sender {
                 let mut queue = self.pending_transactions.get_mut(&sender).unwrap();
                 if let Some(tx) = queue.pop_front() {
+                    // Clean up associated data
+                    let hash = tx.hash();
+                    if tx.is_eip4844() {
+                        if let Some(hashes) = tx.blob_versioned_hashes() {
+                            for h in hashes {
+                                self.blobs.remove(h);
+                            }
+                        }
+                    }
+                    self.pooled_envelopes.remove(hash);
+                    self.pooled_bytes.remove(hash);
+                    
                     result.push(tx);
                 }
                 if queue.is_empty() {
@@ -472,13 +541,13 @@ impl MempoolInner {
             }
 
             if let Some((address, is_pending)) = worst_sender {
-                let queue = if is_pending {
+                let queue_opt = if is_pending {
                     self.pending_transactions.get_mut(&address)
                 } else {
                     self.queued_transactions.get_mut(&address)
                 };
 
-                if let Some(mut q) = queue {
+                if let Some(mut q) = queue_opt {
                     if let Some(tx) = q.pop_back() {
                         info!("[Mempool] Evicting transaction {:?} (nonce: {}) from {} pool due to capacity (tip: {})", 
                             tx.hash(), tx.nonce(), if is_pending { "pending" } else { "queued" }, worst_tip);
@@ -514,7 +583,6 @@ impl MempoolInner {
 mod tests {
     use super::*;
     use wasix_eth_types::{SignableTransaction, Signature, TxLegacy, Signed};
-    use crate::mempool::mempool_provider::MempoolProvider;
 
     #[tokio::test]
     async fn test_peek_best_transactions_priority() {
@@ -612,7 +680,10 @@ mod tests {
         let inner = &mempool.inner;
         let from = tx1.recover_signer().unwrap_or_default();
         inner.add_transaction(tx1.clone(), 0).await;
-        inner.pending_transactions.entry(from).or_default().push_back(tx2.clone());
+        {
+            let mut entry = inner.pending_transactions.entry(from).or_insert_with(Vector::new);
+            entry.push_back(tx2.clone());
+        }
 
         let best = mempool.peek_best_transactions(100000, U256::from(100), None, None).await;
         assert_eq!(best.len(), 2);
@@ -679,7 +750,10 @@ mod tests {
         
         {
             let inner = &mempool.inner;
-            inner.queued_transactions.entry(addr).or_default().push_back(tx);
+            {
+                let mut entry = inner.queued_transactions.entry(addr).or_insert_with(Vector::new);
+                entry.push_back(tx);
+            }
             assert_eq!(inner.queued_transactions.len(), 1);
             
             inner.promote_queued(addr, 10);
@@ -742,5 +816,76 @@ mod tests {
         
         assert!(!mempool.inner.add_transaction(tx3, 10).await);
         assert_eq!(mempool.inner.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_replacement_cleanup() {
+        let mempool = Mempool::new(U256::from(0));
+        let sig = Signature::new(U256::from(300), U256::from(300), true);
+        
+        let tx1 = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            gas_price: 100,
+            ..Default::default()
+        }.into_signed(sig.clone()));
+        let hash1 = *tx1.hash();
+        
+        // Add first transaction and associated data
+        mempool.inner.pooled_bytes.insert(hash1, Bytes::from(vec![1, 2, 3]));
+        assert!(mempool.inner.add_transaction(tx1, 10).await);
+        
+        assert!(mempool.inner.pooled_bytes.contains_key(&hash1));
+
+        // Replace it
+        let tx2 = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            gas_price: 120,
+            ..Default::default()
+        }.into_signed(sig));
+        
+        assert!(mempool.inner.add_transaction(tx2, 10).await);
+        
+        // Old data should be gone
+        assert!(!mempool.inner.pooled_bytes.contains_key(&hash1), "Old bytes should be removed");
+        
+        // New transaction is in the queue
+        assert_eq!(mempool.inner.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn test_pop_and_remove_cleanup() {
+        let mempool = Mempool::new(U256::from(0));
+        let sig = Signature::new(U256::from(300), U256::from(300), true);
+        
+        let tx1 = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            gas_price: 100,
+            ..Default::default()
+        }.into_signed(sig.clone()));
+        let hash1 = *tx1.hash();
+        
+        let tx2 = Transaction::Legacy(TxLegacy {
+            nonce: 11,
+            gas_price: 100,
+            ..Default::default()
+        }.into_signed(sig));
+        let hash2 = *tx2.hash();
+
+        mempool.inner.add_transaction(tx1, 10).await;
+        mempool.inner.add_transaction(tx2, 10).await;
+        
+        mempool.inner.pooled_bytes.insert(hash1, Bytes::from(vec![1]));
+        mempool.inner.pooled_bytes.insert(hash2, Bytes::from(vec![2]));
+
+        // Test pop
+        let popped = mempool.inner.pop_transactions(1).await;
+        assert_eq!(popped.len(), 1);
+        assert_eq!(*popped[0].hash(), hash1);
+        assert!(!mempool.inner.pooled_bytes.contains_key(&hash1), "Popped tx bytes should be removed");
+        assert!(mempool.inner.pooled_bytes.contains_key(&hash2));
+
+        // Test remove
+        mempool.inner.remove_transactions(&[hash2]);
+        assert!(!mempool.inner.pooled_bytes.contains_key(&hash2), "Removed tx bytes should be removed");
     }
 }

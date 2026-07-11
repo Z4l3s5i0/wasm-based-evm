@@ -290,13 +290,14 @@ impl PayloadBuilder {
         let active_fork = wasix_eth_types::Hardfork::get_active_fork(&chain_config, parent_block.header.number + 1, attr.timestamp);
         let max_blobs_per_block = active_fork.blob_params(&chain_config).map(|p| p.max_blob_count as u32);
 
-        // 3. Peek best transactions
-        let transactions = self.mempool.peek_best_transactions(
+        // 3. Take a mempool snapshot and peek best transactions
+        let snapshot = self.mempool.snapshot();
+        let transactions = snapshot.peek_best_transactions(
             parent_block.header.gas_limit, 
             U256::from(base_fee_per_gas.unwrap_or_default()),
             blob_base_fee.map(U256::from),
             max_blobs_per_block
-        ).await;
+        );
 
         // Optimization: if transaction set is identical, skip rebuilding
         if transactions.len() == payload_block.body.transactions.len() {

@@ -28,6 +28,7 @@ serde_json = { workspace = true }
 alloy-consensus = { workspace = true }
 rand = { workspace = true }
 dashmap = { workspace = true }
+im = "15.1.0"
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 tempfile = "3.10"
