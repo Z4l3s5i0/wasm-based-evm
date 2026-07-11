@@ -8,6 +8,8 @@ use wasix_eth_utils::info;
 #[async_trait]
 pub trait MempoolProvider: Send + Sync {
     async fn add_transaction(&self, tx: Transaction, current_nonce: u64) -> bool;
+    /// Returns (state_nonce, next_pending_nonce).
+    async fn nonce_lookup(&self, address: Address, state_nonce: u64) -> (u64, u64);
     async fn update_base_fee(&self, new_base_fee: U256, state: &DatabaseReadProvider);
     async fn revalidate(&self, state: &DatabaseReadProvider, addresses: Option<Vec<Address>>);
     async fn pop_transactions(&self, n: usize) -> Vec<Transaction>;
@@ -263,6 +265,13 @@ impl MempoolProvider for Mempool {
     async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64 {
         self.next_expected_nonce(address, state_nonce).await
     }
+
+    async fn nonce_lookup(&self, address: Address, state_nonce: u64) -> (u64, u64) {
+        let next_pending = self.inner.pending_transactions.get(&address)
+            .and_then(|q| q.back().map(|t| t.nonce() + 1))
+            .unwrap_or(state_nonce);
+        (state_nonce, next_pending)
+    }
 }
 pub struct NoopMempoolProvider;
 
@@ -289,4 +298,5 @@ impl MempoolProvider for NoopMempoolProvider {
     async fn add_pooled_bytes(&self, _hash: B256, _bytes: Bytes) {}
     async fn get_pooled_bytes(&self, _hash: B256) -> Option<Bytes> { None }
     async fn next_expected_nonce(&self, _address: Address, state_nonce: u64) -> u64 { state_nonce }
+    async fn nonce_lookup(&self, _address: Address, state_nonce: u64) -> (u64, u64) { (state_nonce, state_nonce) }
 }

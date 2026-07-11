@@ -137,16 +137,17 @@ impl RPCEngine {
         
         // Robust nonce lookup: use the state nonce at the current head and sync with mempool.
         let state_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
-        let current_nonce = self.mempool.next_expected_nonce(from, state_nonce).await;
+        let (_, next_pending_nonce) = self.mempool.nonce_lookup(from, state_nonce).await;
         
-        if self.mempool.add_transaction(tx.clone(), current_nonce).await {
+        // Pass state_nonce to add_transaction to allow standard behavior AND replacements.
+        if self.mempool.add_transaction(tx.clone(), state_nonce).await {
             debug!("[Engine] Added transaction {:?} (nonce: {}) to mempool (is_local: {})", hash, tx.nonce(), is_local);
             // Broadcast the new transaction
             let _ = self.event_tx.send(EngineEvent::NewTransaction { tx, is_local });
         } else {
             if is_local {
-                warn!("[Engine] Rejected local transaction {:?} due to nonce collision or stale nonce (nonce: {}, current: {})", hash, tx.nonce(), current_nonce);
-                return Err(RpcError::InvalidParams(format!("Nonce too low: expected {}, got {}", current_nonce, tx.nonce())));
+                warn!("[Engine] Rejected local transaction {:?} due to nonce collision or stale nonce (nonce: {}, state_nonce: {}, next_pending: {})", hash, tx.nonce(), state_nonce, next_pending_nonce);
+                return Err(RpcError::InvalidParams(format!("Nonce too low: expected {}, got {}", next_pending_nonce, tx.nonce())));
             } else {
                 debug!("[Engine] Ignored remote transaction {:?} due to nonce collision or stale nonce", hash);
             }

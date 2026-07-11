@@ -694,4 +694,49 @@ mod tests {
         mempool.inner.remove_transactions(&[hash]);
         assert_eq!(mempool.inner.len(), 0);
     }
+
+    #[tokio::test]
+    async fn test_transaction_replacement() {
+        let mempool = Mempool::new(U256::from(0));
+        let signature = Signature::new(U256::from(1), U256::from(1), true);
+        
+        let tx1 = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            gas_price: 100,
+            ..Default::default()
+        }.into_signed(signature.clone()));
+        
+        // Add first transaction
+        assert!(mempool.inner.add_transaction(tx1.clone(), 10).await);
+        assert_eq!(mempool.inner.len(), 1);
+        
+        // Try to replace it with same nonce but higher fee (10% bump)
+        let tx2 = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            gas_price: 110, // 100 + 10% = 110
+            ..Default::default()
+        }.into_signed(signature));
+        
+        // Use nonce_lookup to simulate Engine API behavior
+        let addr1 = tx1.recover_signer().unwrap();
+        let (state_nonce_lookup, next_pending) = mempool.nonce_lookup(addr1, 10).await;
+        assert_eq!(state_nonce_lookup, 10);
+        assert_eq!(next_pending, 11);
+        
+        // Engine API now passes state_nonce (10) to add_transaction
+        assert!(mempool.inner.add_transaction(tx2, state_nonce_lookup).await);
+        
+        // It should have REPLACED tx1, so len is still 1
+        assert_eq!(mempool.inner.len(), 1, "Mempool length should be 1 after replacement");
+        
+        // Try to replace with lower fee (should fail)
+        let tx3 = Transaction::Legacy(TxLegacy {
+            nonce: 10,
+            gas_price: 105,
+            ..Default::default()
+        }.into_signed(Signature::test_signature()));
+        
+        assert!(!mempool.inner.add_transaction(tx3, 10).await);
+        assert_eq!(mempool.inner.len(), 1);
+    }
 }
