@@ -24,7 +24,7 @@ impl GossipBridge {
     pub async fn run(&self, mut event_rx: broadcast::Receiver<EngineEvent>) {
         info!("[GossipBridge] Starting Engine-to-P2P event bridge");
         
-        let mut broadcast_interval = interval(Duration::from_millis(100));
+        let mut broadcast_interval = interval(Duration::from_millis(50));
         
         loop {
             tokio::select! {
@@ -49,12 +49,17 @@ impl GossipBridge {
                                         seen.insert(hash);
                                         drop(seen);
                                         
-                                        let mut pending = self.pending_txs.lock().await;
-                                        pending.push(tx);
-                                        if pending.len() >= 128 {
-                                            let txs = std::mem::replace(&mut *pending, Vec::with_capacity(128));
-                                            drop(pending);
-                                            self.broadcast_tx_batch(txs).await;
+                                        if is_local {
+                                            // Immediate broadcast for local transactions to reduce latency
+                                            self.gossip.broadcast_transaction(&tx).await;
+                                        } else {
+                                            let mut pending = self.pending_txs.lock().await;
+                                            pending.push(tx);
+                                            if pending.len() >= 128 {
+                                                let txs = std::mem::replace(&mut *pending, Vec::with_capacity(128));
+                                                drop(pending);
+                                                self.broadcast_tx_batch(txs).await;
+                                            }
                                         }
                                     }
                                 }
