@@ -49,7 +49,7 @@ use wasix_eth_types::{BlobAndProofV1, BlobAndProofV2, BlobsBundleV1, Decodable27
 use wasix_eth_types::eip4895::Withdrawal;
 use wasix_eth_types::p2p::BlockHashAndNumber;
 use wasix_eth_utils::engine_mapper::EngineMapper;
-use wasix_eth_utils::metrics::CURRENT_HEAD_BLOCK;
+use wasix_eth_utils::metrics::{CURRENT_HEAD_BLOCK, TRANSACTIONS_COMMITTED_TOTAL};
 use wasix_eth_utils::warn;
 use wasix_eth_utils::{debug, error, info};
 use crate::engine::api::RPCEngine;
@@ -595,6 +595,11 @@ impl Engine {
                                 if let Err(e) = self.chain.mark_branch_canonical(&context.new_canonical_blocks).await {
                                     error!("[Engine] Failed to mark branch canonical: {}", e);
                                     return Err(RpcError::Internal(format!("Canonical marking failed: {}", e)));
+                                }
+
+                                // Update transactions committed metric for newly canonical blocks
+                                for block in &context.new_canonical_blocks {
+                                    TRANSACTIONS_COMMITTED_TOTAL.inc_by(block.body.transactions.len() as f64);
                                 }
 
                                 // 4. Emit CanonicalBlock events for the newly canonical blocks

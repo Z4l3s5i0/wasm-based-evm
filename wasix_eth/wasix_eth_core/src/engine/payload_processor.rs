@@ -13,7 +13,7 @@ use wasix_eth_storage::write::DatabaseWriteProvider;
 use wasix_eth_storage::write_traits::{BlockWriter, HeaderWriter, TransactionWriter};
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::{Block, BlockId, ChainConfig, PayloadStatus, PayloadStatusEnum, Transaction, B256, U256, proofs, Header, Hardfork, ChainManager, InvalidationReason};
-use wasix_eth_utils::{debug, error, info, exp, metrics::{TRANSACTIONS_COMMITTED_TOTAL, BLOCKS_IMPORTED_TOTAL}};
+use wasix_eth_utils::{debug, error, info, exp, metrics::BLOCKS_IMPORTED_TOTAL};
 use crate::engine::engine::EngineEvent;
 
 #[derive(Clone)]
@@ -203,8 +203,6 @@ impl PayloadProcessor {
                 self.revalidate_dependent_payloads(actual_hash).await;
                 
                 info!("[PayloadProcessor] Successfully imported block {} (hash: {})", block.number, actual_hash);
-                let tx_count = block.body.transactions.len();
-                TRANSACTIONS_COMMITTED_TOTAL.inc_by(tx_count as f64);
                 BLOCKS_IMPORTED_TOTAL.inc();
             }
         }
