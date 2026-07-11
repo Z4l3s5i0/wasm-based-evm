@@ -133,58 +133,11 @@ impl RPCEngine {
 
         // 1. Add to mempool synchronously to ensure consistency for block building
         let from = tx.recover_signer().unwrap_or_default();
-        let (head_hash, head_number) = self.canonical.get_head().await;
+        let (head_hash, _head_number) = self.canonical.get_head().await;
         
-        // Robust nonce lookup: if head block is NOT yet in primary storage (e.g. just built/promoted),
-        // we might get a stale nonce from the database.
-        let mut current_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
-        
-        // Check head payload first as it's most likely to contain relevant transactions
-        let mut highest_nonce_in_flight = 0;
-        let mut found_in_flight = false;
-
-        if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(head_hash) {
-            for block_tx in &block.body.transactions {
-                if block_tx.recover_signer().unwrap_or_default() == from {
-                    highest_nonce_in_flight = highest_nonce_in_flight.max(block_tx.nonce() + 1);
-                    found_in_flight = true;
-                }
-            }
-        }
-
-        // Optimization: Limit scan to last 5 payloads as in high TPS we usually only care about the very recent ones.
-        if !found_in_flight {
-            let all_payloads = self.read_storage.all_payload_ids();
-            for id in all_payloads.iter().rev().take(5) {
-                if let Some((block, _, _)) = self.read_storage.get_payload(id) {
-                    let mut found_any_for_sender = false;
-                    for block_tx in &block.body.transactions {
-                        if block_tx.recover_signer().unwrap_or_default() == from {
-                            highest_nonce_in_flight = highest_nonce_in_flight.max(block_tx.nonce() + 1);
-                            found_in_flight = true;
-                            found_any_for_sender = true;
-                        }
-                    }
-                    if found_any_for_sender {
-                        break;
-                    }
-                }
-            }
-        }
-
-        if found_in_flight && highest_nonce_in_flight > current_nonce {
-            current_nonce = highest_nonce_in_flight;
-        }
-        
-        // Fallback: If DB is behind CanonicalState height, it's definitely stale
-        if let Ok(Some(latest_num)) = self.read_storage.latest_block_number() {
-            if latest_num < head_number {
-                // The DB hasn't even reached the head yet. 
-                // We should ideally use the nonce from the last canonical block state,
-                // but if we can't find it, we just have to trust what we found so far or 
-                // wait. For now, we've already checked the Payload for head_hash.
-            }
-        }
+        // Robust nonce lookup: use the state nonce at the current head and sync with mempool.
+        let state_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
+        let current_nonce = self.mempool.next_expected_nonce(from, state_nonce).await;
         
         if self.mempool.add_transaction(tx.clone(), current_nonce).await {
             debug!("[Engine] Added transaction {:?} (nonce: {}) to mempool (is_local: {})", hash, tx.nonce(), is_local);
@@ -549,20 +502,13 @@ impl RPCEngine {
             })?;
         let state_root = header.map(|h| h.state_root);
 
-        let mut count = self.read_storage.transaction_count(address, block_id, state_root).map_err(|e| RpcError::Internal(e.to_string()))?;
+        let count = self.read_storage.transaction_count(address, block_id, state_root).map_err(|e| RpcError::Internal(e.to_string()))?;
 
         if is_pending {
-            let mempool_txs = self.mempool.get_transactions_by_sender(address).await;
-            // The nonce of the last transaction in the mempool + 1 is the next expected nonce.
-            // If the mempool has transactions, we should return a value that reflects them.
-            if let Some(highest_nonce) = mempool_txs.iter().map(|tx| tx.nonce()).max() {
-                if highest_nonce + 1 > count {
-                    count = highest_nonce + 1;
-                }
-            }
+            Ok(self.mempool.next_expected_nonce(address, count).await)
+        } else {
+            Ok(count)
         }
-
-        Ok(count)
     }
 
     pub async fn get_code(&self, address: Address, block_id: BlockId) -> RpcResult<Bytes> {

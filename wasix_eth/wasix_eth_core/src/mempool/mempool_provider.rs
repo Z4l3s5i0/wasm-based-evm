@@ -27,6 +27,7 @@ pub trait MempoolProvider: Send + Sync {
     async fn get_pooled_envelope(&self, hash: B256) -> Option<TxPooledEnvelope>;
     async fn add_pooled_bytes(&self, hash: B256, bytes: Bytes);
     async fn get_pooled_bytes(&self, hash: B256) -> Option<Bytes>;
+    async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64;
 }
 
 #[async_trait]
@@ -272,6 +273,10 @@ impl MempoolProvider for Mempool {
         let inner = self.inner.read().await;
         inner.pooled_bytes.get(&hash).cloned()
     }
+
+    async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64 {
+        self.next_expected_nonce(address, state_nonce).await
+    }
 }
 pub struct NoopMempoolProvider;
 
@@ -297,4 +302,5 @@ impl MempoolProvider for NoopMempoolProvider {
     async fn get_pooled_envelope(&self, _hash: B256) -> Option<TxPooledEnvelope> { None }
     async fn add_pooled_bytes(&self, _hash: B256, _bytes: Bytes) {}
     async fn get_pooled_bytes(&self, _hash: B256) -> Option<Bytes> { None }
+    async fn next_expected_nonce(&self, _address: Address, state_nonce: u64) -> u64 { state_nonce }
 }

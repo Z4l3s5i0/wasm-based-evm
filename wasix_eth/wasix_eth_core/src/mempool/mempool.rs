@@ -31,6 +31,15 @@ impl Mempool {
             false
         }
     }
+
+    /// Get the next expected nonce for an address, considering pending transactions in the mempool.
+    /// If no pending transactions exist, returns the provided state nonce.
+    pub async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64 {
+        let inner = self.inner.read().await;
+        inner.pending_transactions.get(&address)
+            .and_then(|q| q.back().map(|t| t.nonce() + 1))
+            .unwrap_or(state_nonce)
+    }
 }
 
 #[derive(Debug, Default, Clone)]
@@ -431,6 +440,10 @@ impl MempoolInner {
 
     /// Evict transactions with the lowest effective tip when the mempool is over capacity.
     pub fn enforce_capacity(&mut self, max_size: usize) {
+        if self.len() <= max_size {
+            return;
+        }
+        
         while self.len() > max_size {
             let mut worst_sender: Option<(Address, bool)> = None; // (address, is_pending)
             let mut worst_tip: u128 = u128::MAX;
@@ -544,6 +557,10 @@ mod tests {
         // Peek with gas limit enough for both
         let best = mempool.peek_best_transactions(50000, U256::from(100), None, None).await;
         assert_eq!(best.len(), 2);
+        // Note: Legacy transactions with same gas price might have non-deterministic order if sender hashes are similar,
+        // but here they have different gas prices.
+        // tx1 gas_price=150, base_fee=100 -> tip=50
+        // tx2 gas_price=200, base_fee=100 -> tip=100
         assert_eq!(best[0].hash(), tx2.hash()); // tx2 has higher tip
         assert_eq!(best[1].hash(), tx1.hash());
 
