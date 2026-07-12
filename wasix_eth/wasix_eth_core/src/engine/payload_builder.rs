@@ -152,7 +152,7 @@ impl PayloadBuilder {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
                     Ok(EngineEvent::NewTransaction { .. }) = event_rx.recv() => {
                         // Debounce: wait a bit for more transactions to arrive
-                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
                         // Drain extra events
                         let mut count = 1;
                         while let Ok(_) = event_rx.try_recv() {
@@ -165,8 +165,8 @@ impl PayloadBuilder {
 
                 // Minimum 500ms between rebuilds to avoid CPU saturation under high TPS
                 let elapsed_since_last = last_rebuild_time.elapsed();
-                if elapsed_since_last < std::time::Duration::from_millis(500) {
-                    tokio::time::sleep(std::time::Duration::from_millis(500) - elapsed_since_last).await;
+                if elapsed_since_last < std::time::Duration::from_millis(200) {
+                    tokio::time::sleep(std::time::Duration::from_millis(200) - elapsed_since_last).await;
                 }
 
                 last_rebuild_time = std::time::Instant::now();
@@ -351,7 +351,7 @@ impl PayloadBuilder {
         let should_replace = if new_value > old_value {
             true
         } else if new_value == old_value {
-            finalized_block.body.transactions.len() > payload_block.body.transactions.len()
+            finalized_block.body.transactions.len() >= payload_block.body.transactions.len()
         } else {
             false
         };

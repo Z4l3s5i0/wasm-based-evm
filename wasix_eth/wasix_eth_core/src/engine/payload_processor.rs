@@ -93,10 +93,10 @@ impl PayloadProcessor {
         {
             let mut processing = self.processing_payloads.write().await;
 
-            // Cleanup stale entries (> 60s)
+            // Cleanup stale entries (> 30s)
             let now = Instant::now();
             let stale_hashes: Vec<B256> = processing.iter()
-                .filter(|(_, info)| now.duration_since(info.start_time) > Duration::from_secs(60))
+                .filter(|(_, info)| now.duration_since(info.start_time) > Duration::from_secs(30))
                 .map(|(hash, _)| *hash)
                 .collect();
             
@@ -245,8 +245,10 @@ impl PayloadProcessor {
             } else if reason == InvalidationReason::Soft {
                  let latest_valid = self.chain.get_latest_valid_ancestor(parent_hash).await;
                  info!("[PayloadProcessor] rejecting payload {:?} because parent {:?} is known invalid (Soft). Latest valid: {:?}", actual_hash, parent_hash, latest_valid);
-                 
-                 {
+
+                self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Soft).await;
+
+                {
                     let mut processing = self.processing_payloads.write().await;
                     processing.remove(&actual_hash);
                  }

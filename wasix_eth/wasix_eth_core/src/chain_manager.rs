@@ -121,6 +121,11 @@ impl ChainManager for ChainManagerImpl {
         if let Ok(true) = self.read_storage.is_canonical(hash) {
             return Some(hash);
         }
+        // If it's the current head from FCU, and not known invalid, it's a valid candidate
+        let (head_hash, _) = self.head_block().await;
+        if hash == head_hash && self.block_tree.get_invalidation_reason(hash).await.is_none() {
+            return Some(hash);
+        }
 
         let mut current = hash;
         let mut visited = HashSet::new();

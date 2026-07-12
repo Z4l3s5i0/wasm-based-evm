@@ -599,15 +599,12 @@ impl Engine {
                                     return Err(RpcError::Internal(format!("Canonical marking failed: {}", e)));
                                 }
 
-                                // Update transactions and blocks committed metric for newly canonical blocks
-                                for block in &context.new_canonical_blocks {
-                                    TRANSACTIONS_COMMITTED_TOTAL.add(block.body.transactions.len() as f64);
-                                    BLOCKS_IMPORTED_TOTAL.add(1.0);
-                                }
 
                                 // 4. Emit CanonicalBlock events for the newly canonical blocks
                                 for block in context.new_canonical_blocks {
-                                    self.mempool_listener.handle_canonical_block(block).await;
+                                    self.mempool_listener.handle_canonical_block(block.clone()).await;
+                                    TRANSACTIONS_COMMITTED_TOTAL.add(block.body.transactions.len() as f64);
+
                                 }
                             } else if old_state.head_block_hash != forkchoice_state.head_block_hash {
                                 // Edge case: resolve_reorg returned empty blocks but heads differ
@@ -732,7 +729,6 @@ impl Engine {
                 
                 // Subtract transactions and block from committed metrics
                 TRANSACTIONS_COMMITTED_TOTAL.sub(block.body.transactions.len() as f64);
-                BLOCKS_IMPORTED_TOTAL.sub(1.0);
 
                 let blobs_bundle = self.read_storage.get_payload_by_block_hash(discarded_hash).map(|(_, _, b)| b);
                 let mut blob_idx = 0;

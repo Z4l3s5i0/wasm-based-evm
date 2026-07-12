@@ -252,7 +252,9 @@ impl Consensus for EthConsensus {
         let mut calculated_blob_gas_used = 0u64;
         for tx in &block.body.transactions {
             if let Transaction::Eip4844(signed_tx) = tx {
-                calculated_blob_gas_used += signed_tx.blob_gas_used().unwrap_or(0);
+                // EIP-4844: blob_gas_used is DATA_GAS_PER_BLOB * num_blobs
+                let num_blobs = signed_tx.tx().blob_versioned_hashes().map(|h| h.len()).unwrap_or(0);
+                calculated_blob_gas_used += num_blobs as u64 * 131072;
             }
         }
 
