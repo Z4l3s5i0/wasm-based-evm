@@ -272,8 +272,11 @@ impl PayloadProcessor {
         }
 
         if let Ok(ref status) = result {
-            let mut should_cache = status.status == PayloadStatusEnum::Valid;
-            if !should_cache {
+            let mut should_cache = false;
+            if status.status == PayloadStatusEnum::Valid {
+                should_cache = true;
+            } else if let PayloadStatusEnum::Invalid { .. } = status.status {
+                // Only cache HARD invalid blocks
                 if let Some(reason) = self.chain.get_invalidation_reason(actual_hash).await {
                     if reason == InvalidationReason::Hard {
                         should_cache = true;
@@ -334,11 +337,20 @@ impl PayloadProcessor {
         let mut current_invalid_check = parent_hash;
         for i in 0..64 {
             if let Some(reason) = self.chain.get_invalidation_reason(current_invalid_check).await {
-                if reason == InvalidationReason::Hard || reason == InvalidationReason::Soft {
+                if reason == InvalidationReason::Hard {
                     let latest_valid = self.chain.get_latest_valid_ancestor(current_invalid_check).await;
                     info!("[PayloadProcessor] Ancestor block {:?} (depth {}) is known to be invalid ({:?}). Latest valid ancestor: {:?}", current_invalid_check, i, reason, latest_valid);
                     return Some(PayloadStatus {
                         status: PayloadStatusEnum::Invalid { validation_error: format!("Ancestor block {} is known to be invalid", current_invalid_check) },
+                        latest_valid_hash: latest_valid,
+                    });
+                } else if reason == InvalidationReason::Soft {
+                    // For Soft invalidation, we don't reject immediately here,
+                    // but we still want to report the latest valid ancestor.
+                    let latest_valid = self.chain.get_latest_valid_ancestor(current_invalid_check).await;
+                    info!("[PayloadProcessor] Ancestor block {:?} (depth {}) is known to be invalid (Soft). Latest valid ancestor: {:?}", current_invalid_check, i, latest_valid);
+                    return Some(PayloadStatus {
+                        status: PayloadStatusEnum::Invalid { validation_error: format!("Ancestor block {} is known to be invalid (Soft)", current_invalid_check) },
                         latest_valid_hash: latest_valid,
                     });
                 }
@@ -816,8 +828,11 @@ impl PayloadProcessor {
                             }
 
                             if let Ok(ref status) = result {
-                                let mut should_cache = status.status == PayloadStatusEnum::Valid;
-                                if !should_cache {
+                                let mut should_cache = false;
+                                if status.status == PayloadStatusEnum::Valid {
+                                    should_cache = true;
+                                } else if let PayloadStatusEnum::Invalid { .. } = status.status {
+                                    // Only cache HARD invalid blocks
                                     if let Some(reason) = self.chain.get_invalidation_reason(child_hash).await {
                                         if reason == InvalidationReason::Hard {
                                             should_cache = true;

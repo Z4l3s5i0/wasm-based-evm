@@ -224,8 +224,10 @@ impl MempoolInner {
         let hash = tx.hash();
         let nonce = tx.nonce();
         
-        // Enforce capacity before adding
-        self.enforce_capacity(5000).await; // MAX_MEMPOOL_SIZE
+        // Enforce capacity occasionally
+        if rand::random::<u8>() % 16 == 0 {
+            self.enforce_capacity(5000).await; // MAX_MEMPOOL_SIZE
+        }
 
         let mut queue = if is_pending {
             self.pending_transactions.entry(from).or_insert_with(Vector::new)

@@ -34,8 +34,8 @@ impl GossipService {
     pub async fn start(mut self) {
         info!("[Gossip] Starting GossipHandler");
         
-        let (block_tx, mut block_rx) = channel::<(Block<Transaction>, Vec<u8>)>(256);
-        let (tx_tx, mut tx_rx) = channel::<Transaction>(1024);
+        let (block_tx, mut block_rx) = channel::<(Block<Transaction>, Vec<u8>)>(1024);
+        let (tx_tx, mut tx_rx) = channel::<Transaction>(4096);
 
         // Spawn Block processing task (High priority)
         let engine_blocks = self.engine.clone();

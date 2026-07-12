@@ -49,17 +49,12 @@ impl GossipBridge {
                                         seen.insert(hash);
                                         drop(seen);
                                         
-                                        if is_local {
-                                            // Immediate broadcast for local transactions to reduce latency
-                                            self.gossip.broadcast_transaction(&tx).await;
-                                        } else {
-                                            let mut pending = self.pending_txs.lock().await;
-                                            pending.push(tx);
-                                            if pending.len() >= 128 {
-                                                let txs = std::mem::replace(&mut *pending, Vec::with_capacity(128));
-                                                drop(pending);
-                                                self.broadcast_tx_batch(txs).await;
-                                            }
+                                        let mut pending = self.pending_txs.lock().await;
+                                        pending.push(tx);
+                                        if pending.len() >= 128 {
+                                            let txs = std::mem::replace(&mut *pending, Vec::with_capacity(128));
+                                            drop(pending);
+                                            self.broadcast_tx_batch(txs).await;
                                         }
                                     }
                                 }
