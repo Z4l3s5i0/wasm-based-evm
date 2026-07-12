@@ -68,7 +68,7 @@ impl Downloader {
         let session = self.peer_provider.get_session(peer_id).await
             .ok_or_else(|| anyhow::anyhow!("Session not found for peer {}", peer_id))?;
 
-        let timeout = if amount > 1 { Duration::from_secs(10) } else { Duration::from_secs(5) };
+        let timeout = if amount > 1 { Duration::from_secs(30) } else { Duration::from_secs(15) };
 
         let response = tokio::time::timeout(timeout, session.get_block_headers(RequestPair {
             request_id: rand::random(),
@@ -100,7 +100,7 @@ impl Downloader {
         let session = self.peer_provider.get_session(peer_id).await
             .ok_or_else(|| anyhow::anyhow!("Session not found for peer {}", peer_id))?;
 
-        let timeout = Duration::from_secs(10);
+        let timeout = if hashes.len() > 1 { Duration::from_secs(30) } else { Duration::from_secs(15) };
 
         let response = tokio::time::timeout(timeout, session.get_block_bodies(RequestPair {
             request_id: rand::random(),
