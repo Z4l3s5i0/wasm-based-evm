@@ -7,8 +7,8 @@ lazy_static! {
     pub static ref SYNC_STATUS: Gauge = register_gauge!("sync_status", "Sync status (1: synced, 0: syncing, -1: stalled)").unwrap();
     pub static ref CURRENT_HEAD_BLOCK: Gauge = register_gauge!("current_head_block", "Current head block height").unwrap();
     pub static ref CONNECTED_PEERS: Gauge = register_gauge!("connected_peers", "Number of currently connected peers").unwrap();
-    pub static ref BLOCKS_IMPORTED_TOTAL: Counter = register_counter!("blocks_imported_total", "Total number of blocks successfully imported").unwrap();
-    pub static ref TRANSACTIONS_COMMITTED_TOTAL: Counter = register_counter!("transactions_committed_total", "Total number of successfully committed transactions").unwrap();
+    pub static ref BLOCKS_IMPORTED_TOTAL: Gauge = register_gauge!("blocks_imported_total", "Total number of blocks successfully imported").unwrap();
+    pub static ref TRANSACTIONS_COMMITTED_TOTAL: Gauge = register_gauge!("transactions_committed_total", "Total number of successfully committed transactions").unwrap();
 
     // Mempool Metrics
     pub static ref MEMPOOL_SIZE: Gauge = register_gauge!("mempool_size", "Current number of transactions in the mempool").unwrap();

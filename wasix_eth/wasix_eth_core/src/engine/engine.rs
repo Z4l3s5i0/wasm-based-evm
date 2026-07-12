@@ -49,7 +49,7 @@ use wasix_eth_types::{BlobAndProofV1, BlobAndProofV2, BlobsBundleV1, Decodable27
 use wasix_eth_types::eip4895::Withdrawal;
 use wasix_eth_types::p2p::BlockHashAndNumber;
 use wasix_eth_utils::engine_mapper::EngineMapper;
-use wasix_eth_utils::metrics::{CURRENT_HEAD_BLOCK, TRANSACTIONS_COMMITTED_TOTAL};
+use wasix_eth_utils::metrics::{CURRENT_HEAD_BLOCK, TRANSACTIONS_COMMITTED_TOTAL, BLOCKS_IMPORTED_TOTAL};
 use wasix_eth_utils::warn;
 use wasix_eth_utils::{debug, error, info};
 use crate::engine::api::RPCEngine;
@@ -568,13 +568,13 @@ impl Engine {
                                 
                                 info!("[Engine] Reorg detected! Reverting chain to height {} (common ancestor: {:?})", common_ancestor_height, context.common_ancestor_hash);
 
-                        // Physically roll back state to common ancestor
-                        if let Err(e) = self.revert_to_height(common_ancestor_height).await {
-                            error!("[Engine] Failed to revert to height {}: {}", common_ancestor_height, e);
-                            // Rollback forkchoice if reorg fails
-                            let _ = self.canonical.update_state(old_state, old_head_number).await;
-                            return Err(RpcError::Internal(format!("Revert failed: {}", e)));
-                        }
+                                // Physically roll back state to common ancestor
+                                if let Err(e) = self.revert_to_height(common_ancestor_height).await {
+                                    error!("[Engine] Failed to revert to height {}: {}", common_ancestor_height, e);
+                                    // Rollback forkchoice if reorg fails
+                                    let _ = self.canonical.update_state(old_state, old_head_number).await;
+                                    return Err(RpcError::Internal(format!("Revert failed: {}", e)));
+                                }
 
                                 self.handle_reorgs_for_mempool(forkchoice_state, old_state.head_block_hash, context.common_ancestor_hash).await;
                             }
@@ -599,9 +599,10 @@ impl Engine {
                                     return Err(RpcError::Internal(format!("Canonical marking failed: {}", e)));
                                 }
 
-                                // Update transactions committed metric for newly canonical blocks
+                                // Update transactions and blocks committed metric for newly canonical blocks
                                 for block in &context.new_canonical_blocks {
-                                    TRANSACTIONS_COMMITTED_TOTAL.inc_by(block.body.transactions.len() as f64);
+                                    TRANSACTIONS_COMMITTED_TOTAL.add(block.body.transactions.len() as f64);
+                                    BLOCKS_IMPORTED_TOTAL.add(1.0);
                                 }
 
                                 // 4. Emit CanonicalBlock events for the newly canonical blocks
@@ -729,6 +730,10 @@ impl Engine {
                 info!("[Engine] Re-adding {} transactions from discarded block #{} hash {:?}",
                                     block.body.transactions.len(), block.header.number, discarded_hash);
                 
+                // Subtract transactions and block from committed metrics
+                TRANSACTIONS_COMMITTED_TOTAL.sub(block.body.transactions.len() as f64);
+                BLOCKS_IMPORTED_TOTAL.sub(1.0);
+
                 let blobs_bundle = self.read_storage.get_payload_by_block_hash(discarded_hash).map(|(_, _, b)| b);
                 let mut blob_idx = 0;
 

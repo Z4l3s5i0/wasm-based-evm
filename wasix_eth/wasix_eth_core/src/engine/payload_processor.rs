@@ -304,7 +304,7 @@ impl PayloadProcessor {
                 self.revalidate_dependent_payloads(actual_hash).await;
                 
                 info!("[PayloadProcessor] Successfully imported block {} (hash: {})", block.header.number, actual_hash);
-                BLOCKS_IMPORTED_TOTAL.inc();
+                BLOCKS_IMPORTED_TOTAL.add(1.0);
             }
         }
         result
