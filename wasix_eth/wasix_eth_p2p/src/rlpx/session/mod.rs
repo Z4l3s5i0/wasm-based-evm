@@ -87,7 +87,7 @@ impl P2pSession for PeerSession {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetHeaders { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        timeout(Duration::from_secs(60), rx).await
+        timeout(Duration::from_secs(90), rx).await
             .map_err(|_| anyhow::anyhow!("GetBlockHeaders timed out"))?
             .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
@@ -96,7 +96,7 @@ impl P2pSession for PeerSession {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetBodies { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        timeout(Duration::from_secs(60), rx).await
+        timeout(Duration::from_secs(90), rx).await
             .map_err(|_| anyhow::anyhow!("GetBlockBodies timed out"))?
             .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
@@ -105,7 +105,7 @@ impl P2pSession for PeerSession {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetPooledTransactions { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        timeout(Duration::from_secs(60), rx).await
+        timeout(Duration::from_secs(90), rx).await
             .map_err(|_| anyhow::anyhow!("GetPooledTransactions timed out"))?
             .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }
@@ -114,7 +114,7 @@ impl P2pSession for PeerSession {
         let (tx, rx) = tokio::sync::oneshot::channel();
         self.request_tx.send(SessionRequest::GetReceipts { request, response_tx: tx }).await
             .map_err(|_| anyhow::anyhow!("Session closed"))?;
-        timeout(Duration::from_secs(60), rx).await
+        timeout(Duration::from_secs(90), rx).await
             .map_err(|_| anyhow::anyhow!("GetReceipts timed out"))?
             .map_err(|_| anyhow::anyhow!("Response channel closed"))?
     }

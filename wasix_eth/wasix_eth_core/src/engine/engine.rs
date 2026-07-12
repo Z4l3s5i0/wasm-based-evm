@@ -162,7 +162,8 @@ impl Engine {
         mempool_listener: Arc<MempoolListener>,
         sync_registry: Arc<SyncRegistry>,
     ) -> Self {
-        let processing_payloads = Arc::new(std::sync::RwLock::new(HashSet::new()));
+        let processing_payloads = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
+        let finished_payloads = Arc::new(tokio::sync::RwLock::new(std::collections::HashMap::new()));
         
         let engine = Self {
             read_storage: read_storage.clone(),
@@ -186,6 +187,7 @@ impl Engine {
             },
             payload_processor: PayloadProcessor { 
                 processing_payloads: processing_payloads.clone(), 
+                finished_payloads: finished_payloads.clone(),
                 block_tree: block_tree.clone(),
                 canonical: canonical.clone(),
                 consensus: consensus.clone(),
