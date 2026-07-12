@@ -176,7 +176,10 @@ impl MempoolProvider for Mempool {
             } else {
                 0
             };
-            self.inner.promote_queued(address, current_nonce);
+            let next_nonce = self.inner.pending_transactions.get(&address)
+                .and_then(|q| q.back().map(|t| t.nonce() + 1))
+                .unwrap_or(current_nonce);
+            self.inner.promote_queued(address, next_nonce);
         }
     }
 

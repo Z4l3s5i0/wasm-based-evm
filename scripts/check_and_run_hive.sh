@@ -3,7 +3,7 @@
 # Default values
 REGISTRY=""
 TAG="latest"
-INTERVAL=300 # 5 minutes
+INTERVAL=60 # 1 minutes
 ONCE=false
 
 usage() {

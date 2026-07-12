@@ -333,8 +333,8 @@ impl HeaderWriter for BatchWriter {
     }
 
     fn insert_block_hash(&self, hash: B256, number: u64) -> Result<()> {
-        let mut table = self.wtx.open_table(CanonicalHeads::definition())?;
-        table.insert(number, hash)?;
+        let mut table = self.wtx.open_table(HeaderNumbers::definition())?;
+        table.insert(hash, number)?;
         Ok(())
     }
 

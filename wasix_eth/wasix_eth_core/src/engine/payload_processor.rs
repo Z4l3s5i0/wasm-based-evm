@@ -10,7 +10,7 @@ use wasix_eth_execution::execution_provider::ExecutionProvider;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::read_traits::{BlockProvider, ChainProvider, HeaderProvider};
 use wasix_eth_storage::write::DatabaseWriteProvider;
-use wasix_eth_storage::write_traits::{BlockWriter, HeaderWriter, TransactionWriter};
+use wasix_eth_storage::write_traits::{BlockWriter, HeaderWriter, TransactionWriter, StateWriter};
 use wasix_eth_types::error::{RpcError, RpcResult};
 use wasix_eth_types::{Block, BlockId, ChainConfig, PayloadStatus, PayloadStatusEnum, Transaction, B256, U256, proofs, Header, Hardfork, ChainManager, InvalidationReason};
 use wasix_eth_utils::{debug, error, info, exp, metrics::BLOCKS_IMPORTED_TOTAL};
@@ -36,10 +36,10 @@ impl PayloadProcessor {
     }
 
     pub async fn new_payload_internal(
-        &self, 
-        block: Block<Transaction>, 
-        expected_block_hash: B256, 
-        expected_blob_versioned_hashes: Option<Vec<B256>>, 
+        &self,
+        block: Block<Transaction>,
+        expected_block_hash: B256,
+        expected_blob_versioned_hashes: Option<Vec<B256>>,
         parent_beacon_block_root: Option<B256>,
         is_local: bool,
     ) -> RpcResult<PayloadStatus> {
@@ -74,8 +74,22 @@ impl PayloadProcessor {
         // 1. Mark as processing to avoid concurrent imports of the same block
         {
             let mut processing = self.processing_payloads.write().unwrap();
-            if processing.contains(&actual_hash) {
-                debug!("[PayloadProcessor] Block {:?} is already being processed, skipping", actual_hash);
+
+            // Optimization: Avoid concurrent processing of the same block HEIGHT
+            // This prevents race conditions between different payloads for the same slot
+            let block_number = block.header.number;
+            let mut height_processing = false;
+            for hash in processing.iter() {
+                if let Ok(Some(h)) = self.read_storage.header(BlockId::Hash((*hash).into())) {
+                    if h.number == block_number && *hash != actual_hash {
+                        height_processing = true;
+                        break;
+                    }
+                }
+            }
+
+            if processing.contains(&actual_hash) || height_processing {
+                debug!("[PayloadProcessor] Block {:?} (height {}) is already being processed, skipping", actual_hash, block_number);
                 return Ok(PayloadStatus {
                     status: PayloadStatusEnum::Syncing,
                     latest_valid_hash: None,
@@ -652,20 +666,23 @@ impl PayloadProcessor {
         let td = parent_td + U256::from(final_block.header.difficulty);
 
         tokio::task::spawn_blocking(move || -> wasix_eth_types::error::RpcResult<()> {
-            storage.insert_header(block_hash, final_block_clone.header.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
-            storage.insert_header_td(block_hash, td).map_err(|e| RpcError::Internal(e.to_string()))?;
-            storage.insert_block_body(block_hash, block_number, final_block_clone.body.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
-            storage.insert_block_hash(block_hash, block_number).map_err(|e| RpcError::Internal(e.to_string()))?;
+            let batch = storage.begin_batch().map_err(|e| RpcError::Internal(e.to_string()))?;
+
+            batch.insert_header(block_hash, final_block_clone.header.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+            batch.insert_header_td(block_hash, td).map_err(|e| RpcError::Internal(e.to_string()))?;
+            batch.insert_block_body(block_hash, block_number, final_block_clone.body.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+            batch.insert_block_hash(block_hash, block_number).map_err(|e| RpcError::Internal(e.to_string()))?;
 
             // Persist receipts and transaction lookup
             for (i, tx) in final_block_clone.body.transactions.iter().enumerate() {
                 let tx_hash = *tx.hash();
-                storage.insert_transaction(tx_hash, tx.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+                batch.insert_transaction(tx_hash, tx.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
                 if let Some(receipt) = receipts_clone.get(i) {
-                    storage.insert_receipt(block_hash, i as u64, receipt.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+                    batch.insert_receipt(block_hash, i as u64, receipt.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
                 }
-                storage.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
+                batch.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
             }
+            batch.commit().map_err(|e| RpcError::Internal(e.to_string()))?;
             Ok(())
         }).await.map_err(|e| RpcError::Internal(format!("Storage task panicked: {}", e)))??;
 
