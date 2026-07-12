@@ -137,6 +137,7 @@ impl PayloadBuilder {
         let mut event_rx = self.event_tx.subscribe();
         tokio::spawn(async move {
             let start_time = std::time::Instant::now();
+            let mut last_rebuild_time = std::time::Instant::now();
             let slot_duration = std::time::Duration::from_millis(11000); // SLOT_DURATION_MS
             
             while !token.is_cancelled() {
@@ -151,7 +152,7 @@ impl PayloadBuilder {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
                     Ok(EngineEvent::NewTransaction { .. }) = event_rx.recv() => {
                         // Debounce: wait a bit for more transactions to arrive
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                         // Drain extra events
                         let mut count = 1;
                         while let Ok(_) = event_rx.try_recv() {
@@ -162,6 +163,13 @@ impl PayloadBuilder {
                     _ = token.cancelled() => break,
                 }
 
+                // Minimum 500ms between rebuilds to avoid CPU saturation under high TPS
+                let elapsed_since_last = last_rebuild_time.elapsed();
+                if elapsed_since_last < std::time::Duration::from_millis(500) {
+                    tokio::time::sleep(std::time::Duration::from_millis(500) - elapsed_since_last).await;
+                }
+
+                last_rebuild_time = std::time::Instant::now();
                 if let Err(e) = builder.maybe_rebuild_payload(id.clone()).await {
                     error!("[PayloadBuilder] Error during continuous building for {:?}: {:?}", id, e);
                 }
@@ -349,10 +357,13 @@ impl PayloadBuilder {
         };
 
         if !should_replace && !payload_block.body.transactions.is_empty() {
+            debug!("[PayloadBuilder] NOT rebuilding payload {:?}: new value {} is not better than old value {} (tx count: {} vs {})", 
+                payload_id, new_value, old_value, finalized_block.body.transactions.len(), payload_block.body.transactions.len());
             return Ok(());
         }
 
-        info!("[PayloadBuilder] Rebuilding payload {:?}: value {} -> {} (tx count: {})", payload_id, old_value, new_value, finalized_block.body.transactions.len());
+        info!("[PayloadBuilder] Rebuilding payload {:?}: value {} -> {} (tx count: {} -> {})", 
+            payload_id, old_value, new_value, payload_block.body.transactions.len(), finalized_block.body.transactions.len());
 
         // 6. Collect blobs
         let mut bundle = BlobsBundleV1::default();
@@ -423,6 +434,7 @@ impl PayloadBuilder {
             
             let priority_fee_per_gas = effective_gas_price.saturating_sub(base_fee as u128);
             let tx_profit = U256::from(gas_used) * U256::from(priority_fee_per_gas);
+
             value += tx_profit;
         }
         

@@ -90,7 +90,7 @@ impl<'a> TransactionExecutor<'a> {
             }
         };
 
-        let (backend_final, changeset) = overlay.deconstruct();
+        let (_backend_final, changeset) = overlay.deconstruct();
         let tx_gas_used = result.used_gas.as_u64();
         
         // Post-execution gas adjustments (EIP-7702, EIP-7623, etc)

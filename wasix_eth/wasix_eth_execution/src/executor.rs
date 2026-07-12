@@ -173,7 +173,7 @@ impl EvmExecutor {
         filtered_changeset.balances.insert(caller_h160, original_caller_acc);
 
         let eip161 = fork >= Hardfork::SpuriousDragon;
-        let coinbase = H160::from_slice(env.block_coinbase.as_bytes());
+        let _coinbase = H160::from_slice(env.block_coinbase.as_bytes());
 
         self.apply_changeset(batch, &filtered_changeset, eip161, state_root)?;
 

@@ -634,6 +634,7 @@ impl PayloadProcessor {
         // 7. Persist block
         let block_hash = final_block.header.hash_slow();
         let block_number = final_block.header.number;
+        info!("[PayloadProcessor] Committing block {} (hash: {}) with {} transactions", block_number, block_hash, final_block.body.transactions.len());
 
         let storage = self.write_storage.clone();
         let final_block_clone = final_block.clone();

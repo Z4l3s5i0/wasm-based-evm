@@ -17,7 +17,8 @@ pub trait ExecutionProvider: Send + Sync {
     fn execute_block(&self, block: Block<Transaction>) -> Result<(Block<Transaction>, Vec<Receipt>)>;
     fn execute_block_with_commit(&self, block: Block<Transaction>, commit: bool) -> Result<(Block<Transaction>, Vec<Receipt>)>;
     fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)>;
-    fn execute_block_with_batch(&self, block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)>;
+    fn execute_block_with_state_root_and_building(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)>;
+    fn execute_block_with_batch(&self, block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)>;
     fn execute_block_for_payload(
         &self,
         transactions: Vec<Transaction>,
@@ -528,11 +529,15 @@ impl ExecutionProvider for EthExecutionProvider {
     }
 
     fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
-        debug!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?}", block.header.number, commit, state_root);
+        self.execute_block_with_state_root_and_building(block, commit, state_root, false)
+    }
+
+    fn execute_block_with_state_root_and_building(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+        debug!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?} building={}", block.header.number, commit, state_root, building);
         self.write_storage.clear_tracking();
         let batch = self.write_storage.begin_batch()?;
         
-        let (executed_block, receipts) = match self.execute_block_with_batch(block.clone(), &batch, state_root) {
+        let (executed_block, receipts) = match self.execute_block_with_batch(block.clone(), &batch, state_root, building) {
             Ok(res) => res,
             Err(e) => {
                 // Batch will be dropped here, and redb::WriteTransaction will be aborted
@@ -555,8 +560,7 @@ impl ExecutionProvider for EthExecutionProvider {
         Ok((executed_block, receipts))
     }
 
-    fn execute_block_with_batch(&self, mut block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
-        let building = state_root.is_none();
+    fn execute_block_with_batch(&self, mut block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)> {
         let mut state_root = state_root;
         if state_root.is_none() && block.header.number > 0 {
             // Look up the parent header to get the correct state root for the reorged path
@@ -595,15 +599,20 @@ impl ExecutionProvider for EthExecutionProvider {
         let invoker = Invoker::new(&resolver);
 
         let mut blob_gas_used = 0u64;
+        let mut final_transactions = Vec::new();
 
         for (tx_idx, tx) in block.body.transactions.iter().enumerate() {
-            if fork >= Hardfork::Cancun {
+            let tx_blob_gas = if fork >= Hardfork::Cancun {
                 if let Transaction::Eip4844(s) = tx {
-                    blob_gas_used += s.tx().blob_versioned_hashes().unwrap_or_default().len() as u64 * DATA_GAS_PER_BLOB;
+                    s.tx().blob_versioned_hashes().unwrap_or_default().len() as u64 * DATA_GAS_PER_BLOB
+                } else {
+                    0
                 }
-            }
+            } else {
+                0
+            };
 
-            let result = self.executor.execute_transaction(
+            let result = match self.executor.execute_transaction(
                 tx,
                 batch,
                 &env,
@@ -614,11 +623,25 @@ impl ExecutionProvider for EthExecutionProvider {
                 block.header.base_fee_per_gas,
                 &mut cumulative_gas_used,
                 state_root,
-            )?;
+            ) {
+                Ok(res) => res,
+                Err(e) => {
+                    if building {
+                        debug!("[Execution] Skipping transaction {} during block building due to error: {:?}", tx_idx, e);
+                        continue;
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+            
             debug!("[Execution] Transaction {} finished: hash={:?}, gas_used={}, cumulative={}", tx_idx, tx.hash(), result.gas_used, cumulative_gas_used);
             receipts.push(result.receipt);
-
+            blob_gas_used += tx_blob_gas;
+            final_transactions.push(tx.clone());
         }
+
+        block.body.transactions = final_transactions;
 
         if fork >= Hardfork::Cancun {
             let max = if let Some(params) = fork.blob_params(&chain_config) {
@@ -753,7 +776,7 @@ impl ExecutionProvider for EthExecutionProvider {
         };
 
         // Reuse execute_block logic but don't commit
-        self.execute_block_with_state_root(block, false, Some(parent_header.state_root))
+        self.execute_block_with_state_root_and_building(block, false, Some(parent_header.state_root), true)
     }
 
     fn run_execution(
