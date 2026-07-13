@@ -69,14 +69,43 @@ mkdir -p startup_v2/grafana/dashboards
 echo "Generating network configuration..."
 "$(dirname "$0")/config_gen.sh" --chain-id "$CHAIN_ID" --nodes "$NODES" --output "startup_v2"
 
+# 1.1 Update prometheus.yml with node-exporter targets
+echo "Updating prometheus.yml with dynamic targets..."
+cat <<EOF > "startup_v2/prometheus.yml"
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+scrape_configs:
+  - job_name: 'prometheus'
+    static_configs:
+      - targets: ['prometheus:9090']
+
+  - job_name: 'node-exporter-global'
+    static_configs:
+      - targets: ['node-exporter:9100']
+
+  - job_name: 'metrics-server'
+    static_configs:
+      - targets: ['metrics-server:9100']
+
+  - job_name: 'node-exporter-nodes'
+    static_configs:
+      - targets:
+EOF
+
+for i in $(seq 0 $((NODES - 1))); do
+    echo "        - 'el-node-$i:9100'" >> "startup_v2/prometheus.yml"
+done
+
 # Ensure SCRIPT_DIR is set (it might have been set in common.sh or previously)
 SCRIPT_DIR_LOCAL="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT_DIR_LOCAL="$(cd "$SCRIPT_DIR_LOCAL/../.." && pwd)"
 
-# Copy monitoring configuration
+# Copy monitoring configuration (skip prometheus.yml as we generated it)
 echo "Setting up monitoring configuration..."
-cp "$SCRIPT_DIR_LOCAL/monitoring/prometheus.yml" "startup_v2/prometheus.yml"
-chmod 644 "startup_v2/prometheus.yml"
+# cp "$SCRIPT_DIR_LOCAL/monitoring/prometheus.yml" "startup_v2/prometheus.yml"
+# chmod 644 "startup_v2/prometheus.yml"
 cp -r "$SCRIPT_DIR_LOCAL/monitoring/grafana/provisioning/"* "startup_v2/grafana/provisioning/"
 chmod -R 755 "startup_v2/grafana/provisioning"
 
@@ -208,12 +237,12 @@ for i in $(seq 0 $((NODES - 1))); do
     FLAGS="--data-dir /app/data --genesis-path /app/startup/genesis.json --verbose 3 --peer-name $PEER_NAME --eth-rpc-port $ETH_PORT --auth-rpc-port $AUTH_PORT --p2p-port $P2P_PORT --discovery-port $DISC_PORT --metrics-port $METRICS_PORT --auth-rpc-jwt-path /app/startup/jwt_$i.hex --bootstrap-registry http://metrics-server:9100 --ext-ip $EXT_IP"
     
     if [ "$TYPE" = "wasix" ]; then
-        # Wasix nodes need init before run
-        ENTRYPOINT_STR="entrypoint: [\"sh\", \"-c\", \"wasmer run /app/wasix_eth.wasm --enable-async-threads --net --volume /app/data:/app/data --volume /app/startup:/app/startup -- init $FLAGS && wasmer run /app/wasix_eth.wasm --enable-async-threads --net --volume /app/data:/app/data --volume /app/startup:/app/startup -- run $FLAGS\"]"
+        # Wasix nodes need init before run. Start node-exporter in background.
+        ENTRYPOINT_STR="entrypoint: [\"sh\", \"-c\", \"prometheus-node-exporter --web.listen-address=:9100 & wasmer run /app/wasix_eth.wasm --enable-async-threads --net --volume /app/data:/app/data --volume /app/startup:/app/startup -- init $FLAGS && wasmer run /app/wasix_eth.wasm --enable-async-threads --net --volume /app/data:/app/data --volume /app/startup:/app/startup -- run $FLAGS\"]"
         COMMAND_STR="# Command is handled by entrypoint for wasix"
     else
-        # Linux nodes need init before run
-        ENTRYPOINT_STR="entrypoint: [\"sh\", \"-c\", \"/app/wasix_eth init $FLAGS && /app/wasix_eth run $FLAGS\"]"
+        # Linux nodes need init before run. Start node-exporter in background.
+        ENTRYPOINT_STR="entrypoint: [\"sh\", \"-c\", \"prometheus-node-exporter --web.listen-address=:9100 & /app/wasix_eth init $FLAGS && /app/wasix_eth run $FLAGS\"]"
         COMMAND_STR="# Command is handled by entrypoint for linux"
     fi
 
@@ -325,9 +354,9 @@ EOF
 echo "Generated $COMPOSE_FILE"
 COMPOSE_CMD=$(get_compose_cmd)
 
-# Start metrics server and monitoring first
-echo "Starting metrics-server, prometheus, grafana, and node-exporter..."
-$COMPOSE_CMD -f "$COMPOSE_FILE" up -d metrics-server prometheus grafana node-exporter
+    # Start metrics server and monitoring first
+    echo "Starting metrics-server, prometheus, and grafana..."
+    $COMPOSE_CMD -f "$COMPOSE_FILE" up -d metrics-server prometheus grafana
 
 CUMULATIVE_ENRS=""
 

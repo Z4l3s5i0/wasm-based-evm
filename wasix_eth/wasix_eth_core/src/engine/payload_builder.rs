@@ -138,7 +138,7 @@ impl PayloadBuilder {
         tokio::spawn(async move {
             let start_time = std::time::Instant::now();
             let mut last_rebuild_time = std::time::Instant::now();
-            let slot_duration = std::time::Duration::from_millis(11000); // SLOT_DURATION_MS
+            let slot_duration = std::time::Duration::from_millis(10500); // SLOT_DURATION_MS
             
             while !token.is_cancelled() {
                 tokio::task::yield_now().await;
@@ -152,7 +152,7 @@ impl PayloadBuilder {
                     _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {},
                     Ok(EngineEvent::NewTransaction { .. }) = event_rx.recv() => {
                         // Debounce: wait a bit for more transactions to arrive
-                        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+                        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
                         // Drain extra events
                         let mut count = 1;
                         while let Ok(_) = event_rx.try_recv() {
@@ -165,8 +165,8 @@ impl PayloadBuilder {
 
                 // Minimum 500ms between rebuilds to avoid CPU saturation under high TPS
                 let elapsed_since_last = last_rebuild_time.elapsed();
-                if elapsed_since_last < std::time::Duration::from_millis(200) {
-                    tokio::time::sleep(std::time::Duration::from_millis(200) - elapsed_since_last).await;
+                if elapsed_since_last < std::time::Duration::from_millis(500) {
+                    tokio::time::sleep(std::time::Duration::from_millis(500) - elapsed_since_last).await;
                 }
 
                 last_rebuild_time = std::time::Instant::now();

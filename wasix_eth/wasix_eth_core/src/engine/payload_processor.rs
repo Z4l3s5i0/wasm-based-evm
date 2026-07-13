@@ -19,15 +19,9 @@ use std::collections::HashMap;
 use std::time::{Instant, Duration};
 use crate::engine::engine::EngineEvent;
 
-#[derive(Debug, Clone)]
-pub struct ProcessingInfo {
-    pub start_time: Instant,
-}
-
 #[derive(Clone)]
 pub struct PayloadProcessor {
-    pub processing_payloads: Arc<TokioRwLock<HashMap<B256, ProcessingInfo>>>,
-    pub finished_payloads: Arc<TokioRwLock<HashMap<B256, PayloadStatus>>>,
+    pub processing_payloads: Arc<std::sync::RwLock<HashSet<B256>>>,
     pub block_tree: Arc<BlockTree>,
     pub canonical: Arc<CanonicalState>,
     pub consensus: Arc<dyn Consensus>,
@@ -80,71 +74,33 @@ impl PayloadProcessor {
         });
         let active_fork = Hardfork::get_active_fork(&chain_config, block.header.number, block.header.timestamp);
 
-        // 1. Check finished payloads cache
-        {
-            let finished = self.finished_payloads.read().await;
-            if let Some(status) = finished.get(&actual_hash) {
-                debug!("[PayloadProcessor] Returning cached status for {:?}: {:?}", actual_hash, status.status);
-                return Ok(status.clone());
-            }
-        }
 
-        // 2. Mark as processing to avoid concurrent imports of the same block
+        // 1. Mark as processing to avoid concurrent imports of the same block
         {
-            let mut processing = self.processing_payloads.write().await;
-
-            // Cleanup stale entries (> 30s)
-            let now = Instant::now();
-            let stale_hashes: Vec<B256> = processing.iter()
-                .filter(|(_, info)| now.duration_since(info.start_time) > Duration::from_secs(30))
-                .map(|(hash, _)| *hash)
-                .collect();
-            
-            for hash in stale_hashes {
-                error!("[PayloadProcessor] Removing stale processing entry for {:?}", hash);
-                processing.remove(&hash);
-            }
+            let mut processing = self.processing_payloads.write().unwrap();
 
             // Optimization: Avoid concurrent processing of the same block HEIGHT
             // This prevents race conditions between different payloads for the same slot
             let block_number = block.header.number;
-            let mut height_processing_hash = None;
-            for (hash, _) in processing.iter() {
-                // First check block tree which is faster and contains uncommitted blocks
-                if let Some(b) = self.block_tree.get_block(*hash).await {
-                    if b.header.number == block_number && *hash != actual_hash {
-                        height_processing_hash = Some(*hash);
-                        break;
-                    }
-                }
-                
-                // Then check storage
+            let mut height_processing = false;
+            for hash in processing.iter() {
                 if let Ok(Some(h)) = self.read_storage.header(BlockId::Hash((*hash).into())) {
                     if h.number == block_number && *hash != actual_hash {
-                        height_processing_hash = Some(*hash);
+                        height_processing = true;
                         break;
                     }
                 }
             }
 
-            if processing.contains_key(&actual_hash) || height_processing_hash.is_some() {
-                debug!("[PayloadProcessor] Block {:?} (height {}) is already being processed (by {:?}), skipping", actual_hash, block_number, height_processing_hash);
-                
-                // If it's already being processed but we have a cached terminal result, return it
-                {
-                    let finished = self.finished_payloads.read().await;
-                    if let Some(status) = finished.get(&actual_hash) {
-                        debug!("[PayloadProcessor] Returning cached status for {:?} (concurrent call): {:?}", actual_hash, status.status);
-                        return Ok(status.clone());
-                    }
-                }
+            if processing.contains(&actual_hash) || height_processing {
+                debug!("[PayloadProcessor] Block {:?} (height {}) is already being processed, skipping", actual_hash, block_number);
 
                 return Ok(PayloadStatus {
                     status: PayloadStatusEnum::Syncing,
                     latest_valid_hash: None,
                 });
             }
-            processing.insert(actual_hash, ProcessingInfo { start_time: now });
+            processing.insert(actual_hash);
         }
 
         // Cancun validation (versioned hashes)
@@ -163,11 +119,11 @@ impl PayloadProcessor {
                 
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
                 {
-                    let mut processing = self.processing_payloads.write().await;
+                    let mut processing = self.processing_payloads.write().unwrap();
                     processing.remove(&actual_hash);
                 }
                 return Ok(PayloadStatus {
-                    status: PayloadStatusEnum::Invalid { validation_error: e.to_string() },
+                    status: PayloadStatusEnum::Invalid { validation_error: e },
                     latest_valid_hash: latest_valid,
                 });
             }
@@ -185,11 +141,11 @@ impl PayloadProcessor {
 
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
                 {
-                    let mut processing = self.processing_payloads.write().await;
+                    let mut processing = self.processing_payloads.write().unwrap();
                     processing.remove(&actual_hash);
                 }
                 return Ok(PayloadStatus {
-                    status: PayloadStatusEnum::Invalid { validation_error: e.to_string() },
+                    status: PayloadStatusEnum::Invalid { validation_error: e },
                     latest_valid_hash: latest_valid,
                 });
             }
@@ -198,7 +154,7 @@ impl PayloadProcessor {
         // Idempotency check: If block is in storage, it's VALID
         if let Ok(Some(_)) = self.read_storage.block_body_by_hash(actual_hash) {
             {
-                let mut processing = self.processing_payloads.write().await;
+                let mut processing = self.processing_payloads.write().unwrap();
                 processing.remove(&actual_hash);
             }
             return Ok(PayloadStatus {
@@ -212,7 +168,7 @@ impl PayloadProcessor {
             if reason == InvalidationReason::Hard {
                 let latest_valid = self.chain.get_latest_valid_ancestor(block.header.parent_hash).await;
                 {
-                    let mut processing = self.processing_payloads.write().await;
+                    let mut processing = self.processing_payloads.write().unwrap();
                     processing.remove(&actual_hash);
                 }
                 return Ok(PayloadStatus {
@@ -234,7 +190,7 @@ impl PayloadProcessor {
                 self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Hard).await;
                 
                 {
-                    let mut processing = self.processing_payloads.write().await;
+                    let mut processing = self.processing_payloads.write().unwrap();
                     processing.remove(&actual_hash);
                 }
 
@@ -249,7 +205,7 @@ impl PayloadProcessor {
                 self.chain.add_invalid_block(actual_hash, parent_hash, InvalidationReason::Soft).await;
 
                 {
-                    let mut processing = self.processing_payloads.write().await;
+                    let mut processing = self.processing_payloads.write().unwrap();
                     processing.remove(&actual_hash);
                  }
                  
@@ -269,38 +225,11 @@ impl PayloadProcessor {
         };
 
         {
-            let mut processing = self.processing_payloads.write().await;
+            let mut processing = self.processing_payloads.write().unwrap();
             processing.remove(&actual_hash);
         }
 
         if let Ok(ref status) = result {
-            let mut should_cache = false;
-            if status.status == PayloadStatusEnum::Valid {
-                should_cache = true;
-            } else if let PayloadStatusEnum::Invalid { .. } = status.status {
-                // Only cache HARD invalid blocks
-                if let Some(reason) = self.chain.get_invalidation_reason(actual_hash).await {
-                    if reason == InvalidationReason::Hard {
-                        should_cache = true;
-                    }
-                }
-            }
-
-            if should_cache {
-                let mut finished = self.finished_payloads.write().await;
-                finished.insert(actual_hash, status.clone());
-
-                // Evict if too large (simple LRU-ish, just remove first if > 1000)
-                if finished.len() > 1000 {
-                    let key = {
-                        let f = finished.keys().next().cloned();
-                        f
-                    };
-                    if let Some(k) = key {
-                        finished.remove(&k);
-                    }
-                }
-            }
 
             if status.status == PayloadStatusEnum::Valid {
                 self.revalidate_dependent_payloads(actual_hash).await;
@@ -339,20 +268,11 @@ impl PayloadProcessor {
         let mut current_invalid_check = parent_hash;
         for i in 0..64 {
             if let Some(reason) = self.chain.get_invalidation_reason(current_invalid_check).await {
-                if reason == InvalidationReason::Hard {
+                if reason == InvalidationReason::Hard || reason == InvalidationReason::Soft {
                     let latest_valid = self.chain.get_latest_valid_ancestor(current_invalid_check).await;
                     info!("[PayloadProcessor] Ancestor block {:?} (depth {}) is known to be invalid ({:?}). Latest valid ancestor: {:?}", current_invalid_check, i, reason, latest_valid);
                     return Some(PayloadStatus {
                         status: PayloadStatusEnum::Invalid { validation_error: format!("Ancestor block {} is known to be invalid", current_invalid_check) },
-                        latest_valid_hash: latest_valid,
-                    });
-                } else if reason == InvalidationReason::Soft {
-                    // For Soft invalidation, we don't reject immediately here,
-                    // but we still want to report the latest valid ancestor.
-                    let latest_valid = self.chain.get_latest_valid_ancestor(current_invalid_check).await;
-                    info!("[PayloadProcessor] Ancestor block {:?} (depth {}) is known to be invalid (Soft). Latest valid ancestor: {:?}", current_invalid_check, i, latest_valid);
-                    return Some(PayloadStatus {
-                        status: PayloadStatusEnum::Invalid { validation_error: format!("Ancestor block {} is known to be invalid (Soft)", current_invalid_check) },
                         latest_valid_hash: latest_valid,
                     });
                 }
@@ -617,8 +537,8 @@ impl PayloadProcessor {
         
         // If header not found in storage/payloads, check if it's currently being processed or available elsewhere.
         let parent_header = if parent_header.is_none() {
-             if self.processing_payloads.read().await.contains_key(&parent_hash) {
-                  // If it's being processed, we can't get its header yet but we know it's coming.
+            if self.processing_payloads.read().unwrap().contains(&parent_hash) {
+                // If it's being processed, we can't get its header yet but we know it's coming.
                   // We return SYNCING and the CL will retry.
                   info!("[PayloadProcessor] Parent block {:?} is currently being processed. Returning SYNCING.", parent_hash);
                   return Ok(PayloadStatus {
@@ -814,42 +734,31 @@ impl PayloadProcessor {
                         if let Some(block) = block {
                             // Mark as processing to avoid concurrent imports of the same block
                             {
-                                let mut processing = self.processing_payloads.write().await;
-                                if processing.contains_key(&child_hash) {
+                                let mut processing = self.processing_payloads.write().unwrap();
+                                if processing.contains(&child_hash) {
                                     debug!("[PayloadProcessor] Child block {:?} is already being processed, skipping revalidation", child_hash);
                                     continue;
                                 }
-                                processing.insert(child_hash, ProcessingInfo { start_time: Instant::now() });
+                                processing.insert(child_hash);
                             }
 
                             let result = self.new_payload_internal_inner(block.clone(), child_hash, None, None, false).await;
 
                             {
-                                let mut processing = self.processing_payloads.write().await;
+                                let mut processing = self.processing_payloads.write().unwrap();
                                 processing.remove(&child_hash);
                             }
 
-                            if let Ok(ref status) = result {
-                                let mut should_cache = false;
-                                if status.status == PayloadStatusEnum::Valid {
-                                    should_cache = true;
-                                } else if let PayloadStatusEnum::Invalid { .. } = status.status {
-                                    // Only cache HARD invalid blocks
-                                    if let Some(reason) = self.chain.get_invalidation_reason(child_hash).await {
-                                        if reason == InvalidationReason::Hard {
-                                            should_cache = true;
-                                        }
+                            match result {
+                                Ok(status) => {
+                                    if status.status == PayloadStatusEnum::Valid {
+                                        info!("[PayloadProcessor] Successfully revalidated child block {} (hash: {})", block.header.number, child_hash);
+                                        parents_to_process.push(child_hash);
                                     }
                                 }
 
-                                if should_cache {
-                                    let mut finished = self.finished_payloads.write().await;
-                                    finished.insert(child_hash, status.clone());
-                                }
-
-                                if status.status == PayloadStatusEnum::Valid {
-                                    info!("[PayloadProcessor] Successfully revalidated child block {} (hash: {})", block.header.number, child_hash);
-                                    parents_to_process.push(child_hash);
+                                Err(e) => {
+                                    error!("[PayloadProcessor] Failed to revalidate dependent payload {:?}: {}", child_hash, e);
                                 }
                             }
                         }
