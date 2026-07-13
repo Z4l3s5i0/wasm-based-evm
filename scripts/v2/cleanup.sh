@@ -1,5 +1,5 @@
 #!/bin/bash
-docker compose -f ./docker-compose-v2.yml down -v
+docker compose -f ./docker-compose.v2.yml down -v
 
 docker rm -vf $(docker ps -aq)
 docker rmi -f $(docker images -aq)

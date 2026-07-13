@@ -135,7 +135,7 @@ if [ -n "$REGISTRY" ]; then
     METRICS_BUILD_SECTION="# Registry image used"
 else
     METRICS_IMAGE="wasix-eth-metrics:latest"
-    METRICS_BUILD_SECTION="build:\n      context: ./metrics_server\n      dockerfile: Dockerfile"
+    METRICS_BUILD_SECTION="build:\n      context: $ROOT_DIR_LOCAL/metrics_server\n      dockerfile: Dockerfile"
 fi
 
     # Use sed to replace placeholders
@@ -151,6 +151,10 @@ fi
         PYTHON_CMD="python"
     fi
     
+    # Use a temporary directory for the python script to avoid cluttering the current directory
+    TEMP_DIR=$(mktemp -d)
+    REPLACE_PY="$TEMP_DIR/replace_placeholders.py"
+
     # We use a literal EOF to prevent shell variable expansion inside the python script
     # except for the ones we explicitly want to pass in.
     # Actually, it's easier to pass them as environment variables.
@@ -158,7 +162,7 @@ fi
     export METRICS_BUILD_SECTION_ESC="$METRICS_BUILD_SECTION"
     export COMPOSE_FILE_ESC="$COMPOSE_FILE"
 
-    cat <<'EOF_PY' > replace_placeholders.py
+    cat <<'EOF_PY' > "$REPLACE_PY"
 import os
 import sys
 
@@ -176,8 +180,8 @@ content = content.replace("${METRICS_BUILD_SECTION:-# No build section}", metric
 with open(compose_file, "w") as f:
     f.write(content)
 EOF_PY
-    $PYTHON_CMD replace_placeholders.py
-    rm replace_placeholders.py
+    $PYTHON_CMD "$REPLACE_PY"
+    rm -rf "$TEMP_DIR"
 
     # Clear trailing whitespace or artifacts from replacements
     sed -i 's/[[:space:]]*$//' "$COMPOSE_FILE"
