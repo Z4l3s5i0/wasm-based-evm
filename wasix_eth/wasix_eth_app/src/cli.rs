@@ -21,7 +21,7 @@ pub struct CommonArgs {
     #[arg(long)]
     pub genesis_path: Option<PathBuf>,
 
-    /// Verbosity level (0: none, 1: info, 2: debug, 3: exp)
+    /// Verbosity level (0: none, 1: exp, 2: info, 3: debug)
     #[arg(long, default_value_t = 1)]
     pub verbose: u8,
 

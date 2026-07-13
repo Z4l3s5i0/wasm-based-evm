@@ -308,9 +308,9 @@ impl AppBuilder {
     async fn setup_logging(&self, args: &Args) {
         let level = match args.common.verbose {
             0 => LogLevel::None,
-            1 => LogLevel::Info,
-            2 => LogLevel::Debug,
-            _ => LogLevel::Exp,
+            1 => LogLevel::Exp,
+            2 => LogLevel::Info,
+            _ => LogLevel::Debug,
         };
         logging::set_log_level(level);
         wasix_eth_utils::metrics::init_metrics();
