@@ -34,8 +34,8 @@ impl GossipService {
     pub async fn start(mut self) {
         info!("[Gossip] Starting GossipHandler");
         
-        let (block_tx, mut block_rx) = channel::<(Block<Transaction>, Vec<u8>)>(1024);
-        let (tx_tx, mut tx_rx) = channel::<Transaction>(4096);
+        let (block_tx, mut block_rx) = channel::<(Block<Transaction>, Vec<u8>)>(2000);
+        let (tx_tx, mut tx_rx) = channel::<Transaction>(10000);
 
         // Spawn Block processing task (High priority)
         let engine_blocks = self.engine.clone();
@@ -74,6 +74,8 @@ impl GossipService {
             if let Err(e) = self.route_message(data, &block_tx, &tx_tx).await {
                 error!("[Gossip] Error routing gossip message: {}", e);
             }
+            // Yield to allow other tasks (like Engine API) to run
+            tokio::task::yield_now().await;
         }
     }
 

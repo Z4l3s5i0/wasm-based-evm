@@ -234,7 +234,7 @@ for i in $(seq 0 $((NODES - 1))); do
     mkdir -p "$DATA_DIR/el" "$DATA_DIR/cl"
 
     # Append Execution Client
-    FLAGS="--data-dir /app/data --genesis-path /app/startup/genesis.json --verbose 3 --peer-name $PEER_NAME --eth-rpc-port $ETH_PORT --auth-rpc-port $AUTH_PORT --p2p-port $P2P_PORT --discovery-port $DISC_PORT --metrics-port $METRICS_PORT --auth-rpc-jwt-path /app/startup/jwt_$i.hex --bootstrap-registry http://metrics-server:9100 --ext-ip $EXT_IP"
+    FLAGS="--data-dir /app/data --genesis-path /app/startup/genesis.json --verbose 1 --peer-name $PEER_NAME --eth-rpc-port $ETH_PORT --auth-rpc-port $AUTH_PORT --p2p-port $P2P_PORT --discovery-port $DISC_PORT --metrics-port $METRICS_PORT --auth-rpc-jwt-path /app/startup/jwt_$i.hex --bootstrap-registry http://metrics-server:9100 --ext-ip $EXT_IP"
     
     if [ "$TYPE" = "wasix" ]; then
         # Wasix nodes need init before run. Start node-exporter in background.
@@ -338,7 +338,7 @@ EOF
       - sh
       - -c
       - |
-        lighthouse --testnet-dir /app/startup account validator import --directory /app/startup/validators/node_$i --password-file /app/startup/validators/node_$i/password.txt --datadir /root/.lighthouse --reuse-password &&
+        lighthouse --testnet-dir /app/startup account validator import --directory /app/startup/validators/node_$i --password-file /app/startup/validators/node_$i/password.txt --datadir /root/.lighthouse --reuse-password --execution-timeout-multiplier 2 &&
         lighthouse vc --beacon-nodes http://cl-node-$i:5052 --testnet-dir /app/startup --datadir /root/.lighthouse --debug-level info --suggested-fee-recipient 0x0000000000000000000000000000000000000000 --init-slashing-protection
 EOF
     fi

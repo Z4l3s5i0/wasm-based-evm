@@ -50,7 +50,7 @@ impl SyncService {
         mempool: Arc<dyn MempoolProvider>,
         peer_manager: Arc<PeerManager>,
     ) -> Self {
-        let (peer_gossip_tx, peer_gossip_rx) = mpsc::channel(4096);
+        let (peer_gossip_tx, peer_gossip_rx) = mpsc::channel(10000);
         
         let service = Self {
             sync: Arc::new(RwLock::new(sync)),

@@ -3,7 +3,7 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use dashmap::DashMap;
 use im::Vector;
-use wasix_eth_types::{Address, SignerRecoverable, ConsensusTransaction, B256, U256, Transaction, Blob, Bytes48, TxPooledEnvelope, Bytes};
+use wasix_eth_types::{Address, SignerRecoverable, ConsensusTransaction, B256, U256, Transaction, Blob, Bytes48, TxPooledEnvelope, Bytes, MAX_MEMPOOL_SIZE};
 use wasix_eth_utils::{debug, info, metrics::{MEMPOOL_SIZE, MEMPOOL_REJECTED_TRANSACTIONS}};
 
 /// A read-optimized, immutable snapshot of the mempool for block building.
@@ -226,7 +226,7 @@ impl MempoolInner {
         
         // Enforce capacity occasionally
         if rand::random::<u8>() % 16 == 0 {
-            self.enforce_capacity(5000).await; // MAX_MEMPOOL_SIZE
+            self.enforce_capacity(MAX_MEMPOOL_SIZE).await; // MAX_MEMPOOL_SIZE
         }
 
         let mut queue = if is_pending {

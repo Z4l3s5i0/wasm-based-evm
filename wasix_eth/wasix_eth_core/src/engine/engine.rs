@@ -929,7 +929,7 @@ impl Engine {
         Ok(())
     }
     async fn decode_transactions(&self, txs: &[Bytes]) -> RpcResult<Vec<Transaction>> {
-        tokio::task::yield_now().await;
+        // tokio::task::yield_now().await;
         let mut transactions = Vec::new();
         for tx_bytes in txs {
             let tx = Transaction::decode_2718(&mut &tx_bytes[..])
