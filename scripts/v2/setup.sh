@@ -78,6 +78,5 @@ retry_command docker pull prom/node-exporter:v1.8.1
 retry_command docker pull grafana/grafana:11.1.0
 retry_command docker pull prom/prometheus:v2.53.1
 retry_command docker pull docker.io/z4l3s5i0/contender:latest
-#docker pull ghcr.io/paradigmxyz/reth
 
 echo "Setup complete!"
