@@ -4553,7 +4553,6 @@ dependencies = [
 name = "wasix_eth_execution"
 version = "0.1.0"
 dependencies = [
- "alloy-consensus",
  "alloy-eips",
  "alloy-network",
  "alloy-primitives",
@@ -4565,6 +4564,7 @@ dependencies = [
  "evm",
  "evm-interpreter",
  "evm-precompile",
+ "hex",
  "serde_json",
  "sha2",
  "tempfile",

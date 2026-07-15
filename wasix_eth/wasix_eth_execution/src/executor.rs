@@ -117,7 +117,6 @@ impl EvmExecutor {
         let backend = SputnikBackend {
             read_provider: batch,
             storage_provider: batch,
-            bytecode_provider: batch,
             environment: env.clone(),
             state_root,
             transient_storage: HashMap::new(),

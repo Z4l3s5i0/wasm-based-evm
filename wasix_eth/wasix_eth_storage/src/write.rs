@@ -10,6 +10,7 @@ use crate::read_traits::{AccountProvider, BytecodeProvider, StateProvider, Stora
 use wasix_eth_types::BlockId;
 use crate::read::DatabaseReadProvider;
 use wasix_eth_types::ReceiptMeta;
+use alloy_rlp::Decodable;
 
 /// Implementation of database write providers using a `redb` database.
 #[derive(Clone)]
@@ -238,7 +239,22 @@ impl AccountProvider for BatchWriter {
         }
 
         // 2. If not modified in this block yet, read from the PARENT state root
-        // Crucially, this MUST use the state_root passed in, not the DB's "latest"
+        // If a state root is provided, we must use trie traversal that sees our wtx
+        if let Some(root) = state_root {
+            if root == alloy_trie::EMPTY_ROOT_HASH {
+                return Ok(None);
+            }
+            let hashed_address = alloy_primitives::keccak256(address);
+            let mut trie = EthTrie::new(self, root);
+            let acc_bytes = trie.get_nibbles(alloy_trie::Nibbles::unpack(hashed_address))?;
+            if let Some(bytes) = acc_bytes {
+                let mut slice = &bytes[..];
+                let acc = TrieAccount::decode(&mut slice)?;
+                return Ok(Some(acc));
+            }
+            return Ok(None);
+        }
+
         self.read_provider.account(address, state_root)
     }
 
@@ -289,7 +305,28 @@ impl StorageProvider for BatchWriter {
         }
 
         // 2. If not in current batch, do lookup in read_provider (latest or historical)
-        // Crucially, this MUST use the state_root passed in, not the DB's "latest"
+        // If a state root is provided, we must use trie traversal that sees our wtx
+        if let Some(root) = state_root {
+            if root == alloy_trie::EMPTY_ROOT_HASH {
+                return Ok(U256::ZERO);
+            }
+            // First find the account to get its storage root
+            if let Some(acc) = self.account(address, Some(root))? {
+                if acc.storage_root == alloy_trie::EMPTY_ROOT_HASH {
+                    return Ok(U256::ZERO);
+                }
+                let hashed_slot = alloy_primitives::keccak256(slot);
+                let mut trie = EthTrie::new(self, acc.storage_root);
+                let val_bytes = trie.get_nibbles(alloy_trie::Nibbles::unpack(hashed_slot))?;
+                if let Some(bytes) = val_bytes {
+                    let mut slice = &bytes[..];
+                    let val: U256 = alloy_rlp::Decodable::decode(&mut slice)?;
+                    return Ok(val);
+                }
+            }
+            return Ok(U256::ZERO);
+        }
+
         self.read_provider.storage(address, slot, state_root)
     }
 

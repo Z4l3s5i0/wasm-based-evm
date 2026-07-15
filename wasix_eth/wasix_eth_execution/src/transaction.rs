@@ -237,7 +237,6 @@ impl<'a> TransactionExecutor<'a> {
         Ok(SputnikBackend {
             read_provider: self.batch,
             storage_provider: self.batch,
-            bytecode_provider: self.batch,
             environment: self.env.clone(),
             state_root,
             transient_storage: std::collections::HashMap::new(),

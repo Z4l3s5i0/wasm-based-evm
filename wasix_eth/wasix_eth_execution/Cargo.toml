@@ -23,9 +23,13 @@ alloy-primitives = {workspace = true }
 alloy-trie = {workspace = true}
 alloy-eips = { workspace = true }
 sha2 = { workspace = true }
+alloy-network = "1.6.3"
 
 [target.'cfg(not(target_family = "wasm"))'.dev-dependencies]
 serde_json = { workspace = true }
 tempfile = "3.10"
 evm-interpreter = { workspace = true}
 tokio = { workspace = true, features = ["macros", "rt"] }
+alloy-signer-local = { workspace = true }
+alloy-signer = { workspace = true }
+hex = "0.4.3"

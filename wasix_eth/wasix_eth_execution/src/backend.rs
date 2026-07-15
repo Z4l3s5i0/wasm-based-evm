@@ -10,7 +10,6 @@ use evm::interpreter::runtime::RuntimeBackend;
 pub struct SputnikBackend<'a> {
     pub read_provider: &'a dyn AccountProvider,
     pub storage_provider: &'a BatchWriter,
-    pub bytecode_provider: &'a dyn BytecodeProvider,
     pub environment: InMemoryEnvironment,
     pub state_root: Option<B256>,
     pub transient_storage: HashMap<(H160, H256), H256>,
@@ -26,9 +25,9 @@ impl<'a> SputnikBackend<'a>{
 
     pub fn check_delegation(&self, address: H160) -> Option<H160> {
         let addr = Address::from_slice(address.as_bytes());
-        if let Ok(Some(acc)) = self.read_provider.account(addr, self.state_root) {
+        if let Ok(Some(acc)) = self.storage_provider.account(addr, self.state_root) {
             if acc.code_hash != alloy_primitives::KECCAK256_EMPTY {
-                if let Ok(Some(code)) = self.bytecode_provider.bytecode(acc.code_hash) {
+                if let Ok(Some(code)) = self.storage_provider.bytecode(acc.code_hash) {
                     if code.starts_with(&[0xef, 0x01, 0x00]) {
                         if code.len() == 23 {
                              return Some(H160::from_slice(&code[3..23]));
@@ -44,7 +43,7 @@ impl<'a> SputnikBackend<'a>{
 impl<'a> RuntimeBaseBackend for SputnikBackend<'a> {
     fn balance(&self, address: H160) -> EvmU256 {
         let addr = Address::from_slice(address.as_bytes());
-        match self.read_provider.account(addr, self.state_root) {
+        match self.storage_provider.account(addr, self.state_root) {
             Ok(Some(acc)) => alloy_u256_to_evm_u256(acc.balance),
             _ => EvmU256::zero(),
         }
@@ -55,13 +54,13 @@ impl<'a> RuntimeBaseBackend for SputnikBackend<'a> {
             return self.code(target);
         }
         let addr = Address::from_slice(address.as_bytes());
-        match self.read_provider.account(addr, self.state_root) {
+        match self.storage_provider.account(addr, self.state_root) {
             Ok(Some(acc)) => {
                 if acc.code_hash == B256::ZERO
                     || acc.code_hash == alloy_primitives::KECCAK256_EMPTY {
                     return Vec::new();
                 }
-                match self.bytecode_provider.bytecode(acc.code_hash) {
+                match self.storage_provider.bytecode(acc.code_hash) {
                     Ok(Some(code)) => code.to_vec(),
                     _ => Vec::new(),
                 }
@@ -73,7 +72,7 @@ impl<'a> RuntimeBaseBackend for SputnikBackend<'a> {
     fn exists(&self, address: H160) -> bool {
         let addr = Address::from_slice(address.as_bytes());
 
-        match self.read_provider.account(addr, self.state_root) {
+        match self.storage_provider.account(addr, self.state_root) {
             Ok(Some(acc)) => {
                 !Self::is_account_empty(&acc)
             }
@@ -86,7 +85,7 @@ impl<'a> RuntimeBaseBackend for SputnikBackend<'a> {
     fn nonce(&self, address: H160) -> EvmU256 {
         self.check_delegation(address);
         let addr = Address::from_slice(address.as_bytes());
-        match self.read_provider.account(addr, self.state_root) {
+        match self.storage_provider.account(addr, self.state_root) {
             Ok(Some(acc)) => EvmU256::from(acc.nonce),
             _ => EvmU256::zero(),
         }
