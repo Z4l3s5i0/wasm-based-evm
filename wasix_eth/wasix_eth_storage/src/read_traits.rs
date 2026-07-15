@@ -32,9 +32,9 @@ pub trait BlockProvider: HeaderProvider + Send + Sync {
     /// Retrieves a block by its hash.
     fn block_by_hash(&self, hash: B256) -> anyhow::Result<Option<Block<Transaction>>>;
     /// Retrieves a payload by its ID.
-    fn get_payload(&self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>, BlobsBundleV1)>;
+    fn get_payload(&self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1)>;
     /// Retrieves a payload by its block hash.
-    fn get_payload_by_block_hash(&self, hash: B256) -> Option<(Block<Transaction>, Vec<Receipt>, BlobsBundleV1)>;
+    fn get_payload_by_block_hash(&self, hash: B256) -> Option<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1)>;
     fn all_payload_ids(&self) -> Vec<PayloadId>;
     /// Retrieves the latest block number.
     fn latest_block_number(&self) -> anyhow::Result<Option<u64>>;

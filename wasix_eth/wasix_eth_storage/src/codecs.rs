@@ -1,7 +1,7 @@
 use wasix_eth_types::{Header, B256, Address, U256, Receipt, ReceiptMeta, Transaction, Bytes, BlockBody, TrieAccount, PayloadId, Block, PeerEntry, BlobsBundleV1};
 use crate::tables::*;
 use std::fmt::Debug;
-use alloy_rlp::{Decodable, Encodable, Buf};
+use alloy_rlp::{Decodable, Encodable};
 
 use redb::{Value, TableDefinition, Key};
 
@@ -185,54 +185,75 @@ impl RedbRlp for Vec<(Address, B256, U256)> {
     }
 }
 
-impl RedbRlp for (Block<Transaction>, Vec<Receipt>, BlobsBundleV1) {
+impl RedbRlp for (Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1) {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        let item_len_0 = Encodable::length(&self.0);
-        let item_len_1 = Encodable::length(&self.1);
-        
-        // BlobsBundleV1 doesn't implement Encodable, so we encode its fields manually as a sublist
-        let commitments_len = Encodable::length(&self.2.commitments);
-        let proofs_len = Encodable::length(&self.2.proofs);
-        let blobs_len = Encodable::length(&self.2.blobs);
-        let bundle_payload_len = commitments_len + proofs_len + blobs_len;
-        let bundle_total_len = alloy_rlp::length_of_length(bundle_payload_len) + bundle_payload_len;
+        let bundle_payload_len = Encodable::length(&self.3.commitments) +
+                                Encodable::length(&self.3.proofs) +
+                                Encodable::length(&self.3.blobs);
 
-        let payload_length = item_len_0 + item_len_1 + bundle_total_len;
+        let payload_length = Encodable::length(&self.0) +
+                            Encodable::length(&self.1) +
+                            Encodable::length(&self.2) +
+                            alloy_rlp::length_of_length(bundle_payload_len) + bundle_payload_len;
         alloy_rlp::Header { list: true, payload_length }.encode(out);
-        
         Encodable::encode(&self.0, out);
         Encodable::encode(&self.1, out);
+        Encodable::encode(&self.2, out);
         
-        // Encode bundle as sublist
+        // Encode bundle as a nested list
         alloy_rlp::Header { list: true, payload_length: bundle_payload_len }.encode(out);
-        Encodable::encode(&self.2.commitments, out);
-        Encodable::encode(&self.2.proofs, out);
-        Encodable::encode(&self.2.blobs, out);
+        Encodable::encode(&self.3.commitments, out);
+        Encodable::encode(&self.3.proofs, out);
+        Encodable::encode(&self.3.blobs, out);
     }
     fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
-        let _h = alloy_rlp::Header::decode(buf)?;
-        let block = Decodable::decode(buf)?;
-        let receipts = Decodable::decode(buf)?;
+        let h = alloy_rlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(alloy_rlp::Error::UnexpectedString);
+        }
+        let (mut body, rest) = buf.split_at(h.payload_length);
+        *buf = rest;
+
+        let block = Decodable::decode(&mut body)?;
+        let receipts = Decodable::decode(&mut body)?;
+        let metas = Decodable::decode(&mut body)?;
         
-        let _h_bundle = alloy_rlp::Header::decode(buf)?;
+        let h_bundle = alloy_rlp::Header::decode(&mut body)?;
+        if !h_bundle.list {
+             return Err(alloy_rlp::Error::UnexpectedString);
+        }
+        let (mut bundle_body, bundle_rest) = body.split_at(h_bundle.payload_length);
+        body = bundle_rest;
+
+        let commitments = Decodable::decode(&mut bundle_body)?;
+        let proofs = Decodable::decode(&mut bundle_body)?;
+        let blobs = Decodable::decode(&mut bundle_body)?;
+
+        if !bundle_body.is_empty() {
+            return Err(alloy_rlp::Error::UnexpectedLength);
+        }
+
         let bundle = BlobsBundleV1 {
-            commitments: Decodable::decode(buf)?,
-            proofs: Decodable::decode(buf)?,
-            blobs: Decodable::decode(buf)?,
+            commitments,
+            proofs,
+            blobs,
         };
         
-        Ok((block, receipts, bundle))
+        if !body.is_empty() {
+            return Err(alloy_rlp::Error::UnexpectedLength);
+        }
+
+        Ok((block, receipts, metas, bundle))
     }
     fn rlp_length(&self) -> usize {
-        let item_len_0 = Encodable::length(&self.0);
-        let item_len_1 = Encodable::length(&self.1);
-        
-        let bundle_payload_len = Encodable::length(&self.2.commitments) + 
-                                Encodable::length(&self.2.proofs) + 
-                                Encodable::length(&self.2.blobs);
-        let bundle_total_len = alloy_rlp::length_of_length(bundle_payload_len) + bundle_payload_len;
+        let bundle_payload_len = Encodable::length(&self.3.commitments) +
+                                Encodable::length(&self.3.proofs) +
+                                Encodable::length(&self.3.blobs);
 
-        let l = item_len_0 + item_len_1 + bundle_total_len;
+        let l = Encodable::length(&self.0) +
+                Encodable::length(&self.1) +
+                Encodable::length(&self.2) +
+                alloy_rlp::length_of_length(bundle_payload_len) + bundle_payload_len;
         alloy_rlp::length_of_length(l) + l
     }
 }
@@ -306,44 +327,9 @@ impl RedbRlp for PeerEntry {
 }
 
 impl RedbRlp for ReceiptMeta {
-    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        let payload_length = match self.contract_address {
-            Some(_) => 21, // 1 byte header + 20 bytes address
-            None => 1,    // 1 byte header
-        };
-        alloy_rlp::Header { list: true, payload_length }.encode(out);
-        match self.contract_address {
-            Some(addr) => Encodable::encode(&addr, out),
-            None => out.put_u8(0x80), // RLP empty string
-        }
-    }
-    fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
-        let h = alloy_rlp::Header::decode(buf)?;
-        if !h.list {
-            return Err(alloy_rlp::Error::Custom("Expected list for ReceiptMeta"));
-        }
-        
-        let contract_address = if buf.is_empty() {
-             None
-        } else {
-             let item_h = alloy_rlp::Header::decode(&mut &**buf)?;
-             if item_h.payload_length == 0 {
-                 let _ = buf.get_u8(); // consume empty string
-                 None
-             } else {
-                 Some(<Address as Decodable>::decode(buf)?)
-             }
-        };
-        
-        Ok(ReceiptMeta { contract_address })
-    }
-    fn rlp_length(&self) -> usize {
-        let l = match self.contract_address {
-            Some(_) => 21,
-            None => 1,
-        };
-        alloy_rlp::length_of_length(l) + l
-    }
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) { alloy_rlp::Encodable::encode(self, out); }
+    fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> { alloy_rlp::Decodable::decode(buf) }
+    fn rlp_length(&self) -> usize { alloy_rlp::Encodable::length(self) }
 }
 
 impl Table for Headers { const NAME: &'static str = "headers"; type Key = B256; type Value = Header; }
@@ -364,7 +350,7 @@ impl Table for PlainState { const NAME: &'static str = "plain_state"; type Key =
 impl Table for HashedState { const NAME: &'static str = "hashed_state"; type Key = B256; type Value = Bytes; }
 impl Table for TrieNodes { const NAME: &'static str = "trie_nodes"; type Key = B256; type Value = Bytes; }
 impl Table for Metadata { const NAME: &'static str = "metadata"; type Key = String; type Value = Bytes; }
-impl Table for Payloads { const NAME: &'static str = "payloads"; type Key = PayloadId; type Value = (Block<Transaction>, Vec<Receipt>, BlobsBundleV1); }
+impl Table for Payloads { const NAME: &'static str = "payloads"; type Key = PayloadId; type Value = (Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1); }
 
 impl Table for Forkchoice { const NAME: &'static str = "forkchoice"; type Key = String; type Value = B256; }
 impl Table for ActivePeers { const NAME: &'static str = "active_peers"; type Key = String; type Value = PeerEntry; }

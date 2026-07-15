@@ -130,7 +130,7 @@ impl EthDatabase {
 
             // Also insert into Payloads table for consistency in some lookups
             let payload_id = wasix_eth_types::PayloadId::new([0u8; 8]);
-            write_provider.add_payload(payload_id, Block { header: genesis_header, body }, Vec::new(), BlobsBundleV1::default())?;
+            write_provider.add_payload(payload_id, Block { header: genesis_header, body }, Vec::new(), Vec::new(), BlobsBundleV1::default())?;
 
             write_provider.set_metadata("chain_id".to_string(), genesis.config.chain_id.to_be_bytes().to_vec().into())?;
             write_provider.set_metadata("genesis_hash".to_string(), genesis_hash.hash().as_slice().to_vec().into())?;

@@ -507,6 +507,50 @@ pub struct ReceiptMeta {
     pub contract_address: Option<Address>,
 }
 
+impl alloy_rlp::Encodable for ReceiptMeta {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        let payload_length = match self.contract_address {
+            Some(_) => 21, // 1 byte header (0x94) + 20 bytes address
+            None => 0,    // empty list
+        };
+        alloy_rlp::Header { list: true, payload_length }.encode(out);
+        if let Some(addr) = self.contract_address {
+            alloy_rlp::Encodable::encode(&addr, out);
+        }
+    }
+    fn length(&self) -> usize {
+        let l = match self.contract_address {
+            Some(_) => 21,
+            None => 0,
+        };
+        alloy_rlp::length_of_length(l) + l
+    }
+}
+
+impl alloy_rlp::Decodable for ReceiptMeta {
+    fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
+        let h = alloy_rlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(alloy_rlp::Error::Custom("Expected list for ReceiptMeta"));
+        }
+        
+        let mut body = &buf[..h.payload_length];
+        *buf = &buf[h.payload_length..];
+
+        let contract_address = if body.is_empty() {
+             None
+        } else {
+             Some(<Address as alloy_rlp::Decodable>::decode(&mut body)?)
+        };
+        
+        if !body.is_empty() {
+             return Err(alloy_rlp::Error::UnexpectedLength);
+        }
+
+        Ok(ReceiptMeta { contract_address })
+    }
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct PeerEntry {
     pub peer_id: String,

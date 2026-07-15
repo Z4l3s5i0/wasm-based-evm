@@ -163,21 +163,21 @@ impl BlockProvider for DatabaseReadProvider {
         self.block(BlockId::Hash(hash.into()))
     }
 
-    fn get_payload(&self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>, BlobsBundleV1)> {
+    fn get_payload(&self, payload_id: &PayloadId) -> Option<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1)> {
         let tx = self.db.begin_read().ok()?;
         let table = tx.open_table(Payloads::definition()).ok()?;
         let value = table.get(*payload_id).ok()??;
         Some(value.value())
     }
 
-    fn get_payload_by_block_hash(&self, hash: B256) -> Option<(Block<Transaction>, Vec<Receipt>, BlobsBundleV1)> {
+    fn get_payload_by_block_hash(&self, hash: B256) -> Option<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1)> {
         let tx = self.db.begin_read().ok()?;
         let table = tx.open_table(Payloads::definition()).ok()?;
         for entry in table.iter().ok()? {
             if let Ok((_, value)) = entry {
-                let (block, receipts, bundle): (Block<Transaction>, Vec<Receipt>, BlobsBundleV1) = value.value();
+                let (block, receipts, metas, bundle): (Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1) = value.value();
                 if block.header.hash_slow() == hash {
-                    return Some((block, receipts, bundle));
+                    return Some((block, receipts, metas, bundle));
                 }
             }
         }

@@ -56,14 +56,14 @@ impl ReorgHandler {
             if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current_hash.into())) {
                 if let Ok(Some(block)) = self.read_storage.block_by_hash(current_hash) {
                     new_canonical_blocks.push(block);
-                } else if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(current_hash) {
+                } else if let Some((block, _, _, _)) = self.read_storage.get_payload_by_block_hash(current_hash) {
                     new_canonical_blocks.push(block.clone());
                 } else {
                     return Err(anyhow::anyhow!("Block data missing for hash {:?} during reorg walk-back", current_hash).into());
                 }
 
                 current_hash = header.parent_hash;
-            } else if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(current_hash) {
+            } else if let Some((block, _, _, _)) = self.read_storage.get_payload_by_block_hash(current_hash) {
                 new_canonical_blocks.push(block.clone());
                 current_hash = block.header.parent_hash;
             } else {
@@ -126,9 +126,9 @@ impl ReorgHandler {
             let body_exists = self.read_storage.block_body_by_hash(hash).ok().flatten().is_some();
             if !body_exists {
                 debug!("[ChainManager] Block {} not found in main storage, checking Payloads table", hash);
-                if let Some((full_block, receipts, _bundle)) = self.read_storage.get_payload_by_block_hash(hash) {
-                    // This call should internally insert Header, Body, and Receipts
-                    self.write_storage.insert_block(full_block, receipts)?;
+                if let Some((full_block, receipts, metas, _bundle)) = self.read_storage.get_payload_by_block_hash(hash) {
+                    // This call should internally insert Header, Body, Receipts, and Metas
+                    self.write_storage.insert_block(full_block, receipts, metas)?;
                     self.write_storage.remove_payload_by_block_hash(hash)?;
                     debug!("[ChainManager] Promoted block {} from Payloads to main storage", hash);
                 }
@@ -155,9 +155,6 @@ impl ReorgHandler {
             for (i, tx) in block.body.transactions.iter().enumerate() {
                 let tx_hash = *tx.hash();
                 self.write_storage.insert_transaction_lookup(tx_hash, hash, i as u64)?;
-                if let Some(receipt_meta) = self.read_storage.receipt_meta(hash, i as u64)? {
-                     self.write_storage.insert_receipt_meta(hash, i as u64, receipt_meta)?;
-                }
             }
         }
         Ok(())

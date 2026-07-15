@@ -31,11 +31,11 @@ pub trait BlockWriter {
     /// Updates the forkchoice state.
     fn update_forkchoice(&self, head: B256, safe: Option<B256>, finalized: Option<B256>) -> anyhow::Result<()>;
     /// Adds a new payload to the database.
-    fn add_payload(&self, id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>, bundle: BlobsBundleV1) -> anyhow::Result<()>;
+    fn add_payload(&self, id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>, metas: Vec<ReceiptMeta>, bundle: BlobsBundleV1) -> anyhow::Result<()>;
     /// Removes a payload from the database by its block hash.
     fn remove_payload_by_block_hash(&self, hash: B256) -> anyhow::Result<()>;
     /// Inserts a full block into the database and marks it as canonical.
-    fn insert_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>) -> anyhow::Result<()>;
+    fn insert_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, metas: Vec<ReceiptMeta>) -> anyhow::Result<()>;
 }
 
 /// Trait for writing transaction-related information to the database.

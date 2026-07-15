@@ -48,7 +48,7 @@ fn test_transaction_receipt_reorg() {
     };
 
     // 1. Import Block B (canonical)
-    writer.insert_header(1, Header { number: 1, ..Default::default() }).unwrap();
+    writer.insert_header(block_b_hash, Header { number: 1, ..Default::default() }).unwrap();
     writer.insert_block_hash(block_b_hash, 1).unwrap();
     writer.insert_block_body(block_b_hash, 1, BlockBody { transactions: vec![tx.clone()], ..Default::default() }).unwrap();
     writer.insert_receipt(block_b_hash, 0, receipt_b.clone()).unwrap();
@@ -62,7 +62,7 @@ fn test_transaction_receipt_reorg() {
 
     // 2. Import Block A (side chain)
     // This will overwrite the lookup entry!
-    writer.insert_header(1, Header { number: 1, extra_data: vec![1].into(), ..Default::default() }).unwrap();
+    writer.insert_header(block_a_hash, Header { number: 1, extra_data: vec![1].into(), ..Default::default() }).unwrap();
     writer.insert_block_hash(block_a_hash, 1).unwrap();
     writer.insert_block_body(block_a_hash, 1, BlockBody { transactions: vec![tx.clone()], ..Default::default() }).unwrap();
     writer.insert_receipt(block_a_hash, 0, receipt_a.clone()).unwrap();

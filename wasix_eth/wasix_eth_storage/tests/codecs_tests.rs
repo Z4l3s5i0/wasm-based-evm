@@ -140,6 +140,7 @@ fn test_block_receipts_tuple_codec() {
         },
     };
     let receipts = vec![Receipt::default()];
+    let metas = vec![ReceiptMeta { contract_address: Some(Address::repeat_byte(0x42)) }];
     let bundle = BlobsBundleV1::default();
-    test_roundtrip((block, receipts, bundle));
+    test_roundtrip((block, receipts, metas, bundle));
 }

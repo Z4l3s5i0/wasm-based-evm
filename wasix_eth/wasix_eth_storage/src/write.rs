@@ -392,9 +392,9 @@ impl BlockWriter for BatchWriter {
         Ok(())
     }
 
-    fn add_payload(&self, id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>, bundle: BlobsBundleV1) -> Result<()> {
+    fn add_payload(&self, id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>, metas: Vec<ReceiptMeta>, bundle: BlobsBundleV1) -> Result<()> {
         let mut table = self.wtx.open_table(Payloads::definition())?;
-        table.insert(id, (block, receipts, bundle))?;
+        table.insert(id, (block, receipts, metas, bundle))?;
         Ok(())
     }
 
@@ -403,7 +403,7 @@ impl BlockWriter for BatchWriter {
         let mut to_remove = Vec::new();
         for entry in table.iter()? {
             let (id, value) = entry?;
-            let (block, _, _): (Block<Transaction>, Vec<Receipt>, BlobsBundleV1) = value.value();
+            let (block, _, _, _): (Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1) = value.value();
             if block.header.hash_slow() == hash {
                 to_remove.push(id.value());
             }
@@ -414,7 +414,7 @@ impl BlockWriter for BatchWriter {
         Ok(())
     }
 
-    fn insert_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>) -> Result<()> {
+    fn insert_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, metas: Vec<ReceiptMeta>) -> Result<()> {
         let hash = block.header.hash_slow();
         let number = block.header.number;
         
@@ -432,6 +432,10 @@ impl BlockWriter for BatchWriter {
 
         for (i, receipt) in receipts.into_iter().enumerate() {
             self.insert_receipt(hash, i as u64, receipt)?;
+        }
+
+        for (i, meta) in metas.into_iter().enumerate() {
+            self.insert_receipt_meta(hash, i as u64, meta)?;
         }
 
         Ok(())
@@ -733,10 +737,10 @@ impl BlockWriter for DatabaseWriteProvider {
         })
     }
 
-    fn add_payload(&self, id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>, bundle: BlobsBundleV1) -> Result<()> {
+    fn add_payload(&self, id: PayloadId, block: Block<Transaction>, receipts: Vec<Receipt>, metas: Vec<ReceiptMeta>, bundle: BlobsBundleV1) -> Result<()> {
         self.with_write(|wtx| {
             let mut table = wtx.open_table(Payloads::definition())?;
-            table.insert(id, (block, receipts, bundle))?;
+            table.insert(id, (block, receipts, metas, bundle))?;
             Ok(())
         })
     }
@@ -747,7 +751,7 @@ impl BlockWriter for DatabaseWriteProvider {
             let mut to_remove = Vec::new();
             for entry in table.iter()? {
                 let (id, value) = entry?;
-                let (block, _, _): (Block<Transaction>, Vec<Receipt>, BlobsBundleV1) = value.value();
+                let (block, _, _, _): (Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>, BlobsBundleV1) = value.value();
                 if block.header.hash_slow() == hash {
                     to_remove.push(id.value());
                 }
@@ -759,9 +763,9 @@ impl BlockWriter for DatabaseWriteProvider {
         })
     }
 
-    fn insert_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>) -> Result<()> {
+    fn insert_block(&self, block: Block<Transaction>, receipts: Vec<Receipt>, metas: Vec<ReceiptMeta>) -> Result<()> {
         let batch = self.begin_batch()?;
-        batch.insert_block(block, receipts)?;
+        batch.insert_block(block, receipts, metas)?;
         batch.commit()?;
         Ok(())
     }

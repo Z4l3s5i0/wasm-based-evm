@@ -392,7 +392,7 @@ impl RPCEngine {
                 if self.chain.is_invalid(hash).await {
                     return Ok(None);
                 }
-                if let Some((payload_block, _, _)) = self.read_storage.get_payload_by_block_hash(hash) {
+                if let Some((payload_block, _, _, _)) = self.read_storage.get_payload_by_block_hash(hash) {
                     return Ok(Some(payload_block));
                 }
             }

@@ -23,7 +23,7 @@ fn test_read_header_success() {
     let reader = DatabaseReadProvider::new(db.inner());
     let header = Header { number: 1, ..Default::default() };
     let hash = header.hash_slow();
-    writer.insert_header(1, header.clone()).unwrap();
+    writer.insert_header(hash, header.clone()).unwrap();
     writer.set_canonical(1, hash).unwrap();
     writer.commit().unwrap();
     
@@ -46,7 +46,7 @@ fn test_read_header_edge_hash_lookup() {
     let reader = DatabaseReadProvider::new(db.inner());
     let header = Header { number: 1, ..Default::default() };
     let hash = header.hash_slow();
-    writer.insert_header(1, header).unwrap();
+    writer.insert_header(hash, header).unwrap();
     writer.insert_block_hash(hash, 1).unwrap();
     writer.commit().unwrap();
     
@@ -228,7 +228,7 @@ fn test_read_block_by_hash_success() {
     let reader = DatabaseReadProvider::new(db.inner());
     let header = Header { number: 1, ..Default::default() };
     let hash = header.hash_slow();
-    writer.insert_header(1, header).unwrap();
+    writer.insert_header(hash, header).unwrap();
     writer.insert_block_body(hash, 1, BlockBody::<Transaction>::default()).unwrap();
     writer.insert_block_hash(hash, 1).unwrap();
     writer.commit().unwrap();
@@ -261,7 +261,7 @@ fn test_read_get_payload_success() {
     let reader = DatabaseReadProvider::new(db.inner());
     let id = PayloadId::new([1; 8]);
     let block = Block::<Transaction>::default();
-    writer.add_payload(id, block.clone(), vec![], BlobsBundleV1::default()).unwrap();
+    writer.add_payload(id, block.clone(), vec![], vec![], BlobsBundleV1::default()).unwrap();
     writer.commit().unwrap();
     assert!(reader.get_payload(&id).is_some());
 }

@@ -248,7 +248,7 @@ impl PayloadProcessor {
         }
         
         // 2. Check payload map
-        if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(hash) {
+        if let Some((payload, _, _, _)) = self.read_storage.get_payload_by_block_hash(hash) {
             return Some(payload.header.clone());
         }
         
@@ -704,6 +704,10 @@ impl PayloadProcessor {
                 }
                 batch.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
             }
+
+            // Also remove payload as it's now officially a block
+            let _ = batch.remove_payload_by_block_hash(block_hash);
+
             batch.commit().map_err(|e| RpcError::Internal(e.to_string()))?;
             Ok(())
         }).await.map_err(|e| RpcError::Internal(format!("Storage task panicked: {}", e)))??;

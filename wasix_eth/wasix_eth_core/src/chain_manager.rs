@@ -156,7 +156,7 @@ impl ChainManager for ChainManagerImpl {
                 Some(block.header.number)
             } else if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current.into())) {
                 Some(header.number)
-            } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
+            } else if let Some((payload, _, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
                 Some(payload.header.number)
             } else {
                 None
@@ -165,7 +165,7 @@ impl ChainManager for ChainManagerImpl {
             if let Some(num) = current_number {
                 // Find the highest canonical block below this invalid block
                 // and check if it's an ancestor.
-                if let Ok(Some(canonical_hash)) = self.read_storage.block_hash(num.saturating_sub(1)) {
+                if let Ok(Some(canonical_hash)) = self.read_storage.block_hash(num.saturating_sub(1) as u64) {
                     // Check if this canonical block is an ancestor of 'current'
                     if self.is_ancestor(current, canonical_hash).await {
                          debug!("[ChainManager] get_latest_valid_ancestor: found canonical ancestor {:?} via is_ancestor check at height {}", canonical_hash, num.saturating_sub(1));
@@ -182,7 +182,7 @@ impl ChainManager for ChainManagerImpl {
                     parent_hash = Some(block.header.parent_hash);
                 } else if let Ok(Some(header)) = self.read_storage.header(BlockId::Hash(current.into())) {
                     parent_hash = Some(header.parent_hash);
-                } else if let Some((block, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
+                } else if let Some((block, _, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
                     parent_hash = Some(block.header.parent_hash);
                 }
             }
@@ -284,7 +284,7 @@ impl ChainManager for ChainManagerImpl {
             Some(n)
         } else if let Some(block) = self.block_tree.get_block(head).await {
             Some(block.header.number)
-        } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(head) {
+        } else if let Some((payload, _, _, _)) = self.read_storage.get_payload_by_block_hash(head) {
             Some(payload.header.number)
         } else {
             None
@@ -294,7 +294,7 @@ impl ChainManager for ChainManagerImpl {
             Some(n)
         } else if let Some(block) = self.block_tree.get_block(target).await {
             Some(block.header.number)
-        } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(target) {
+        } else if let Some((payload, _, _, _)) = self.read_storage.get_payload_by_block_hash(target) {
             Some(payload.header.number)
         } else {
             None
@@ -343,7 +343,7 @@ impl ChainManager for ChainManagerImpl {
 
             let parent_info = if let Ok(Some(header)) = self.read_storage.header(wasix_eth_types::BlockId::Hash(current.into())) {
                 Some((header.parent_hash, header.number.saturating_sub(1)))
-            } else if let Some((payload, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
+            } else if let Some((payload, _, _, _)) = self.read_storage.get_payload_by_block_hash(current) {
                 Some((payload.header.parent_hash, payload.header.number.saturating_sub(1)))
             } else if let Some(block) = self.block_tree.get_block(current).await {
                 Some((block.header.parent_hash, block.header.number.saturating_sub(1)))

@@ -77,7 +77,7 @@ fn test_batch_insert_header_success() {
     let db = setup_db();
     let writer = DatabaseWriteProvider::new(db.inner());
     let batch = writer.begin_batch().unwrap();
-    batch.insert_header(1, Header::default()).unwrap();
+    batch.insert_header(B256::repeat_byte(0x1), Header::default()).unwrap();
     batch.commit().unwrap();
 }
 
@@ -86,8 +86,8 @@ fn test_batch_insert_header_edge_overwrite() {
     let db = setup_db();
     let writer = DatabaseWriteProvider::new(db.inner());
     let batch = writer.begin_batch().unwrap();
-    batch.insert_header(1, Header { number: 1, ..Default::default() }).unwrap();
-    batch.insert_header(1, Header { number: 2, ..Default::default() }).unwrap();
+    batch.insert_header(B256::repeat_byte(0x1), Header { number: 1, ..Default::default() }).unwrap();
+    batch.insert_header(B256::repeat_byte(0x1), Header { number: 2, ..Default::default() }).unwrap();
     batch.commit().unwrap();
 }
 
@@ -162,7 +162,7 @@ fn test_batch_add_payload_success() {
     let batch = writer.begin_batch().unwrap();
     let id = PayloadId::new([1; 8]);
     let block = Block::default();
-    batch.add_payload(id, block, vec![], BlobsBundleV1::default()).unwrap();
+    batch.add_payload(id, block, vec![], vec![], BlobsBundleV1::default()).unwrap();
     batch.commit().unwrap();
     
     let reader = DatabaseReadProvider::new(db.inner());
@@ -581,7 +581,7 @@ fn test_batch_set_metadata_success() {
 fn test_writer_insert_header_success() {
     let db = setup_db();
     let writer = DatabaseWriteProvider::new(db.inner());
-    writer.insert_header(1, Header::default()).unwrap();
+    writer.insert_header(B256::repeat_byte(0x1), Header::default()).unwrap();
     writer.commit().unwrap();
 }
 
@@ -633,7 +633,7 @@ fn test_writer_update_forkchoice_success() {
 fn test_writer_add_payload_success() {
     let db = setup_db();
     let writer = DatabaseWriteProvider::new(db.inner());
-    writer.add_payload(PayloadId::new([1; 8]), Block::default(), vec![], BlobsBundleV1::default()).unwrap();
+    writer.add_payload(PayloadId::new([1; 8]), Block::default(), vec![], vec![], BlobsBundleV1::default()).unwrap();
     writer.commit().unwrap();
 }
 
