@@ -131,9 +131,10 @@ impl Mempool {
     /// Get the next expected nonce for an address, considering pending transactions in the mempool.
     /// If no pending transactions exist, returns the provided state nonce.
     pub async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64 {
-        self.inner.pending_transactions.get(&address)
+        let mempool_next = self.inner.pending_transactions.get(&address)
             .and_then(|q| q.back().map(|t| t.nonce() + 1))
-            .unwrap_or(state_nonce)
+            .unwrap_or(state_nonce);
+        std::cmp::max(mempool_next, state_nonce)
     }
 
     /// Optimized transaction selection using a Priority Queue.
@@ -200,6 +201,7 @@ impl MempoolInner {
         let next_pending_nonce = self.pending_transactions.get(&from)
             .and_then(|q| q.back().map(|t| t.nonce() + 1))
             .unwrap_or(current_nonce);
+        let next_pending_nonce = std::cmp::max(next_pending_nonce, current_nonce);
 
         let added = if tx_nonce <= next_pending_nonce {
             // It either fills the next expected nonce or it's a replacement (handled in insert_into_queue)
@@ -523,7 +525,7 @@ impl MempoolInner {
         }
         
         let base_fee = *self.base_fee.read().await;
-        while len > max_size {
+        while self.len() > max_size {
             let mut worst_sender: Option<(Address, bool)> = None; // (address, is_pending)
             let mut worst_tip: u128 = u128::MAX;
 
@@ -577,7 +579,7 @@ impl MempoolInner {
             }
         }
 
-        MEMPOOL_SIZE.set(len as f64);
+        MEMPOOL_SIZE.set(self.len() as f64);
     }
 
     /// Get the total count of transactions in the mempool (pending + queued).

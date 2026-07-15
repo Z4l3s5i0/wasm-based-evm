@@ -137,7 +137,8 @@ impl RPCEngine {
         
         // Robust nonce lookup: use the state nonce at the current head and sync with mempool.
         let state_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or_default();
-        let (_, next_pending_nonce) = self.mempool.nonce_lookup(from, state_nonce).await;
+        let (current_state_nonce, next_pending_nonce) = self.mempool.nonce_lookup(from, state_nonce).await;
+        let expected_nonce = std::cmp::max(current_state_nonce, next_pending_nonce);
         
         // Pass state_nonce to add_transaction to allow standard behavior AND replacements.
         if self.mempool.add_transaction(tx.clone(), state_nonce).await {
@@ -147,7 +148,17 @@ impl RPCEngine {
         } else {
             if is_local {
                 warn!("[Engine] Rejected local transaction {:?} due to nonce collision or stale nonce (nonce: {}, state_nonce: {}, next_pending: {})", hash, tx.nonce(), state_nonce, next_pending_nonce);
-                return Err(RpcError::InvalidParams(format!("Nonce too low: expected {}, got {}", next_pending_nonce, tx.nonce())));
+
+                // If the mempool is stale, trigger a revalidation for this sender
+                if next_pending_nonce < state_nonce {
+                    let mempool = self.mempool.clone();
+                    let read_storage = self.read_storage.clone();
+                    tokio::spawn(async move {
+                        mempool.revalidate(&read_storage, Some(vec![from])).await;
+                    });
+                }
+
+                return Err(RpcError::InvalidParams(format!("Nonce too low: expected {}, got {}", expected_nonce, tx.nonce())));
             } else {
                 debug!("[Engine] Ignored remote transaction {:?} due to nonce collision or stale nonce", hash);
             }
