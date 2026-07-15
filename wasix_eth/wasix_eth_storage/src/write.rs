@@ -15,12 +15,18 @@ use wasix_eth_types::ReceiptMeta;
 #[derive(Clone)]
 pub struct DatabaseWriteProvider {
     db: Arc<Database>,
+    touched_accounts: Arc<Mutex<HashSet<Address>>>,
+    touched_storages: Arc<Mutex<HashMap<Address, HashSet<B256>>>>,
 }
 
 impl DatabaseWriteProvider {
     /// Creates a new `DatabaseWriteProvider` from a `redb` database.
     pub fn new(db: Arc<Database>) -> Self {
-        Self { db }
+        Self { 
+            db,
+            touched_accounts: Arc::new(Mutex::new(HashSet::new())),
+            touched_storages: Arc::new(Mutex::new(HashMap::new())),
+        }
     }
 
     /// Helper to execute a closure within a write transaction and commit it.
@@ -104,7 +110,7 @@ impl BatchWriter {
 
     fn calculate_state_root_internal(&self, is_eip161: bool, state_root: Option<B256>) -> Result<B256> {
         let state_root = state_root.or(*self.base_state_root.lock().unwrap());
-        let root = match state_root {
+        let initial_root = match state_root {
             Some(r) => r,
             None => {
                 self.read_provider.header(BlockId::Number(BlockNumberOrTag::Latest)).ok().flatten()
@@ -113,7 +119,7 @@ impl BatchWriter {
             }
         };
         
-        let mut trie = EthTrie::new(self, root);
+        let mut trie = EthTrie::new(self, initial_root);
 
         // 1. Load addresses that were modified in this batch
         let batch_addresses = {
@@ -852,6 +858,7 @@ impl AccountWriter for DatabaseWriteProvider {
         self.with_write(|wtx| {
             let mut a_table = wtx.open_table(Accounts::definition())?;
             a_table.insert(address, account.clone())?;
+            self.touched_accounts.lock().unwrap().insert(address);
             Ok(())
         })
     }
@@ -860,24 +867,29 @@ impl AccountWriter for DatabaseWriteProvider {
         self.with_write(|wtx| {
             let mut a_table = wtx.open_table(Accounts::definition())?;
             a_table.remove(address)?;
+            self.touched_accounts.lock().unwrap().insert(address);
             Ok(())
         })
     }
 
     fn calculate_state_root(&self, is_eip161: bool, state_root: Option<B256>) -> Result<B256> {
-        let mut trie = EthTrie::new(self, state_root.unwrap_or(alloy_trie::EMPTY_ROOT_HASH));
-
-        // 1. Load addresses that were modified in this batch
-        let batch_addresses = self.with_write(|wtx| {
-            let table = wtx.open_table(Accounts::definition())?;
-            let mut addrs = Vec::new();
-            for entry in table.iter()? {
-                let (addr_wrapped, _) = entry?;
-                // AccessGuard implements Deref to RlpValue<Address>
-                addrs.push(addr_wrapped.value());
+        let read_provider = DatabaseReadProvider::new(self.db.clone());
+        let initial_root = match state_root {
+            Some(r) => r,
+            None => {
+                read_provider.header(BlockId::Number(BlockNumberOrTag::Latest)).ok().flatten()
+                    .map(|h| h.state_root)
+                    .unwrap_or(alloy_trie::EMPTY_ROOT_HASH)
             }
-            Ok(addrs)
-        })?;
+        };
+
+        let mut trie = EthTrie::new(self, initial_root);
+
+        // 1. Load addresses that were modified in this provider's lifetime
+        let batch_addresses = {
+            let touched = self.touched_accounts.lock().unwrap();
+            touched.iter().cloned().collect::<Vec<_>>()
+        };
 
         for addr in batch_addresses {
             let hashed_addr = alloy_primitives::keccak256(addr);
@@ -889,6 +901,12 @@ impl AccountWriter for DatabaseWriteProvider {
                 if is_eip161 && acc.nonce == 0 && acc.balance == U256::ZERO && (acc.code_hash == B256::default() || acc.code_hash == alloy_primitives::KECCAK256_EMPTY) {
                     if storage_root == alloy_trie::EMPTY_ROOT_HASH {
                         trie.delete(hashed_addr)?;
+                        // Also remove from Accounts table
+                        self.with_write(|wtx| {
+                            let mut a_table = wtx.open_table(Accounts::definition())?;
+                            a_table.remove(addr)?;
+                            Ok(())
+                        })?;
                         continue;
                     }
                 }
@@ -901,7 +919,11 @@ impl AccountWriter for DatabaseWriteProvider {
                 };
 
                 // Update Accounts table with new storage root
-                self.update_account(addr, trie_acc.clone())?;
+                self.with_write(|wtx| {
+                    let mut a_table = wtx.open_table(Accounts::definition())?;
+                    a_table.insert(addr, trie_acc.clone())?;
+                    Ok(())
+                })?;
 
                 let mut buf = Vec::new();
                 alloy_rlp::Encodable::encode(&trie_acc, &mut buf);
@@ -918,26 +940,14 @@ impl AccountWriter for DatabaseWriteProvider {
     }
 
     fn calculate_storage_root(&self, address: Address, state_root: Option<B256>) -> Result<B256> {
-        let initial_storage_root = if let Some(root) = state_root {
-            self.account(address, Some(root))?.map(|acc| acc.storage_root).unwrap_or(alloy_trie::EMPTY_ROOT_HASH)
-        } else {
-            alloy_trie::EMPTY_ROOT_HASH
-        };
+        let initial_storage_root = self.account(address, state_root)?.map(|acc| acc.storage_root).unwrap_or(alloy_trie::EMPTY_ROOT_HASH);
         let mut trie = EthTrie::new(self, initial_storage_root);
 
-        // 1. Load storage slots modified in this batch for this address
-        let batch_slots = self.with_write(|wtx| {
-            let table = wtx.open_table(Storages::definition())?;
-            let mut slots = Vec::new();
-            for entry in table.iter()? {
-                let (key_wrapped, _) = entry?;
-                let (addr, slot) = key_wrapped.value();
-                if addr == address {
-                    slots.push(slot);
-                }
-            }
-            Ok(slots)
-        })?;
+        // 1. Load storage slots modified in this provider's lifetime for this address
+        let batch_slots = {
+            let touched = self.touched_storages.lock().unwrap();
+            touched.get(&address).map(|slots| slots.iter().cloned().collect::<Vec<_>>()).unwrap_or_default()
+        };
 
         for slot in batch_slots {
             let hashed_slot = alloy_primitives::keccak256(slot);
@@ -959,7 +969,8 @@ impl AccountWriter for DatabaseWriteProvider {
     }
 
     fn clear_tracking(&self) {
-        // No-op
+        self.touched_accounts.lock().unwrap().clear();
+        self.touched_storages.lock().unwrap().clear();
     }
 }
 
@@ -977,6 +988,9 @@ impl StorageWriter for DatabaseWriteProvider {
             } else {
                 table.insert((address, slot), value)?;
             }
+            let mut touched = self.touched_storages.lock().unwrap();
+            touched.entry(address).or_default().insert(slot);
+            self.touched_accounts.lock().unwrap().insert(address);
             Ok(())
         })
     }
@@ -991,7 +1005,10 @@ impl StorageWriter for DatabaseWriteProvider {
                 .collect();
             for key in keys {
                 table.remove(key)?;
+                let mut touched = self.touched_storages.lock().unwrap();
+                touched.entry(address).or_default().insert(key.1);
             }
+            self.touched_accounts.lock().unwrap().insert(address);
             Ok(())
         })
     }

@@ -280,9 +280,9 @@ fn test_read_get_payload_edge_large_receipts() {
     let reader = DatabaseReadProvider::new(db.inner());
     let id = PayloadId::new([2; 8]);
     let receipts = vec![Receipt::default(); 10];
-    writer.add_payload(id, Block::<Transaction>::default(), receipts.clone(), BlobsBundleV1::default()).unwrap();
+    writer.add_payload(id, Block::<Transaction>::default(), receipts.clone(), vec![], BlobsBundleV1::default()).unwrap();
     writer.commit().unwrap();
-    let (_, r, _) = reader.get_payload(&id).unwrap();
+    let (_, r, _, _) = reader.get_payload(&id).unwrap();
     assert_eq!(r.len(), 10);
 }
 
@@ -293,7 +293,7 @@ fn test_read_get_payload_by_block_hash_success() {
     let reader = DatabaseReadProvider::new(db.inner());
     let block = Block::<Transaction>::default();
     let hash = block.header.hash_slow();
-    writer.add_payload(PayloadId::new([1; 8]), block, vec![], BlobsBundleV1::default()).unwrap();
+    writer.add_payload(PayloadId::new([1; 8]), block, vec![], vec![], BlobsBundleV1::default()).unwrap();
     writer.commit().unwrap();
     assert!(reader.get_payload_by_block_hash(hash).is_some());
 }
@@ -312,8 +312,8 @@ fn test_read_get_payload_by_block_hash_edge_duplicate_hash() {
     let reader = DatabaseReadProvider::new(db.inner());
     let block = Block::<Transaction>::default();
     let hash = block.header.hash_slow();
-    writer.add_payload(PayloadId::new([1; 8]), block.clone(), vec![], BlobsBundleV1::default()).unwrap();
-    writer.add_payload(PayloadId::new([2; 8]), block, vec![], BlobsBundleV1::default()).unwrap();
+    writer.add_payload(PayloadId::new([1; 8]), block.clone(), vec![], vec![], BlobsBundleV1::default()).unwrap();
+    writer.add_payload(PayloadId::new([2; 8]), block, vec![], vec![], BlobsBundleV1::default()).unwrap();
     writer.commit().unwrap();
     // Should still return one of them
     assert!(reader.get_payload_by_block_hash(hash).is_some());

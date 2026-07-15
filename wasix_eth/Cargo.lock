@@ -4553,9 +4553,13 @@ dependencies = [
 name = "wasix_eth_execution"
 version = "0.1.0"
 dependencies = [
+ "alloy-consensus",
  "alloy-eips",
+ "alloy-network",
  "alloy-primitives",
  "alloy-rlp",
+ "alloy-signer",
+ "alloy-signer-local",
  "alloy-trie",
  "anyhow",
  "evm",

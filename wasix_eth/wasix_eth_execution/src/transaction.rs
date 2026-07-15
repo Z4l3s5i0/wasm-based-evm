@@ -90,19 +90,29 @@ impl<'a> TransactionExecutor<'a> {
             }
         };
 
+        let tx_reverted = !tx_failed && match &result.call_create {
+            TransactValueCallCreate::Call { succeed, .. } => !matches!(succeed, evm::interpreter::ExitSucceed::Returned | evm::interpreter::ExitSucceed::Stopped),
+            TransactValueCallCreate::Create { succeed, .. } => !matches!(succeed, evm::interpreter::ExitSucceed::Returned | evm::interpreter::ExitSucceed::Stopped),
+        };
+        let tx_success = !tx_failed && !tx_reverted;
+
         let (_backend_final, changeset) = overlay.deconstruct();
         let tx_gas_used = result.used_gas.as_u64();
         
         // Post-execution gas adjustments (EIP-7702, EIP-7623, etc)
         let elapsed = start_time.elapsed();
-        debug!("[Execution) Transaction {:?} finished: success={}, gas_evm={}, cumulative={}, elapsed={:?}", tx_hash_final, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed);
+        debug!("[Execution) Transaction {:?} finished: success={}, reverted={}, gas_evm={}, cumulative={}, elapsed={:?}", tx_hash_final, tx_success, tx_reverted, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed);
 
-        exp!("[EXP] TX_EXEC_END hash={:?} success={} gas_used={} cumulative_gas={} elapsed_ms={}", 
-            tx_hash_final, !tx_failed, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed.as_millis());
+        exp!("[EXP] TX_EXEC_END hash={:?} success={} reverted={} gas_used={} cumulative_gas={} elapsed_ms={}", 
+            tx_hash_final, tx_success, tx_reverted, tx_gas_used, *cumulative_gas_used + tx_gas_used, elapsed.as_millis());
 
         *cumulative_gas_used += tx_gas_used;
 
-        let consensus_logs = self.process_logs(&changeset);
+        let consensus_logs = if tx_success {
+            self.process_logs(&changeset)
+        } else {
+            Vec::new()
+        };
         H160::from_slice(beneficiary.as_slice());
 
         let state_applier = StateApplier::new(self.batch);
@@ -114,7 +124,7 @@ impl<'a> TransactionExecutor<'a> {
         let logs_bloom = logs_bloom(consensus_logs.iter());
 
         let status = if self.fork >= Hardfork::Byzantium {
-            Eip658Value::Eip658(!tx_failed)
+            Eip658Value::Eip658(tx_success)
         } else {
             Eip658Value::PostState(intermediate_root)
         };
@@ -131,7 +141,13 @@ impl<'a> TransactionExecutor<'a> {
 
         let (output, contract_address) = match &result.call_create {
             TransactValueCallCreate::Call { retval, .. } => (Bytes::from(retval.clone()), None),
-            TransactValueCallCreate::Create { address, .. } => (Bytes::from(address.as_bytes().to_vec()), Some(Address::from_slice(address.as_bytes()))),
+            TransactValueCallCreate::Create { address, .. } => {
+                if !tx_success {
+                    (Bytes::new(), None)
+                } else {
+                    (Bytes::from(address.as_bytes().to_vec()), Some(Address::from_slice(address.as_bytes())))
+                }
+            }
         };
 
         let receipt_meta = ReceiptMeta { contract_address };
