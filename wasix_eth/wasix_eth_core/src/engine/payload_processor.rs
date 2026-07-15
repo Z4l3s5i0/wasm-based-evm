@@ -614,7 +614,7 @@ impl PayloadProcessor {
         exp!("[EXP] BLOCK_EXEC_END number={} hash={:?} elapsed_ms={}", block.header.number, actual_hash, elapsed.as_millis());
 
         
-        let (final_block, receipts) = match exec_result {
+        let (final_block, receipts, metas) = match exec_result {
             Ok(res) => res,
             Err(e) => {
                 error!("[PayloadProcessor] Execution failed for block {}: {}", block.header.number, e);
@@ -671,6 +671,7 @@ impl PayloadProcessor {
         let storage = self.write_storage.clone();
         let final_block_clone = final_block.clone();
         let receipts_clone = receipts.clone();
+        let metas_clone = metas.clone();
         
         let parent_td = if block_number == 0 {
             U256::ZERO
@@ -697,6 +698,9 @@ impl PayloadProcessor {
                 batch.insert_transaction(tx_hash, tx.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
                 if let Some(receipt) = receipts_clone.get(i) {
                     batch.insert_receipt(block_hash, i as u64, receipt.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
+                }
+                if let Some(meta) = metas_clone.get(i) {
+                    batch.insert_receipt_meta(block_hash, i as u64, meta.clone()).map_err(|e| RpcError::Internal(e.to_string()))?;
                 }
                 batch.insert_transaction_lookup(tx_hash, block_hash, i as u64).map_err(|e| RpcError::Internal(e.to_string()))?;
             }

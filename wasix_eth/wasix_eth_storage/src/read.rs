@@ -14,6 +14,7 @@ use wasix_eth_types::Header;
 use wasix_eth_types::Log;
 use wasix_eth_types::PayloadId;
 use wasix_eth_types::Receipt;
+use wasix_eth_types::ReceiptMeta;
 use wasix_eth_types::Result;
 use wasix_eth_types::Transaction;
 use wasix_eth_types::TrieAccount;
@@ -257,6 +258,13 @@ impl TransactionProvider for DatabaseReadProvider {
     fn receipt(&self, block_hash: B256, index: u64) -> Result<Option<Receipt>> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(Receipts::definition())?;
+        let value = table.get((block_hash, index))?;
+        Ok(value.map(|v| v.value()))
+    }
+
+    fn receipt_meta(&self, block_hash: B256, index: u64) -> Result<Option<ReceiptMeta>> {
+        let tx = self.db.begin_read()?;
+        let table = tx.open_table(ReceiptsMeta::definition())?;
         let value = table.get((block_hash, index))?;
         Ok(value.map(|v| v.value()))
     }

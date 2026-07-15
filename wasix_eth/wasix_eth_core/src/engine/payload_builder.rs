@@ -209,7 +209,7 @@ impl PayloadBuilder {
         let parent_header_clone = parent_block.header.clone();
         let attr_clone = attr.clone();
         
-        let (finalized_block, receipts) = match tokio::task::spawn_blocking(move || {
+        let (finalized_block, receipts, _metas) = match tokio::task::spawn_blocking(move || {
             execution.execute_block_for_payload(
                 vec![], // Empty transaction set
                 &parent_header_clone,
@@ -333,7 +333,7 @@ impl PayloadBuilder {
         let execution = Arc::clone(&self.execution);
         let parent_header_clone = parent_block.header.clone();
         let attr_clone = attr.clone();
-        let (finalized_block, receipts) = tokio::task::spawn_blocking(move || {
+        let (finalized_block, receipts, _metas) = tokio::task::spawn_blocking(move || {
             execution.execute_block_for_payload(
                 transactions,
                 &parent_header_clone,

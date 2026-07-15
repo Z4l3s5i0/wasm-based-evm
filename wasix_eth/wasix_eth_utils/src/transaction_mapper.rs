@@ -24,7 +24,7 @@ impl TransactionMapper {
         }
     }
 
-    pub fn to_rpc_receipt(receipt: ConsensusReceipt, block_ref: Option<(u64, B256, u64)>, transaction: Option<&Transaction>, tx_hash_override: Option<B256>, gas_used: u64, base_fee: Option<u64>, blob_gas_price: Option<u128>) -> RpcTransactionReceipt {
+    pub fn to_rpc_receipt(receipt: ConsensusReceipt, meta: Option<wasix_eth_types::ReceiptMeta>, block_ref: Option<(u64, B256, u64)>, transaction: Option<&Transaction>, tx_hash_override: Option<B256>, gas_used: u64, base_fee: Option<u64>, blob_gas_price: Option<u128>) -> RpcTransactionReceipt {
         let (block_number, block_hash, transaction_index) = match block_ref {
             Some((num, hash, index)) => (Some(num), Some(hash), Some(index)),
             None => (None, None, None),
@@ -114,7 +114,7 @@ impl TransactionMapper {
                 }
             }).unwrap_or(0),
             gas_used,
-            contract_address: None,
+            contract_address: meta.and_then(|m| m.contract_address),
             blob_gas_used: b_gas_used,
             blob_gas_price: b_gas_price,
         };
@@ -154,7 +154,7 @@ mod tests {
             logs_bloom: Bloom::ZERO,
         };
         
-        let rpc_receipt = TransactionMapper::to_rpc_receipt(receipt, None, None, Some(tx_hash), 1000, None, None);
+        let rpc_receipt = TransactionMapper::to_rpc_receipt(receipt, None, None, None, Some(tx_hash), 1000, None, None);
         
         assert_eq!(rpc_receipt.transaction_hash, tx_hash, "Transaction hash must be preserved in RpcTransactionReceipt");
     }

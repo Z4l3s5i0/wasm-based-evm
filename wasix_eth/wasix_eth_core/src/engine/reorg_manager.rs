@@ -1,5 +1,5 @@
 use alloy_primitives::B256;
-use wasix_eth_storage::{AccountWriter, BlockProvider, BlockWriter, ChangeSetProvider, ChangeSetWriter, HeaderProvider, HeaderWriter, StateWriter, StorageWriter, TransactionWriter};
+use wasix_eth_storage::{AccountWriter, BlockProvider, BlockWriter, ChangeSetProvider, ChangeSetWriter, HeaderProvider, HeaderWriter, StateWriter, StorageWriter, TransactionProvider, TransactionWriter};
 use wasix_eth_storage::codecs::RedbRlp;
 use wasix_eth_storage::read::DatabaseReadProvider;
 use wasix_eth_storage::write::DatabaseWriteProvider;
@@ -155,6 +155,9 @@ impl ReorgHandler {
             for (i, tx) in block.body.transactions.iter().enumerate() {
                 let tx_hash = *tx.hash();
                 self.write_storage.insert_transaction_lookup(tx_hash, hash, i as u64)?;
+                if let Some(receipt_meta) = self.read_storage.receipt_meta(hash, i as u64)? {
+                     self.write_storage.insert_receipt_meta(hash, i as u64, receipt_meta)?;
+                }
             }
         }
         Ok(())
@@ -199,6 +202,13 @@ impl ReorgHandler {
             self.write_storage.remove_change_set(h)?;
 
             // Remove from canonical heads
+            if let Some(block_hash) = self.read_storage.block_hash(h)? {
+                if let Some(body) = self.read_storage.block_body_by_hash(block_hash)? {
+                    for i in 0..body.transactions.len() {
+                        let _ = self.write_storage.remove_receipt_meta(block_hash, i as u64);
+                    }
+                }
+            }
             self.write_storage.remove_canonical(h)?;
         }
 

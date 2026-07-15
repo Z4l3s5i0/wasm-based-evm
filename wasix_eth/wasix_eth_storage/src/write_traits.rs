@@ -1,4 +1,4 @@
-use wasix_eth_types::{Address, Block, BlockBody, Bytes, Header, PayloadId, PeerEntry, Transaction, TrieAccount, B256, U256, Receipt, BlobsBundleV1};
+use wasix_eth_types::{Address, Block, BlockBody, Bytes, Header, PayloadId, PeerEntry, Transaction, TrieAccount, B256, U256, Receipt, ReceiptMeta, BlobsBundleV1};
 
 /// Trait for managing the active peers table.
 pub trait PeerDiscoveryWriter: Send + Sync {
@@ -44,6 +44,10 @@ pub trait TransactionWriter {
     fn insert_transaction(&self, hash: B256, tx: Transaction) -> anyhow::Result<()>;
     /// Inserts a transaction receipt into the database.
     fn insert_receipt(&self, block_hash: B256, index: u64, receipt: Receipt) -> anyhow::Result<()>;
+    /// Inserts a transaction receipt metadata into the database.
+    fn insert_receipt_meta(&self, block_hash: B256, index: u64, meta: ReceiptMeta) -> anyhow::Result<()>;
+    /// Removes a transaction receipt metadata from the database.
+    fn remove_receipt_meta(&self, block_hash: B256, index: u64) -> anyhow::Result<()>;
     /// Inserts a transaction hash to block hash and index mapping for fast lookups.
     fn insert_transaction_lookup(&self, hash: B256, block_hash: B256, index: u64) -> anyhow::Result<()>;
 }

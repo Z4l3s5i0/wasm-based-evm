@@ -1,4 +1,4 @@
-use wasix_eth_types::{Block, BlockBody, BlockId, Bytes, Filter, Header, Log, PayloadId, Receipt, Transaction, TrieAccount, B256, U256, BlobsBundleV1};
+use wasix_eth_types::{Block, BlockBody, BlockId, Bytes, Filter, Header, Log, PayloadId, Receipt, ReceiptMeta, Transaction, TrieAccount, B256, U256, BlobsBundleV1};
 use wasix_eth_types::{Address, PeerEntry};
 use crate::trie::MyTrieNode;
 
@@ -54,6 +54,8 @@ pub trait TransactionProvider {
     fn transaction_receipt(&self, hash: B256) -> anyhow::Result<Option<Receipt>>;
     /// Retrieves a transaction receipt by block hash and index.
     fn receipt(&self, block_hash: B256, index: u64) -> anyhow::Result<Option<Receipt>>;
+    /// Retrieves a transaction receipt metadata by block hash and index.
+    fn receipt_meta(&self, block_hash: B256, index: u64) -> anyhow::Result<Option<ReceiptMeta>>;
     /// Retrieves the block hash and transaction index containing the transaction with the given hash.
     fn transaction_lookup(&self, hash: B256) -> anyhow::Result<Option<(B256, u64)>>;
     /// Retrieves the block number containing the transaction with the given hash.

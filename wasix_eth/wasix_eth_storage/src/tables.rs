@@ -9,6 +9,8 @@ pub struct BlockBodies;
 pub struct Transactions;
 #[derive(Debug)]
 pub struct Receipts;
+#[derive(Debug)]
+pub struct ReceiptsMeta;
 
 // --- Chain indexes
 #[derive(Debug)]

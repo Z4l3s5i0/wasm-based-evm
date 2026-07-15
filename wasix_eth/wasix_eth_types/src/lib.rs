@@ -502,6 +502,11 @@ pub fn alloy_u256_to_evm_u256(u256: U256) -> EvmU256 {
     EvmU256(u256.into_limbs())
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct ReceiptMeta {
+    pub contract_address: Option<Address>,
+}
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
 pub struct PeerEntry {
     pub peer_id: String,

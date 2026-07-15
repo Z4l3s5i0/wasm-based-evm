@@ -1,7 +1,7 @@
-use wasix_eth_types::{Header, B256, Address, U256, Receipt, Transaction, Bytes, BlockBody, TrieAccount, PayloadId, Block, PeerEntry, BlobsBundleV1};
+use wasix_eth_types::{Header, B256, Address, U256, Receipt, ReceiptMeta, Transaction, Bytes, BlockBody, TrieAccount, PayloadId, Block, PeerEntry, BlobsBundleV1};
 use crate::tables::*;
 use std::fmt::Debug;
-use alloy_rlp::{Decodable, Encodable};
+use alloy_rlp::{Decodable, Encodable, Buf};
 
 use redb::{Value, TableDefinition, Key};
 
@@ -305,11 +305,53 @@ impl RedbRlp for PeerEntry {
     }
 }
 
+impl RedbRlp for ReceiptMeta {
+    fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
+        let payload_length = match self.contract_address {
+            Some(_) => 21, // 1 byte header + 20 bytes address
+            None => 1,    // 1 byte header
+        };
+        alloy_rlp::Header { list: true, payload_length }.encode(out);
+        match self.contract_address {
+            Some(addr) => Encodable::encode(&addr, out),
+            None => out.put_u8(0x80), // RLP empty string
+        }
+    }
+    fn decode(buf: &mut &[u8]) -> Result<Self, alloy_rlp::Error> {
+        let h = alloy_rlp::Header::decode(buf)?;
+        if !h.list {
+            return Err(alloy_rlp::Error::Custom("Expected list for ReceiptMeta"));
+        }
+        
+        let contract_address = if buf.is_empty() {
+             None
+        } else {
+             let item_h = alloy_rlp::Header::decode(&mut &**buf)?;
+             if item_h.payload_length == 0 {
+                 let _ = buf.get_u8(); // consume empty string
+                 None
+             } else {
+                 Some(<Address as Decodable>::decode(buf)?)
+             }
+        };
+        
+        Ok(ReceiptMeta { contract_address })
+    }
+    fn rlp_length(&self) -> usize {
+        let l = match self.contract_address {
+            Some(_) => 21,
+            None => 1,
+        };
+        alloy_rlp::length_of_length(l) + l
+    }
+}
+
 impl Table for Headers { const NAME: &'static str = "headers"; type Key = B256; type Value = Header; }
 impl Table for HeaderTD { const NAME: &'static str = "header_td"; type Key = B256; type Value = U256; }
 impl Table for BlockBodies { const NAME: &'static str = "block_bodies"; type Key = B256; type Value = BlockBody<Transaction>; }
 impl Table for Transactions { const NAME: &'static str = "transactions"; type Key = B256; type Value = Transaction; }
 impl Table for Receipts { const NAME: &'static str = "receipts"; type Key = (B256, u64); type Value = Receipt; }
+impl Table for ReceiptsMeta { const NAME: &'static str = "receipts_meta"; type Key = (B256, u64); type Value = ReceiptMeta; }
 impl Table for CanonicalHeads { const NAME: &'static str = "canonical_heads"; type Key = u64; type Value = B256; }
 impl Table for HeaderNumbers { const NAME: &'static str = "header_numbers"; type Key = B256; type Value = u64; }
 impl Table for TransactionLookup { const NAME: &'static str = "transaction_lookup"; type Key = B256; type Value = (B256, u64); }

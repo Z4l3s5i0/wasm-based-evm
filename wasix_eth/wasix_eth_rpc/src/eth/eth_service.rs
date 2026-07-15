@@ -119,7 +119,10 @@ impl EthService {
     }
 
     fn map_receipt(&self, r: wasix_eth_types::Receipt, block_ref: Option<(u64, B256, u64)>, tx: Option<&wasix_eth_types::Transaction>, tx_hash_override: Option<B256>) -> RpcResult<RpcTransactionReceipt> {
-        let (gas_used, base_fee, blob_gas_price) = if let Some((_, block_hash, index)) = block_ref {
+        let (meta, gas_used, base_fee, blob_gas_price) = if let Some((_, block_hash, index)) = block_ref {
+            let meta = self.engine.read_storage.receipt_meta(block_hash, index)
+                .map_err(|e| RpcError::Internal(e.to_string()))?;
+
             let header = self.engine.read_storage.header(BlockId::hash(block_hash)).ok().flatten();
             let base_fee = header.as_ref().and_then(|h| h.base_fee_per_gas);
             let excess_blob_gas = header.as_ref().and_then(|h| h.excess_blob_gas);
@@ -135,12 +138,12 @@ impl EthService {
                     None => r.receipt.cumulative_gas_used as u64, // Should not happen
                 }
             };
-            (gas_used, base_fee, blob_gas_price)
+            (meta, gas_used, base_fee, blob_gas_price)
         } else {
-            (r.receipt.cumulative_gas_used as u64, None, None)
+            (None, r.receipt.cumulative_gas_used as u64, None, None)
         };
 
-        let mut receipt = TransactionMapper::to_rpc_receipt(r, block_ref, tx, tx_hash_override, gas_used, base_fee, blob_gas_price);
+        let mut receipt = TransactionMapper::to_rpc_receipt(r, meta, block_ref, tx, tx_hash_override, gas_used, base_fee, blob_gas_price);
         
         // Ensure transaction hash is set
         if let Some(hash) = tx_hash_override {

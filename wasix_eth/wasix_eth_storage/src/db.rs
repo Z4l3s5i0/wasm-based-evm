@@ -36,6 +36,7 @@ impl EthDatabase {
         wtx.open_table(BlockBodies::definition())?;
         wtx.open_table(Transactions::definition())?;
         wtx.open_table(Receipts::definition())?;
+        wtx.open_table(ReceiptsMeta::definition())?;
         wtx.open_table(CanonicalHeads::definition())?;
         wtx.open_table(HeaderNumbers::definition())?;
         wtx.open_table(TransactionLookup::definition())?;

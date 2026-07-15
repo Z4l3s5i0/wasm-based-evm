@@ -6,7 +6,7 @@ use evm_precompile::StandardPrecompileSet;
 use sha2::{Digest, Sha256};
 use wasix_eth_storage::read_traits::{AccountProvider, ChainProvider, HeaderProvider};
 use wasix_eth_storage::write::BatchWriter;
-use wasix_eth_storage::write_traits::{AccountWriter, ChangeSetWriter};
+use wasix_eth_storage::write_traits::{AccountWriter, ChangeSetWriter, TransactionWriter};
 use wasix_eth_types::*;
 use wasix_eth_utils::{debug, info};
 
@@ -14,18 +14,18 @@ use crate::config::prepare_execution_env;
 pub use crate::executor::{EvmExecutor, TransactionExecutionResult};
 
 pub trait ExecutionProvider: Send + Sync {
-    fn execute_block(&self, block: Block<Transaction>) -> Result<(Block<Transaction>, Vec<Receipt>)>;
-    fn execute_block_with_commit(&self, block: Block<Transaction>, commit: bool) -> Result<(Block<Transaction>, Vec<Receipt>)>;
-    fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)>;
-    fn execute_block_with_state_root_and_building(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)>;
-    fn execute_block_with_batch(&self, block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)>;
+    fn execute_block(&self, block: Block<Transaction>) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)>;
+    fn execute_block_with_commit(&self, block: Block<Transaction>, commit: bool) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)>;
+    fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)>;
+    fn execute_block_with_state_root_and_building(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)>;
+    fn execute_block_with_batch(&self, block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)>;
     fn execute_block_for_payload(
         &self,
         transactions: Vec<Transaction>,
         _header: &Header,
         _attributes: &PayloadAttributes,
         _base_fee: Option<u64>,
-    ) -> Result<(Block<Transaction>, Vec<Receipt>)>;
+    ) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)>;
     fn run_execution(
         &self,
         transactions: Vec<Transaction>,
@@ -520,24 +520,24 @@ impl EthExecutionProvider {
 }
 
 impl ExecutionProvider for EthExecutionProvider {
-    fn execute_block(&self, block: Block<Transaction>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+    fn execute_block(&self, block: Block<Transaction>) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)> {
         self.execute_block_with_commit(block, true)
     }
 
-    fn execute_block_with_commit(&self, block: Block<Transaction>, commit: bool) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+    fn execute_block_with_commit(&self, block: Block<Transaction>, commit: bool) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)> {
         self.execute_block_with_state_root(block, commit, None)
     }
 
-    fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+    fn execute_block_with_state_root(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)> {
         self.execute_block_with_state_root_and_building(block, commit, state_root, false)
     }
 
-    fn execute_block_with_state_root_and_building(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+    fn execute_block_with_state_root_and_building(&self, block: Block<Transaction>, commit: bool, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)> {
         debug!("[Execution] execute_block_with_state_root: block {} commit={} state_root={:?} building={}", block.header.number, commit, state_root, building);
         self.write_storage.clear_tracking();
         let batch = self.write_storage.begin_batch()?;
         
-        let (executed_block, receipts) = match self.execute_block_with_batch(block.clone(), &batch, state_root, building) {
+        let (executed_block, receipts, metas) = match self.execute_block_with_batch(block.clone(), &batch, state_root, building) {
             Ok(res) => res,
             Err(e) => {
                 // Batch will be dropped here, and redb::WriteTransaction will be aborted
@@ -554,13 +554,17 @@ impl ExecutionProvider for EthExecutionProvider {
             batch.insert_account_change_set(executed_block.header.number, account_changes)?;
             batch.insert_storage_change_set(executed_block.header.number, storage_changes)?;
 
+            for (i, meta) in metas.iter().enumerate() {
+                batch.insert_receipt_meta(executed_block.header.hash_slow(), i as u64, meta.clone())?;
+            }
+
             batch.commit()?;
         }
         
-        Ok((executed_block, receipts))
+        Ok((executed_block, receipts, metas))
     }
 
-    fn execute_block_with_batch(&self, mut block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+    fn execute_block_with_batch(&self, mut block: Block<Transaction>, batch: &BatchWriter, state_root: Option<B256>, building: bool) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)> {
         let mut state_root = state_root;
         if state_root.is_none() && block.header.number > 0 {
             // Look up the parent header to get the correct state root for the reorged path
@@ -576,6 +580,7 @@ impl ExecutionProvider for EthExecutionProvider {
         }
 
         let mut receipts = Vec::new();
+        let mut metas = Vec::new();
         let mut cumulative_gas_used = 0u64;
 
         let (chain_config, fork, config, env) = self.prepare_execution_env(&block.header)?;
@@ -637,6 +642,7 @@ impl ExecutionProvider for EthExecutionProvider {
             
             debug!("[Execution] Transaction {} finished: hash={:?}, gas_used={}, cumulative={}", tx_idx, tx.hash(), result.gas_used, cumulative_gas_used);
             receipts.push(result.receipt);
+            metas.push(result.receipt_meta);
             blob_gas_used += tx_blob_gas;
             final_transactions.push(tx.clone());
         }
@@ -676,7 +682,7 @@ impl ExecutionProvider for EthExecutionProvider {
 
         self.finalize_block_header_with_requests(&mut block, &receipts, cumulative_gas_used, calculated_root, fork, building)?;
         info!("[Execution] Block header finalized for block {}", block.header.number);
-        Ok((block, receipts))
+        Ok((block, receipts, metas))
     }
 
     fn execute_block_for_payload(
@@ -685,7 +691,7 @@ impl ExecutionProvider for EthExecutionProvider {
         parent_header: &Header,
         attributes: &PayloadAttributes,
         base_fee: Option<u64>,
-    ) -> Result<(Block<Transaction>, Vec<Receipt>)> {
+    ) -> Result<(Block<Transaction>, Vec<Receipt>, Vec<ReceiptMeta>)> {
         let chain_id = self.read_storage.chain_id().unwrap_or(1);
         let chain_config = self.read_storage.chain_config()?.unwrap_or_else(|| ChainConfig {
             chain_id,

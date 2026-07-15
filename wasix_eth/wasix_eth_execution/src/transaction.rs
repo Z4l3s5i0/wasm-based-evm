@@ -129,15 +129,18 @@ impl<'a> TransactionExecutor<'a> {
             logs_bloom,
         };
 
-        let output = match &result.call_create {
-            TransactValueCallCreate::Call { retval, .. } => Bytes::from(retval.clone()),
-            TransactValueCallCreate::Create { address, .. } => Bytes::from(address.as_bytes().to_vec()),
+        let (output, contract_address) = match &result.call_create {
+            TransactValueCallCreate::Call { retval, .. } => (Bytes::from(retval.clone()), None),
+            TransactValueCallCreate::Create { address, .. } => (Bytes::from(address.as_bytes().to_vec()), Some(Address::from_slice(address.as_bytes()))),
         };
+
+        let receipt_meta = ReceiptMeta { contract_address };
 
         Ok(TransactionExecutionResult {
             output,
             gas_used: tx_gas_used,
             receipt,
+            receipt_meta,
             call_create: result.call_create,
         })
     }

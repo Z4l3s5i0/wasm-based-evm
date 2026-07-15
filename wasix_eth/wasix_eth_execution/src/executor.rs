@@ -42,6 +42,7 @@ pub struct TransactionExecutionResult {
     pub output: Bytes,
     pub gas_used: u64,
     pub receipt: Receipt,
+    pub receipt_meta: ReceiptMeta,
     pub call_create: TransactValueCallCreate,
 }
 

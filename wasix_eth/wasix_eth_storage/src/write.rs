@@ -9,6 +9,7 @@ use crate::write_traits::{AccountWriter, BlockWriter, BytecodeWriter, ChangeSetW
 use crate::read_traits::{AccountProvider, BytecodeProvider, StateProvider, StorageProvider, HeaderProvider};
 use wasix_eth_types::BlockId;
 use crate::read::DatabaseReadProvider;
+use wasix_eth_types::ReceiptMeta;
 
 /// Implementation of database write providers using a `redb` database.
 #[derive(Clone)]
@@ -450,6 +451,18 @@ impl TransactionWriter for BatchWriter {
         Ok(())
     }
 
+    fn insert_receipt_meta(&self, block_hash: B256, index: u64, meta: ReceiptMeta) -> Result<()> {
+        let mut table = self.wtx.open_table(ReceiptsMeta::definition())?;
+        table.insert((block_hash, index), meta)?;
+        Ok(())
+    }
+
+    fn remove_receipt_meta(&self, block_hash: B256, index: u64) -> Result<()> {
+        let mut table = self.wtx.open_table(ReceiptsMeta::definition())?;
+        table.remove((block_hash, index))?;
+        Ok(())
+    }
+
     fn insert_transaction_lookup(&self, hash: B256, block_hash: B256, index: u64) -> Result<()> {
         let mut table = self.wtx.open_table(TransactionLookup::definition())?;
         table.insert(hash, (block_hash, index))?;
@@ -767,6 +780,22 @@ impl TransactionWriter for DatabaseWriteProvider {
         self.with_write(|wtx| {
             let mut table = wtx.open_table(Receipts::definition())?;
             table.insert((block_hash, index), receipt)?;
+            Ok(())
+        })
+    }
+
+    fn insert_receipt_meta(&self, block_hash: B256, index: u64, meta: ReceiptMeta) -> Result<()> {
+        self.with_write(|wtx| {
+            let mut table = wtx.open_table(ReceiptsMeta::definition())?;
+            table.insert((block_hash, index), meta)?;
+            Ok(())
+        })
+    }
+
+    fn remove_receipt_meta(&self, block_hash: B256, index: u64) -> Result<()> {
+        self.with_write(|wtx| {
+            let mut table = wtx.open_table(ReceiptsMeta::definition())?;
+            table.remove((block_hash, index))?;
             Ok(())
         })
     }
