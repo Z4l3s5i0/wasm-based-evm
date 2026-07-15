@@ -119,11 +119,6 @@ impl<'a> TransactionExecutor<'a> {
             Eip658Value::PostState(intermediate_root)
         };
 
-        let contract_address = match &result.call_create {
-            TransactValueCallCreate::Create { address, .. } => Some(Address::from_slice(address.as_bytes())),
-            _ => None,
-        };
-
         let receipt = Receipt {
             tx_type: tx.ty(),
             receipt: ConsensusReceipt {
@@ -132,7 +127,6 @@ impl<'a> TransactionExecutor<'a> {
                 logs: consensus_logs,
             },
             logs_bloom,
-            contract_address,
         };
 
         let output = match &result.call_create {

@@ -114,7 +114,7 @@ impl TransactionMapper {
                 }
             }).unwrap_or(0),
             gas_used,
-            contract_address: receipt.contract_address,
+            contract_address: None,
             blob_gas_used: b_gas_used,
             blob_gas_price: b_gas_price,
         };
@@ -152,7 +152,6 @@ mod tests {
                 logs: vec![],
             },
             logs_bloom: Bloom::ZERO,
-            contract_address: None,
         };
         
         let rpc_receipt = TransactionMapper::to_rpc_receipt(receipt, None, None, Some(tx_hash), 1000, None, None);

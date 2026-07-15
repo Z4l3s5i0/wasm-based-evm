@@ -527,30 +527,20 @@ pub struct Receipt {
     pub tx_type: u8,
     pub receipt: ConsensusReceipt,
     pub logs_bloom: Bloom,
-    pub contract_address: Option<Address>,
 }
 
 impl alloy_rlp::Encodable for Receipt {
     fn encode(&self, out: &mut dyn alloy_rlp::BufMut) {
-        let mut bytes = Vec::new();
-        self.receipt.rlp_encode_with_bloom(&self.logs_bloom, &mut bytes);
-        if let Some(addr) = self.contract_address {
-            alloy_rlp::Encodable::encode(&addr, &mut bytes);
-        }
-
         if self.tx_type == 0 {
-            out.put_slice(&bytes);
+            self.receipt.rlp_encode_with_bloom(&self.logs_bloom, out);
         } else {
             out.put_u8(self.tx_type);
-            out.put_slice(&bytes);
+            self.receipt.rlp_encode_with_bloom(&self.logs_bloom, out);
         }
     }
 
     fn length(&self) -> usize {
-        let mut len = self.receipt.rlp_encoded_length_with_bloom(&self.logs_bloom);
-        if let Some(addr) = self.contract_address {
-            len += alloy_rlp::Encodable::length(&addr);
-        }
+        let len = self.receipt.rlp_encoded_length_with_bloom(&self.logs_bloom);
         if self.tx_type == 0 {
             len
         } else {
@@ -572,16 +562,10 @@ impl alloy_rlp::Decodable for Receipt {
             t
         };
         let rb = alloy_consensus::ReceiptWithBloom::<ConsensusReceipt>::decode(buf)?;
-        let contract_address = if !buf.is_empty() {
-            Some(Address::decode(buf)?)
-        } else {
-            None
-        };
         Ok(Receipt {
             tx_type,
             receipt: rb.receipt,
             logs_bloom: rb.logs_bloom,
-            contract_address,
         })
     }
 }
@@ -641,7 +625,6 @@ impl Default for Receipt {
                 logs: Vec::new(),
             },
             logs_bloom: Bloom::ZERO,
-            contract_address: None,
         }
     }
 }
