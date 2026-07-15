@@ -147,6 +147,13 @@ impl RPCEngine {
             let _ = self.event_tx.send(EngineEvent::NewTransaction { tx, is_local });
         } else {
             if is_local {
+                // Fetch the latest state nonce again to check if the transaction was just included
+                let latest_state_nonce = self.read_storage.transaction_count(from, BlockId::Hash(head_hash.into()), None).unwrap_or(state_nonce);
+                if tx.nonce() < latest_state_nonce {
+                     warn!("[Engine] Rejected local transaction {:?} because it was already included (nonce: {}, state_nonce: {})", hash, tx.nonce(), latest_state_nonce);
+                     return Err(RpcError::InvalidParams(format!("Nonce too low: expected {}, got {}", latest_state_nonce, tx.nonce())));
+                }
+
                 warn!("[Engine] Rejected local transaction {:?} due to nonce collision or stale nonce (nonce: {}, state_nonce: {}, next_pending: {})", hash, tx.nonce(), state_nonce, next_pending_nonce);
 
                 // If the mempool is stale, trigger a revalidation for this sender

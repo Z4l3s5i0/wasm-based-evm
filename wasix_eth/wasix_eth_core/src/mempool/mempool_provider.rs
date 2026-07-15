@@ -277,10 +277,19 @@ impl MempoolProvider for Mempool {
     }
 
     async fn nonce_lookup(&self, address: Address, state_nonce: u64) -> (u64, u64) {
-        let next_pending = self.inner.pending_transactions.get(&address)
-            .and_then(|q| q.back().map(|t| t.nonce() + 1))
-            .unwrap_or(state_nonce);
-        let next_pending = std::cmp::max(next_pending, state_nonce);
+        let next_pending = if let Some(q) = self.inner.pending_transactions.get(&address) {
+            let mut expected = state_nonce;
+            for tx in q.iter() {
+                if tx.nonce() == expected {
+                    expected += 1;
+                } else if tx.nonce() > expected {
+                    break;
+                }
+            }
+            expected
+        } else {
+            state_nonce
+        };
         (state_nonce, next_pending)
     }
 }

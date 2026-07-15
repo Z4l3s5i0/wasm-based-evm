@@ -41,7 +41,10 @@ impl<'a> TransactionExecutor<'a> {
         cumulative_gas_used: &mut u64,
         state_root: Option<B256>,
     ) -> Result<TransactionExecutionResult> {
-        self.validate_transaction(tx)?;
+        let recovered = tx.clone().try_into_recovered().map_err(|e| anyhow::anyhow!("Failed to recover signer: {}", e))?;
+        let sender = recovered.signer();
+        
+        self.validate_transaction_with_state(tx, sender, state_root)?;
 
         let start_time = std::time::Instant::now();
 
@@ -161,7 +164,12 @@ impl<'a> TransactionExecutor<'a> {
         })
     }
 
-    fn validate_transaction(&self, tx: &Transaction) -> Result<()> {
+    fn validate_transaction_with_state(&self, tx: &Transaction, sender: Address, state_root: Option<B256>) -> Result<()> {
+        let account = self.batch.account(sender, state_root)?.unwrap_or_default();
+        if tx.nonce() != account.nonce {
+            return Err(anyhow::anyhow!("Nonce mismatch for sender {:?}: expected {}, got {}", sender, account.nonce, tx.nonce()));
+        }
+
         if let Some(tx_chain_id) = tx.chain_id() {
             if tx_chain_id != self.env.chain_id.low_u64() {
                 return Err(anyhow::anyhow!("Invalid chain ID: expected {}, got {}", self.env.chain_id.low_u64(), tx_chain_id));
@@ -201,6 +209,7 @@ impl<'a> TransactionExecutor<'a> {
 
         Ok(())
     }
+
 
     fn prepare_backend(&self, tx: &Transaction, sender: Address, state_root: Option<B256>) -> Result<SputnikBackend<'a>> {
         let mut hot_accounts = HashSet::new();

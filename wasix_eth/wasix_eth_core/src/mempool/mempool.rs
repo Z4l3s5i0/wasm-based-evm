@@ -131,10 +131,22 @@ impl Mempool {
     /// Get the next expected nonce for an address, considering pending transactions in the mempool.
     /// If no pending transactions exist, returns the provided state nonce.
     pub async fn next_expected_nonce(&self, address: Address, state_nonce: u64) -> u64 {
-        let mempool_next = self.inner.pending_transactions.get(&address)
-            .and_then(|q| q.back().map(|t| t.nonce() + 1))
-            .unwrap_or(state_nonce);
-        std::cmp::max(mempool_next, state_nonce)
+        if let Some(q) = self.inner.pending_transactions.get(&address) {
+            let mut expected = state_nonce;
+            // The queue is sorted by nonce
+            for tx in q.iter() {
+                if tx.nonce() == expected {
+                    expected += 1;
+                } else if tx.nonce() > expected {
+                    // We found a gap, return the expected nonce to fill it
+                    break;
+                }
+                // if tx.nonce() < expected, it's a stale transaction we should ignore
+            }
+            expected
+        } else {
+            state_nonce
+        }
     }
 
     /// Optimized transaction selection using a Priority Queue.
