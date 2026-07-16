@@ -552,6 +552,9 @@ impl<'a, S: StateProvider + StateWriter> EthTrie<'a, S> {
     }
 
     fn get_node(&mut self, hash: B256) -> anyhow::Result<MyTrieNode> {
+        if hash == EMPTY_ROOT_HASH {
+            return Ok(MyTrieNode::EmptyRoot);
+        }
         if let Some(node) = self.cache.get(&hash) {
             return Ok(node.clone());
         }
@@ -561,7 +564,9 @@ impl<'a, S: StateProvider + StateWriter> EthTrie<'a, S> {
         } else {
             match self.state.trie_node(hash)? {
                 Some(bytes) => bytes.to_vec(),
-                None => return Ok(MyTrieNode::EmptyRoot),
+                None => {
+                    return Err(anyhow::anyhow!("Trie node not found: {:?}", hash));
+                }
             }
         };
 

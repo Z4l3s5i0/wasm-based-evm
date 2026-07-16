@@ -709,6 +709,7 @@ impl PayloadProcessor {
             let _ = batch.remove_payload_by_block_hash(block_hash);
 
             batch.commit().map_err(|e| RpcError::Internal(e.to_string()))?;
+            info!("[PayloadProcessor] Block {} (hash: {}) successfully committed to storage", block_number, block_hash);
             Ok(())
         }).await.map_err(|e| RpcError::Internal(format!("Storage task panicked: {}", e)))??;
 

@@ -1,11 +1,12 @@
 use wasix_eth_types::*;
 use wasix_eth_storage::write::BatchWriter;
 use wasix_eth_storage::read_traits::{AccountProvider, StorageProvider};
-use wasix_eth_storage::write_traits::{AccountWriter, BytecodeWriter, StorageWriter};
+use wasix_eth_storage::write_traits::{AccountWriter, BytecodeWriter, StorageWriter, StateWriter};
 use wasix_eth_utils::debug;
 use evm::backend::OverlayedChangeSet;
 use anyhow::Result;
 use crate::backend::SputnikBackend;
+use alloy_rlp::Encodable;
 
 pub struct StateApplier<'a> {
     pub batch: &'a BatchWriter,
@@ -41,6 +42,13 @@ impl<'a> StateApplier<'a> {
 
             trie_account.balance = final_balance;
             self.batch.update_account(addr, trie_account)?;
+            
+            // Sync PlainState and HashedState
+            let mut acc_rlp = Vec::new();
+            trie_account.encode(&mut acc_rlp);
+            let acc_rlp_bytes = Bytes::from(acc_rlp);
+            self.batch.update_plain_state(addr, acc_rlp_bytes.clone())?;
+            self.batch.update_hashed_state(keccak256(addr), acc_rlp_bytes)?;
         }
 
         // 2. Nonces
@@ -51,6 +59,13 @@ impl<'a> StateApplier<'a> {
             debug!("[Execution] Nonce update: addr={:?}, old={}, new={}", addr, trie_account.nonce, nonce.as_u64());
             trie_account.nonce = nonce.as_u64();
             self.batch.update_account(addr, trie_account)?;
+            
+            // Sync PlainState and HashedState
+            let mut acc_rlp = Vec::new();
+            trie_account.encode(&mut acc_rlp);
+            let acc_rlp_bytes = Bytes::from(acc_rlp);
+            self.batch.update_plain_state(addr, acc_rlp_bytes.clone())?;
+            self.batch.update_hashed_state(keccak256(addr), acc_rlp_bytes)?;
         }
 
         // 3. Codes
@@ -63,6 +78,13 @@ impl<'a> StateApplier<'a> {
             trie_account.code_hash = code_hash;
             self.batch.insert_bytecode(code_hash, code.clone().into())?;
             self.batch.update_account(addr, trie_account)?;
+            
+            // Sync PlainState and HashedState
+            let mut acc_rlp = Vec::new();
+            trie_account.encode(&mut acc_rlp);
+            let acc_rlp_bytes = Bytes::from(acc_rlp);
+            self.batch.update_plain_state(addr, acc_rlp_bytes.clone())?;
+            self.batch.update_hashed_state(keccak256(addr), acc_rlp_bytes)?;
         }
 
         // 4. Storage Resets
@@ -82,6 +104,13 @@ impl<'a> StateApplier<'a> {
             self.batch.storage(addr, slot_b256, state_root).unwrap_or_default();
 
             self.batch.update_storage(addr, slot_b256, val_u256)?;
+            
+            // Sync HashedState for storage
+            let hashed_addr = keccak256(addr);
+            let hashed_slot = keccak256(slot_b256);
+            let combined_key = keccak256([hashed_addr.0, hashed_slot.0].concat());
+            let val_bytes = val_u256.to_be_bytes::<32>();
+            self.batch.update_hashed_state(combined_key, Bytes::from(val_bytes.to_vec()))?;
         }
 
         for address in &changeset.touched { affected_accounts.insert(*address); }
@@ -107,8 +136,16 @@ impl<'a> StateApplier<'a> {
                 if eip161 && SputnikBackend::is_account_empty(&trie_account) {
                     debug!("[Execution] Removing empty account: addr={:?}", addr);
                     self.batch.remove_account(addr)?;
+                    self.batch.remove_plain_state(addr)?;
                 } else {
                     self.batch.update_account(addr, trie_account)?;
+                    
+                    // Sync PlainState and HashedState
+                    let mut acc_rlp = Vec::new();
+                    trie_account.encode(&mut acc_rlp);
+                    let acc_rlp_bytes = Bytes::from(acc_rlp);
+                    self.batch.update_plain_state(addr, acc_rlp_bytes.clone())?;
+                    self.batch.update_hashed_state(keccak256(addr), acc_rlp_bytes)?;
                 }
             } else {
                  let trie_account = TrieAccount {
@@ -119,6 +156,13 @@ impl<'a> StateApplier<'a> {
                  };
                  if !SputnikBackend::is_account_empty(&trie_account) {
                     self.batch.update_account(addr, trie_account)?;
+                    
+                    // Sync PlainState and HashedState
+                    let mut acc_rlp = Vec::new();
+                    trie_account.encode(&mut acc_rlp);
+                    let acc_rlp_bytes = Bytes::from(acc_rlp);
+                    self.batch.update_plain_state(addr, acc_rlp_bytes.clone())?;
+                    self.batch.update_hashed_state(keccak256(addr), acc_rlp_bytes)?;
                  }
             }
         }

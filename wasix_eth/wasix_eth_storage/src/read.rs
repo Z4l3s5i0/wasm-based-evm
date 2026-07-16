@@ -444,14 +444,6 @@ impl DatabaseReadProvider {
             let node_bytes = match self.trie_node(current_hash)? {
                 Some(bytes) => bytes,
                 None => {
-                    // Try combined key lookup if hash lookup fails
-                    let combined_key = alloy_primitives::keccak256([root.0, hashed_address.0].concat());
-                    if let Some(bytes) = self.trie_node(combined_key)? {
-                        let mut buf = &bytes.0[..];
-                        if let Ok(acc) = TrieAccount::decode(&mut buf) {
-                            return Ok(Some(acc));
-                        }
-                    }
                     return Ok(None)
                 },
             };
@@ -850,8 +842,18 @@ impl StateProvider for DatabaseReadProvider {
     fn trie_node(&self, hash: B256) -> Result<Option<Bytes>> {
         let tx = self.db.begin_read()?;
         let table = tx.open_table(TrieNodes::definition())?;
-        let value = table.get(hash)?;
-        Ok(value.map(|v| v.value()))
+        
+        // Standard lookup
+        if let Some(value) = table.get(hash)? {
+            return Ok(Some(value.value()));
+        }
+        
+        // If hash represents a combined key H(root || hash) used in BatchWriter,
+        // it would have been found above. If we are looking for a node by its hash
+        // but it was stored by combined key only, we'd need the root.
+        // However, standard EthTrie uses hashes of RLP.
+        
+        Ok(None)
     }
 }
 

@@ -1,4 +1,5 @@
-use wasix_eth_types::{Address, Block, BlockBody, Bytes, Header, PayloadId, PeerEntry, Receipt, Result, Transaction, TrieAccount, B256, U256, BlockNumberOrTag, BlobsBundleV1};
+use wasix_eth_types::{Address, Block, BlockBody, Bytes, Header, PayloadId, PeerEntry, Receipt, Result, Transaction, TrieAccount, B256, U256, BlockId, BlockNumberOrTag, BlobsBundleV1};
+use wasix_eth_utils::debug;
 use redb::{Database, WriteTransaction, ReadableTable, ReadableDatabase};
 use crate::codecs::Table;
 use crate::tables::*;
@@ -7,7 +8,6 @@ use std::sync::Mutex;
 use std::sync::Arc;
 use crate::write_traits::{AccountWriter, BlockWriter, BytecodeWriter, ChangeSetWriter, HeaderWriter, MetadataWriter, PeerDiscoveryWriter, StateWriter, StorageWriter, TransactionWriter};
 use crate::read_traits::{AccountProvider, BytecodeProvider, StateProvider, StorageProvider, HeaderProvider};
-use wasix_eth_types::BlockId;
 use crate::read::DatabaseReadProvider;
 use wasix_eth_types::ReceiptMeta;
 use alloy_rlp::Decodable;
@@ -120,6 +120,7 @@ impl BatchWriter {
             }
         };
         
+        debug!("[Trie] calculate_state_root_internal: initial_root={:?}", initial_root);
         let mut trie = EthTrie::new(self, initial_root);
 
         // 1. Load addresses that were modified in this batch
@@ -137,10 +138,17 @@ impl BatchWriter {
                 // EIP-161 check
                 if is_eip161 && acc.nonce == 0 && acc.balance == U256::ZERO && (acc.code_hash == B256::default() || acc.code_hash == alloy_primitives::KECCAK256_EMPTY) {
                     if storage_root == alloy_trie::EMPTY_ROOT_HASH {
+                        debug!("[Trie] Deleting empty account from trie: addr={:?}", addr);
                         trie.delete(hashed_addr)?;
                         // Also remove from Accounts table
                         let mut table = self.wtx.open_table(Accounts::definition())?;
                         table.remove(addr)?;
+                        
+                        // Sync PlainState and HashedState removal
+                        let mut plain_table = self.wtx.open_table(PlainState::definition())?;
+                        plain_table.remove(addr)?;
+                        let mut hashed_table = self.wtx.open_table(HashedState::definition())?;
+                        hashed_table.remove(hashed_addr)?;
                         continue;
                     }
                 }
@@ -152,20 +160,41 @@ impl BatchWriter {
                     code_hash: if acc.code_hash == B256::default() { alloy_primitives::KECCAK256_EMPTY } else { acc.code_hash },
                 };
 
+                debug!("[Trie] Updating account in trie: addr={:?}, balance={}, nonce={}, storage={:?}, code={:?}", addr, trie_acc.balance, trie_acc.nonce, trie_acc.storage_root, trie_acc.code_hash);
+
                 // Update Accounts table with new storage root
                 let mut table = self.wtx.open_table(Accounts::definition())?;
                 table.insert(addr, trie_acc)?;
 
-                let mut buf = Vec::new();
-                alloy_rlp::Encodable::encode(&trie_acc, &mut buf);
-                trie.insert(hashed_addr, buf)?;
+                // Sync PlainState and HashedState
+                let mut acc_rlp = Vec::new();
+                alloy_rlp::Encodable::encode(&trie_acc, &mut acc_rlp);
+                let acc_rlp_bytes = Bytes::from(acc_rlp);
+                
+                let mut plain_table = self.wtx.open_table(PlainState::definition())?;
+                plain_table.insert(addr, acc_rlp_bytes.clone())?;
+                let mut hashed_table = self.wtx.open_table(HashedState::definition())?;
+                hashed_table.insert(hashed_addr, acc_rlp_bytes.clone())?;
+
+                trie.insert(hashed_addr, acc_rlp_bytes.0.to_vec())?;
             } else {
+                debug!("[Trie] Account not found for trie update: addr={:?}", addr);
                 trie.delete(hashed_addr)?;
+                // Remove from PlainState and HashedState as well
+                let mut plain_table = self.wtx.open_table(PlainState::definition())?;
+                plain_table.remove(addr)?;
+                let mut hashed_table = self.wtx.open_table(HashedState::definition())?;
+                hashed_table.remove(hashed_addr)?;
             }
         }
 
         let root = trie.root_hash();
+        debug!("[Trie] calculate_state_root_internal: final_root={:?}", root);
         trie.commit()?;
+        
+        // Ensure ALL dirty nodes are flushed before returning the root.
+        // EthTrie::commit flushes nodes to self.state (which is self/BatchWriter).
+        // BatchWriter::update_trie_node inserts them into the wtx table.
         
         Ok(root)
     }
@@ -193,9 +222,23 @@ impl BatchWriter {
             if let Ok(value) = self.storage(address, slot, state_root) {
                 if value == U256::ZERO {
                     trie.delete(hashed_slot)?;
+                    
+                    // Sync HashedState
+                    let hashed_addr = alloy_primitives::keccak256(address);
+                    let combined_key = alloy_primitives::keccak256([hashed_addr.0, hashed_slot.0].concat());
+                    let mut table = self.wtx.open_table(HashedState::definition())?;
+                    table.remove(combined_key)?;
                 } else {
                     let mut buf = Vec::new();
                     alloy_rlp::Encodable::encode(&value, &mut buf);
+                    
+                    // Sync HashedState
+                    let val_bytes = value.to_be_bytes::<32>();
+                    let hashed_addr = alloy_primitives::keccak256(address);
+                    let combined_key = alloy_primitives::keccak256([hashed_addr.0, hashed_slot.0].concat());
+                    let mut table = self.wtx.open_table(HashedState::definition())?;
+                    table.insert(combined_key, Bytes::from(val_bytes.to_vec()))?;
+
                     trie.insert(hashed_slot, buf)?;
                 }
             }
@@ -658,7 +701,7 @@ impl StateWriter for BatchWriter {
 
     fn update_trie_node(&self, hash: B256, node: Bytes) -> Result<()> {
         let mut table = self.wtx.open_table(TrieNodes::definition())?;
-        table.insert(hash, node)?;
+        table.insert(hash, node.clone())?;
         Ok(())
     }
 }

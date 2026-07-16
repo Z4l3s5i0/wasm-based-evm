@@ -62,7 +62,10 @@ impl<'a> RuntimeBaseBackend for SputnikBackend<'a> {
                 }
                 match self.storage_provider.bytecode(acc.code_hash) {
                     Ok(Some(code)) => code.to_vec(),
-                    _ => Vec::new(),
+                    _ => {
+                        wasix_eth_utils::debug!("[Backend] Bytecode not found for hash: {:?}", acc.code_hash);
+                        Vec::new()
+                    },
                 }
             }
             _ => Vec::new(),
