@@ -8,7 +8,7 @@ members = [
     "wasix_eth_app",
     "wasix_eth_utils",
     "wasix_eth_core",
-    "testing",
+#    "testing",
 ]
 resolver = "3"
 
@@ -90,14 +90,14 @@ base64 = "0.22.1"
 k256 = { version = "0.13.1", features = ["ecdsa", "arithmetic", "ecdh"] }
 
 # When using something different than wasix
-
-socket2 = { version="0.4.5" , default-features = false, features = ["all"]}
-tokio-rustls = { version = "0.24.1", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
-reqwest = {version = "0.11.8", default-features = false, features = ["json", "serde_json"]}
-jsonrpsee = {version = "0.26.0", default-features = false, features = ["tracing", "server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
-rustls = { version = "0.23.31", default-features = false, features = [ "tls12"] }
-ring = { version = "0.17.7" }
-tokio = { version = "1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
+#
+#socket2 = { version="0.4.5" , default-features = false, features = ["all"]}
+#tokio-rustls = { version = "0.24.1", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
+#reqwest = {version = "0.11.8", default-features = false, features = ["json", "serde_json"]}
+#jsonrpsee = {version = "0.26.0", default-features = false, features = ["tracing", "server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
+#rustls = { version = "0.23.31", default-features = false, features = [ "tls12"] }
+#ring = { version = "0.17.7" }
+#tokio = { version = "1.47.0", default-features = false, features = [ "rt-multi-thread", "rt", "macros", "sync", "time", "io-util", "net" ] }
 
 
 
@@ -111,33 +111,33 @@ dashmap = { version = "=5.5.3" }
 im = { version = "15.1.0" }
 parking_lot = "=0.12.1"
 # When using wasix
-#
-#wasmer = { version = "7.1.0", default-features=false, features=["js-default"]}
-#
-#wasix = { version = "0.13.1" }
-#
-#ring = { git = "https://github.com/wasix-org/ring", branch = "0.17.7" }
-#reqwest = {git = "https://github.com/wasix-org/reqwest.git", branch = "rustls-0.21.8", default-features = false, features = ["json", "serde_json"]}
-#jsonrpsee = {git = "https://github.com/Z4l3s5i0/jsonrpsee", branch = "fix", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
-#tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "full" ] }
-#tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
-#socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
-#rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.8", default-features = false, features = ["tls12", "logging"] }
-#
-#[patch.crates-io]
-#wasm-bindgen = {git = "https://github.com/wasix-org/wasm-bindgen.git" , branch = "wasi"}
-#getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.15" }
-#mio = { git = "https://github.com/wasix-org/mio" }
-#parking_lot = { git = "https://github.com/wasix-org/parking_lot.git", branch = "v0.12.1"}
-#parking_lot_core = {git = "https://github.com/wasix-org/parking_lot.git", branch = "v0.12.1"}
-#h2 = { git = "https://github.com/wasix-org/h2", branch = "wasix-0.4.12" }
-#hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.28" }
-#ring = {git = "https://github.com/wasix-org/ring", branch = "0.17.7"}
-#rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31" }
-#tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0" }
-#socket2 = { git = "https://github.com/wasix-org/socket2", branch = "wasix" }
-#
-#tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main" }
-#libc = { git = "https://github.com/john-sharratt/libc.git", rev = "682f9e91" }
-#
-#
+
+wasmer = { version = "7.1.0", default-features=false, features=["js-default"]}
+
+wasix = { version = "0.13.1" }
+
+ring = { git = "https://github.com/wasix-org/ring", branch = "0.17.7" }
+reqwest = {git = "https://github.com/wasix-org/reqwest.git", branch = "rustls-0.21.8", default-features = false, features = ["json", "serde_json"]}
+jsonrpsee = {git = "https://github.com/Z4l3s5i0/jsonrpsee", branch = "fix", default-features = false, features = ["server", "jsonrpsee-proc-macros", "jsonrpsee-core", "client-core", "jsonrpsee-types"]}
+tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0", default-features = false, features = [ "full" ] }
+tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main", default-features = false, features = ["logging", "tls12", "dangerous_configuration", "secret_extraction"] }
+socket2 = { git = "https://github.com/wasix-org/socket2.git", branch = "wasix", default-features = false, features = ["all"]}
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "v0.21.8", default-features = false, features = ["tls12", "logging"] }
+
+[patch.crates-io]
+wasm-bindgen = {git = "https://github.com/wasix-org/wasm-bindgen.git" , branch = "wasi"}
+getrandom = {git = "https://github.com/rust-random/getrandom", tag = "v0.2.17" }
+mio = { git = "https://github.com/wasix-org/mio" }
+parking_lot = { git = "https://github.com/wasix-org/parking_lot.git", branch = "v0.12.1"}
+parking_lot_core = {git = "https://github.com/wasix-org/parking_lot.git", branch = "v0.12.1"}
+h2 = { git = "https://github.com/wasix-org/h2", branch = "wasix-0.4.12" }
+hyper = { git = "https://github.com/wasix-org/hyper", branch = "v0.14.28" }
+ring = {git = "https://github.com/wasix-org/ring", branch = "0.17.7"}
+rustls = { git = "https://github.com/wasix-org/rustls.git", branch = "wasix-0.23.31" }
+tokio = { git = "https://github.com/wasix-org/tokio.git", branch = "wasix-1.47.0" }
+socket2 = { git = "https://github.com/wasix-org/socket2", branch = "wasix" }
+
+tokio-rustls = { git = "https://github.com/wasix-org/tokio-rustls.git", branch = "main" }
+libc = { git = "https://github.com/john-sharratt/libc.git", rev = "682f9e91" }
+
+
