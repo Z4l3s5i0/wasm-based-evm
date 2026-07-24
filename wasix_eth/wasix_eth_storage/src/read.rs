@@ -449,17 +449,7 @@ impl DatabaseReadProvider {
             };
 
             let mut data = &node_bytes.0[..];
-            let node = match MyTrieNode::decode(&mut data) {
-                Ok(n) => n,
-                Err(_) => {
-                    // If it's not a trie node, it might be the account RLP itself
-                    let mut buf = &node_bytes.0[..];
-                    if let Ok(acc) = TrieAccount::decode(&mut buf) {
-                        return Ok(Some(acc));
-                    }
-                    return Ok(None);
-                }
-            };
+            let node = MyTrieNode::decode(&mut data)?;
 
             match node {
                 MyTrieNode::Branch(branch) => {

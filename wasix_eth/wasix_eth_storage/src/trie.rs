@@ -745,7 +745,7 @@ impl<'a, S: StateProvider + StateWriter> EthTrie<'a, S> {
                 self.walk_recursive_rlp(&ext.child, next_path, entries)?;
             }
             MyTrieNode::Branch(branch) => {
-                for i in 0..64 {
+                for i in 0..16 {
                     let child_rlp = &branch.stack[i];
                     if !child_rlp.is_empty() {
                         let mut next_path = path.clone();
