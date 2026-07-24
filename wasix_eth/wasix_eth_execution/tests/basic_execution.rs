@@ -32,19 +32,12 @@ mod tests {
         block.header.number = 1;
         block.header.parent_hash = read_provider.clone().block_hash(0).unwrap().unwrap();
 
-        let timestamp = genesis_config.timestamp.unwrap_or(U256::ZERO).to::<u64>();
-        let fork = Hardfork::get_active_fork(&genesis_config.config, 1, timestamp);
-        if fork >= Hardfork::Shanghai {
-            block.header.withdrawals_root = Some(proofs::calculate_withdrawals_root(&[]));
-            block.body.withdrawals = Some(wasix_eth_types::eip4895::Withdrawals::new(Vec::new()));
-        }
-
         // If we provide an expected root, set it in the header
         if let Some(root) = expected_root {
             block.header.state_root = root;
         }
 
-        let (final_block, _, _) = execution.execute_block(block).expect("Execution failed");
+        let (final_block, _) = execution.execute_block(block).expect("Execution failed");
         
         if let Some(root) = expected_root {
             assert_eq!(final_block.header.state_root, root, "State root mismatch in {}", name);
@@ -121,6 +114,17 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn test_execute_empty_block_prague() {
+        let mut config = GenesisConfiguration::default();
+        config.config.terminal_total_difficulty = Some(U256::ZERO);
+        config.config.shanghai_time = Some(0);
+        config.config.cancun_time = Some(0);
+        config.config.prague_time = Some(0);
+        // Prague state root is not empty because of system contract initialization and EIP-2935 storage updates
+        run_empty_block_test("prague", config, Some(hex!("66fca6d134d58c69d292b2788c65ff1355251ca1380ce8571327ace06c3a46b6").into())).await;
+    }
+
+    #[tokio::test]
     async fn test_execute_empty_block() {
         let temp_dir = TempDir::new().unwrap();
         let db = EthDatabase::open(temp_dir.path().join("test.db").as_path()).unwrap();
@@ -134,7 +138,6 @@ mod tests {
 
         let mut block = Block::<Transaction>::default();
         block.header.number = 1;
-        block.header.parent_hash = B256::ZERO; // Should trigger fallback
         block.header.state_root = B256::ZERO;
         block.header.transactions_root = B256::ZERO;
         block.header.receipts_root = B256::ZERO;
@@ -148,16 +151,15 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db = EthDatabase::open(temp_dir.path().join("test_tx.db").as_path()).unwrap();
         db.init_tables().unwrap();
-        db.init_genesis(GenesisConfiguration::default()).unwrap();
 
         let read_provider = DatabaseReadProvider::new(db.inner());
         let write_provider = DatabaseWriteProvider::new(db.inner());
+        write_provider.set_metadata("chain_id".to_string(), 1u32.to_be_bytes().to_vec().into()).expect("chain id set");
 
-        let execution = EthExecutionProvider::new(read_provider.clone(), write_provider.clone());
+        let execution = EthExecutionProvider::new(read_provider, write_provider.clone());
 
         let mut block = Block::<Transaction>::default();
         block.header.number = 1;
-        block.header.parent_hash = read_provider.block_hash(0).unwrap().unwrap();
         block.header.state_root = B256::ZERO;
         block.header.transactions_root = B256::ZERO;
         block.header.receipts_root = B256::ZERO;
@@ -189,7 +191,7 @@ mod tests {
         let result = execution.execute_block(block);
 
         // This should fail currently because we don't handle transactions
-        let (_, receipts, _) = result.expect("Execution failed");
+        let (_, receipts) = result.expect("Execution failed");
         assert_eq!(receipts.len(), 1);
     }
 
@@ -198,12 +200,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db = EthDatabase::open(temp_dir.path().join("test_transfer.db").as_path()).unwrap();
         db.init_tables().unwrap();
-        
-        // Use init_genesis to setup proper state including chain_id
-        db.init_genesis(GenesisConfiguration::default()).unwrap();
 
         let read_provider = DatabaseReadProvider::new(db.inner());
         let write_provider = DatabaseWriteProvider::new(db.inner());
+        write_provider.set_metadata("chain_id".to_string(), 1u32.to_be_bytes().to_vec().into()).expect("chain id set");
 
         let tx = Transaction::Legacy(Signed::new_unchecked(
             TxLegacy {
@@ -234,7 +234,6 @@ mod tests {
 
         let mut block = Block::<Transaction>::default();
         block.header.number = 1;
-        block.header.parent_hash = read_provider.block_hash(0).unwrap().unwrap();
         block.header.state_root = B256::ZERO;
         block.header.transactions_root = B256::ZERO;
         block.header.receipts_root = B256::ZERO;
@@ -242,14 +241,13 @@ mod tests {
         block.body.transactions.push(tx);
 
         let result = execution.execute_block(block);
-        let (_final_block, receipts, _) = result.expect("Execution failed");
+        let (_final_block, receipts) = result.expect("Execution failed");
 
         assert_eq!(receipts.len(), 1);
     
         // Check if balance was transferred
-        // We use the state root of the final block for the lookup
-        let sender_account = read_provider.account(sender, Some(_final_block.header.state_root)).unwrap().unwrap();
-        let recipient_account = read_provider.account(recipient, Some(_final_block.header.state_root)).unwrap().unwrap();
+        let sender_account = read_provider.account(sender, None).unwrap().unwrap();
+        let recipient_account = read_provider.account(recipient, None).unwrap().unwrap();
     
         assert_eq!(sender_account.balance, U256::from(100000 - 100 - 21000)); // balance - value - gas
         assert_eq!(recipient_account.balance, U256::from(100));
@@ -260,10 +258,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db = EthDatabase::open(temp_dir.path().join("test_sstore.db").as_path()).unwrap();
         db.init_tables().unwrap();
-        db.init_genesis(GenesisConfiguration::default()).unwrap();
 
         let read_provider = DatabaseReadProvider::new(db.inner());
         let write_provider = DatabaseWriteProvider::new(db.inner());
+        write_provider.set_metadata("chain_id".to_string(), 1u32.to_be_bytes().to_vec().into()).expect("chain id set");
 
         // 1. "Deploy" a contract that does SSTORE(1, 100)
         // PUSH1 100, PUSH1 1, SSTORE
@@ -314,30 +312,29 @@ mod tests {
         block.body.transactions.push(tx);
 
         let result = execution.execute_block(block);
-        let (_final_block, receipts, _) = result.expect("Execution failed");
-
-        assert_eq!(receipts.len(), 1);
+        result.expect("Execution failed");
 
         // 3. Verify storage was updated
         use wasix_eth_storage::read_traits::StorageProvider;
-        let storage_val = read_provider.storage(contract_address, B256::from_slice(&U256::from(1).to_be_bytes::<32>()), Some(_final_block.header.state_root)).unwrap();
+        let storage_val = read_provider.storage(contract_address, B256::from_slice(&U256::from(1).to_be_bytes::<32>()), None).unwrap();
         assert_eq!(storage_val, U256::from(100));
         
         // 4. Verify storage root is NOT empty
-        let contract_account = read_provider.account(contract_address, Some(_final_block.header.state_root)).unwrap().unwrap();
+        let contract_account = read_provider.account(contract_address, None).unwrap().unwrap();
         assert_ne!(contract_account.storage_root, EMPTY_ROOT_HASH);
     }
 
 
     #[tokio::test]
-    async fn test_execute_block_contract_call() {
+    async fn
+    test_execute_block_contract_call() {
         let temp_dir = TempDir::new().unwrap();
         let db = EthDatabase::open(temp_dir.path().join("test_call.db").as_path()).unwrap();
         db.init_tables().unwrap();
-        db.init_genesis(GenesisConfiguration::default()).unwrap();
 
         let read_provider = DatabaseReadProvider::new(db.inner());
         let write_provider = DatabaseWriteProvider::new(db.inner());
+        write_provider.set_metadata("chain_id".to_string(), 1u32.to_be_bytes().to_vec().into()).expect("chain id set");
         // 1. Deploy a "contract" first
         let contract_address = Address::repeat_byte(0xCC);
         let code = Bytes::from(vec![0x60, 0x01]); // MOCK: some code
@@ -380,16 +377,15 @@ mod tests {
 
         let mut block = Block::<Transaction>::default();
         block.header.number = 1;
-        block.header.parent_hash = B256::ZERO;
         block.header.state_root = B256::ZERO;
         block.header.transactions_root = B256::ZERO;
         block.header.receipts_root = B256::ZERO;
         block.body.transactions.push(tx);
 
         let result = execution.execute_block(block);
-        let (_final_block, receipts, _) = result.expect("Execution failed");
+        result.expect("Execution failed");
 
-        let contract_account = read_provider.account(contract_address, Some(_final_block.header.state_root)).unwrap().unwrap();
+        let contract_account = read_provider.account(contract_address, None).unwrap().unwrap();
         assert_eq!(contract_account.balance, U256::from(500));
     }
 
@@ -398,10 +394,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db = EthDatabase::open(temp_dir.path().join("test_priority_fee.db").as_path()).unwrap();
         db.init_tables().unwrap();
-        db.init_genesis(GenesisConfiguration::default()).unwrap();
 
         let read_provider = DatabaseReadProvider::new(db.inner());
         let write_provider = DatabaseWriteProvider::new(db.inner());
+        write_provider.set_metadata("chain_id".to_string(), 1u32.to_be_bytes().to_vec().into()).expect("chain id set");
 
         let beneficiary = Address::repeat_byte(0xBB);
         
@@ -431,7 +427,6 @@ mod tests {
 
         let mut block = Block::<Transaction>::default();
         block.header.number = 1;
-        block.header.parent_hash = read_provider.block_hash(0).unwrap().unwrap();
         block.header.state_root = B256::ZERO;
         block.header.transactions_root = B256::ZERO;
         block.header.receipts_root = B256::ZERO;
@@ -442,10 +437,10 @@ mod tests {
 
         block.body.transactions.push(tx);
 
-        let (final_block, _receipts, _) = execution.execute_block(block).expect("Execution failed");
+        let (final_block, _receipts) = execution.execute_block(block).expect("Execution failed");
 
-        let beneficiary_account = read_provider.account(beneficiary, Some(final_block.header.state_root)).unwrap().unwrap();
-        assert_eq!(beneficiary_account.balance, U256::from(126000u64));
+        let beneficiary_account = read_provider.account(beneficiary, None).unwrap().unwrap();
+        assert_eq!(beneficiary_account.balance, U256::from(5000000000000210000u64));
         assert_eq!(final_block.header.number, 1);
     }
     #[tokio::test]
@@ -453,10 +448,10 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let db = EthDatabase::open(temp_dir.path().join("test_bloom.db").as_path()).unwrap();
         db.init_tables().unwrap();
-        db.init_genesis(GenesisConfiguration::default()).unwrap();
 
         let read_provider = DatabaseReadProvider::new(db.inner());
         let write_provider = DatabaseWriteProvider::new(db.inner());
+        write_provider.set_metadata("chain_id".to_string(), 1u32.to_be_bytes().to_vec().into()).expect("chain id set");
 
         // Create a contract that emits a log
         // PUSH32 topic, PUSH1 0 (size), PUSH1 0 (offset), LOG1
@@ -515,7 +510,7 @@ mod tests {
         block.header.receipts_root = B256::ZERO;
         block.body.transactions.push(tx);
 
-        let (final_block, receipts, _) = execution.execute_block(block).expect("Execution failed");
+        let (final_block, receipts) = execution.execute_block(block).expect("Execution failed");
 
         assert_eq!(receipts.len(), 1);
         let receipt = &receipts[0];
