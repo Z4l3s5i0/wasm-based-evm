@@ -57,12 +57,12 @@ WORKLOAD_PIDS=()
 BASE_PORT=8545
 for i in $(seq 0 $((NODES - 1))); do
     RPC_PORT=$((BASE_PORT + i))
-    RPC_URL="http://experiments-el-node-$i:$RPC_PORT"
+    RPC_URL="http://experiments-el-node-$i-1:$RPC_PORT"
     echo "Launching workload for node $i at $RPC_URL"
     # We pass --duration slightly longer than WORKLOAD_DURATION to ensure it doesn't exit early on its own
     # although we will kill it anyway.
     # We also redirect stdin from /dev/null because run_workload.sh uses docker run -it which needs a TTY or will fail without stdin
-    bash "$SCRIPT_DIR/../run_workload.sh" \
+    bash "$SCRIPT_DIR/run_workload.sh" \
         --duration $((WORKLOAD_DURATION)) \
         --network experiments_blockchain-net \
         --scenario "exp/uber" \

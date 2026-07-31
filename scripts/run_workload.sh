@@ -91,7 +91,7 @@ else
 fi
 
 EXTRA_ARGS=""
-DOCKER_OPTS="-it"
+DOCKER_OPTS="-i"
 # Check for network
 if [ -n "$NETWORK" ]; then
     DOCKER_OPTS="$DOCKER_OPTS --network $NETWORK"
