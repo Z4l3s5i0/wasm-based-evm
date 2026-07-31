@@ -62,11 +62,11 @@ for i in $(seq 0 $((NODES - 1))); do
     
     # Deriving private key for the account index i
     echo "Deriving private key for node $i..."
-    PRIV_KEY=$(docker run --rm ghcr.io/foundry-rs/foundry:latest 'cast wallet private-key "$MNEMONIC" $i' | grep -i "Private Key:" | sed 's/.*\(0x[0-9a-fA-F]*\).*/\1/')
+    PRIV_KEY=$(docker run --rm ghcr.io/foundry-rs/foundry:latest "cast wallet private-key \"$MNEMONIC\" $i" | sed -n 's/.*0x\([0-9a-fA-F]\{64\}\).*/\1/p')
 
-    # Validate PRIV_KEY length to avoid HexError(InvalidStringLength)
-    if [ ${#PRIV_KEY} -ne 66 ]; then
-        echo "Error: Invalid private key derived for node $i: '$PRIV_KEY'"
+    # Validate PRIV_KEY length (should be 64 for raw hex)
+    if [ ${#PRIV_KEY} -ne 64 ]; then
+        echo "Error: Invalid private key derived for node $i (length ${#PRIV_KEY}, expected 64): '$PRIV_KEY'"
         exit 1
     fi
 
