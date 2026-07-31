@@ -53,16 +53,23 @@ sleep 180
 
 # 4. Start run_workload for each node in background
 echo "Step 4: Starting workload for each node in background..."
+MNEMONIC="sleep moment list remain like wall lake industry canvas wonder ecology elite duck salad naive syrup frame brass utility club odor country obey pudding"
 WORKLOAD_PIDS=()
 BASE_PORT=8545
 for i in $(seq 0 $((NODES - 1))); do
     RPC_PORT=$((BASE_PORT + i))
     RPC_URL="http://experiments-el-node-$i-1:$RPC_PORT"
+    
+    # Deriving private key for the account index i
+    echo "Deriving private key for node $i..."
+    PRIV_KEY=$(docker run --rm ghcr.io/foundry-rs/foundry:latest cast wallet private-key --mnemonic "$MNEMONIC" --mnemonic-index "$i" | tail -n 1)
+
     echo "Launching workload for node $i at $RPC_URL"
     # We pass --duration slightly longer than WORKLOAD_DURATION to ensure it doesn't exit early on its own
     # although we will kill it anyway.
     # We also redirect stdin from /dev/null because run_workload.sh uses docker run -it which needs a TTY or will fail without stdin
     bash "$SCRIPT_DIR/run_workload.sh" \
+        --pk "$PRIV_KEY" \
         --duration $((WORKLOAD_DURATION)) \
         --network experiments_blockchain-net \
         --scenario "exp/uber" \
