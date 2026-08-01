@@ -1,8 +1,9 @@
 use anyhow::{Result, Context};
 use clap::{Parser, Subcommand};
-use redb::{Database, TableDefinition, ReadableDatabase, ReadableTable};
+use redb::{Database, TableDefinition, ReadableDatabase, ReadableTable, TableHandle};
 use serde_json::{Value, json};
-use std::path::Path;
+use wasix_eth_storage::codecs::{RlpValue, Table};
+use wasix_eth_storage::tables::*;
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -13,14 +14,17 @@ struct Cli {
 
 #[derive(Subcommand)]
 enum Commands {
-    /// Export metrics-server redb to JSON
-    Metrics {
-        /// Path to the metrics.redb file
+    /// Export metrics-server or EL node redb to JSON
+    Export {
+        /// Path to the redb file
         #[arg(short, long)]
         db_path: String,
-        /// Table to export (nodes, experiments, metric_samples, rpc_observations)
+        /// Table to export
         #[arg(short, long)]
         table: String,
+        /// Type of database (metrics, el)
+        #[arg(short, long, default_value = "metrics")]
+        db_type: String,
     },
     /// List tables in a redb file
     List {
@@ -34,8 +38,12 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
 
     match cli.command {
-        Commands::Metrics { db_path, table } => {
-            export_metrics(&db_path, &table)?;
+        Commands::Export { db_path, table, db_type } => {
+            if db_type == "el" {
+                export_el(&db_path, &table)?;
+            } else {
+                export_metrics(&db_path, &table)?;
+            }
         }
         Commands::List { db_path } => {
             list_tables(&db_path)?;
@@ -47,29 +55,15 @@ fn main() -> Result<()> {
 
 fn list_tables(db_path: &str) -> Result<()> {
     let db = Database::open(db_path).context("Failed to open database")?;
-    let read_txn = db.begin_read()?;
-    
     println!("Tables in {}:", db_path);
-    // redb doesn't easily expose list of table names without a write txn or knowing them
-    // but we can try some common ones
-    let common_tables = vec![
-        "nodes", "experiments", "metric_samples", "rpc_observations", 
-        "collection_errors", "latest_metrics", "counters",
-        "headers", "transactions", "accounts", "metadata"
-    ];
-
-    for table_name in common_tables {
-        let definition: TableDefinition<&str, &str> = TableDefinition::new(table_name);
-        if read_txn.open_table(definition).is_ok() {
-            println!("  - {}", table_name);
-        }
-        
-        let definition_u64: TableDefinition<&str, u64> = TableDefinition::new(table_name);
-        if read_txn.open_table(definition_u64).is_ok() {
-            println!("  - {} (u64 values)", table_name);
+    
+    if let Ok(write_txn) = db.begin_write() {
+        if let Ok(tables) = write_txn.list_tables() {
+            for table_handle in tables {
+                println!("  - {}", table_handle.name());
+            }
         }
     }
-
     Ok(())
 }
 
@@ -95,6 +89,60 @@ fn export_metrics(db_path: &str, table_name: &str) -> Result<()> {
         }));
     }
 
+    if results.is_empty() {
+        eprintln!("Warning: Table {} is empty in {}", table_name, db_path);
+    }
+    
     println!("{}", serde_json::to_string_pretty(&results)?);
     Ok(())
+}
+
+fn export_el(db_path: &str, table_name: &str) -> Result<()> {
+    let db = Database::open(db_path).context("Failed to open database")?;
+    let read_txn = db.begin_read()?;
+
+    macro_rules! try_export {
+        ($table_struct:ident) => {
+            if table_name == $table_struct::NAME {
+                let table = read_txn.open_table($table_struct::definition())?;
+                let mut results = Vec::new();
+                for item in table.iter()? {
+                    let (key, value) = item?;
+                    // We just want to export as hex if we don't want to deal with complex JSON serialization of all types
+                    // but we can try to use Debug if we want something readable.
+                    // For now, let's stick to hex for values to be safe and consistent with previous tool.
+                    results.push(json!({
+                        "key_debug": format!("{:?}", key.value()),
+                        "value_debug": format!("{:?}", value.value())
+                    }));
+                }
+                println!("{}", serde_json::to_string_pretty(&results)?);
+                return Ok(());
+            }
+        };
+    }
+
+    try_export!(Headers);
+    try_export!(HeaderTD);
+    try_export!(BlockBodies);
+    try_export!(Transactions);
+    try_export!(Receipts);
+    try_export!(ReceiptsMeta);
+    try_export!(CanonicalHeads);
+    try_export!(HeaderNumbers);
+    try_export!(TransactionLookup);
+    try_export!(Accounts);
+    try_export!(Storages);
+    try_export!(Bytecodes);
+    try_export!(AccountChangeSets);
+    try_export!(StorageChangeSets);
+    try_export!(PlainState);
+    try_export!(HashedState);
+    try_export!(TrieNodes);
+    try_export!(Metadata);
+    try_export!(Payloads);
+    try_export!(Forkchoice);
+    try_export!(ActivePeers);
+
+    Err(anyhow::anyhow!("Table {} not supported or recognized", table_name))
 }
