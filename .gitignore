@@ -17,3 +17,6 @@ target/
 .idea/
 hive/workspace
 workspace
+results/
+/results/
+/.venv/

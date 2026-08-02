@@ -92,8 +92,12 @@ else
     echo "Warning: No logs found for evaluation."
 fi
 
-# 4. Generate Summary
-echo "Analysis complete. Results are in $EXP_DIR/analysis"
+# 4. Generate Plots
+echo "Generating plots..."
+python "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots"
+
+# 5. Generate Summary
+echo "Analysis complete. Results are in $EXP_DIR/analysis and $EXP_DIR/plots"
 
 cat <<EOF > "$EXP_DIR/analysis/SUMMARY.md"
 # Experiment Analysis Summary
@@ -103,6 +107,7 @@ Date: $(date)
 ## Metrics
 - Metrics Server data exported to JSON files.
 - EL node data (Headers, BlockBodies, Transactions) exported per node.
+- Visualizations generated in [plots folder](../plots).
 
 ## Log Evaluation
 See [log_evaluation.txt](./log_evaluation.txt) for detailed log analysis results.

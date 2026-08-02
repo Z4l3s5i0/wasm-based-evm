@@ -137,6 +137,7 @@ EOF
 
 echo ""
 echo "Experiment results collected in: $EXP_DIR"
+echo "RESULT_DIR=$EXP_DIR"
 echo "Analysis guide created: $EXP_DIR/README_ANALYSIS.md"
 echo "Structure:"
 ls -F "$EXP_DIR"

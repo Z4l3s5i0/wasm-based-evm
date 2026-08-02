@@ -44,7 +44,8 @@ def process_logs(log_dir, target_chain_id=None):
         'blocks_executed': 0,
         'tx_executed': 0,
         'total_gas': 0,
-        'total_exec_ms': 0
+        'total_tx_exec_ms': 0,
+        'total_block_exec_ms': 0
     })
 
     # Sort files to process them in chronological order per node
@@ -108,7 +109,7 @@ def process_logs(log_dir, target_chain_id=None):
                             
                 elif event == 'TX_EXEC_END':
                     node_stats[node_id]['total_gas'] += int(data.get('gas_used', 0))
-                    node_stats[node_id]['total_exec_ms'] += int(data.get('elapsed_ms', 0))
+                    node_stats[node_id]['total_tx_exec_ms'] += int(data.get('elapsed_ms', 0))
 
                 elif event in ['P2P_RECV_BLOCK', 'BLOCK_RPC_RECV']:
                     block_hash = data.get('hash')
@@ -132,6 +133,7 @@ def process_logs(log_dir, target_chain_id=None):
                 elif event == 'BLOCK_EXEC_END':
                     block_hash = data.get('hash')
                     node_stats[node_id]['blocks_executed'] += 1
+                    node_stats[node_id]['total_block_exec_ms'] += int(data.get('elapsed_ms', 0))
                     if block_hash and timestamp:
                         block_exec_times[block_hash] = timestamp
 
@@ -162,6 +164,7 @@ def calculate_metrics(data):
 
     # 1. Inclusion Latency (First Seen -> Executed)
     inclusion_latencies = []
+    inclusion_timeseries = [] # list of (timestamp, latency)
     for tx_hash, exec_ts_str in data['tx_exec_times'].items():
         if tx_hash in data['tx_recv_times'] and 'first_seen' in data['tx_recv_times'][tx_hash]:
             start = parse_ts(data['tx_recv_times'][tx_hash]['first_seen'])
@@ -169,37 +172,51 @@ def calculate_metrics(data):
             latency = (end - start).total_seconds()
             if latency >= 0:
                 inclusion_latencies.append(latency)
+                inclusion_timeseries.append((exec_ts_str, latency))
 
     # 2. Block Propagation Latency
     propagation_latencies = []
+    propagation_timeseries = [] # list of (timestamp, latency)
     for block_hash, nodes in data['block_recv_times'].items():
         if 'first_seen' in nodes:
-            first_ts = parse_ts(nodes['first_seen'])
+            first_ts_str = nodes['first_seen']
+            first_ts = parse_ts(first_ts_str)
             for node_id, ts_str in nodes.items():
                 if node_id == 'first_seen': continue
                 lat = (parse_ts(ts_str) - first_ts).total_seconds()
                 if lat >= 0:  # Changed from > 0 to >= 0
                     propagation_latencies.append(lat)
+                    propagation_timeseries.append((ts_str, lat))
 
     # Summarize Node Stats
     total_tx_exec = sum(s['tx_executed'] for s in data['node_stats'].values())
     total_blocks = sum(s['blocks_executed'] for s in data['node_stats'].values())
+    total_tx_exec_ms = sum(s['total_tx_exec_ms'] for s in data['node_stats'].values())
+    total_block_exec_ms = sum(s['total_block_exec_ms'] for s in data['node_stats'].values())
     
     results = {
         'inclusion_latency': {
             'avg': sum(inclusion_latencies) / len(inclusion_latencies) if inclusion_latencies else 0,
             'min': min(inclusion_latencies) if inclusion_latencies else 0,
             'max': max(inclusion_latencies) if inclusion_latencies else 0,
-            'count': len(inclusion_latencies)
+            'count': len(inclusion_latencies),
+            'timeseries': inclusion_timeseries
         },
         'propagation_latency': {
             'avg': sum(propagation_latencies) / len(propagation_latencies) if propagation_latencies else 0,
             'max': max(propagation_latencies) if propagation_latencies else 0,
-            'count': len(propagation_latencies)
+            'count': len(propagation_latencies),
+            'timeseries': propagation_timeseries
+        },
+        'execution_times': {
+            'avg_tx_exec_ms': total_tx_exec_ms / total_tx_exec if total_tx_exec > 0 else 0,
+            'avg_block_exec_ms': total_block_exec_ms / total_blocks if total_blocks > 0 else 0,
         },
         'total_stats': {
             'transactions_executed': total_tx_exec,
             'blocks_executed': total_blocks,
+            'total_tx_exec_ms': total_tx_exec_ms,
+            'total_block_exec_ms': total_block_exec_ms,
         },
         'node_breakdown': {node: stats for node, stats in data['node_stats'].items()}
     }
@@ -230,6 +247,11 @@ if __name__ == "__main__":
     print(f"Total Transactions Executed: {metrics['total_stats']['transactions_executed']}")
     print(f"Total Blocks Executed: {metrics['total_stats']['blocks_executed']}")
     
+    ex = metrics['execution_times']
+    print(f"\nAverage Execution Times:")
+    print(f"  Avg Transaction Execution: {ex['avg_tx_exec_ms']:.3f}ms")
+    print(f"  Avg Block Execution:       {ex['avg_block_exec_ms']:.3f}ms")
+    
     il = metrics['inclusion_latency']
     print(f"\nInclusion Latency (Time from P2P recv to EVM exec):")
     print(f"  Avg: {il['avg']:.3f}s")
@@ -249,8 +271,22 @@ if __name__ == "__main__":
         print(f"    Blocks Executed: {stats['blocks_executed']}")
         if stats['blocks_executed'] > 0:
             avg_gas = stats['total_gas'] / stats['blocks_executed']
+            avg_block_ms = stats['total_block_exec_ms'] / stats['blocks_executed']
             print(f"    Avg Gas/Block: {avg_gas:.0f}")
+            print(f"    Avg Block Exec: {avg_block_ms:.2f}ms")
+        if stats['tx_executed'] > 0:
+            avg_tx_ms = stats['total_tx_exec_ms'] / stats['tx_executed']
+            print(f"    Avg TX Exec: {avg_tx_ms:.2f}ms")
         
+    print("\n--- Time Series Data ---")
+    print("Inclusion Latency Time Series (timestamp, latency_s):")
+    for ts, lat in metrics['inclusion_latency']['timeseries']:
+        print(f"  {ts}, {lat:.3f}")
+        
+    print("\nBlock Propagation Latency Time Series (timestamp, latency_s):")
+    for ts, lat in metrics['propagation_latency']['timeseries']:
+        print(f"  {ts}, {lat:.3f}")
+
     with open('experiment_results.json', 'w') as f:
         json.dump(metrics, f, indent=2)
     print("\nFull results saved to experiment_results.json")
