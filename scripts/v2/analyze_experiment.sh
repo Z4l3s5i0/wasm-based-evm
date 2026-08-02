@@ -23,6 +23,9 @@ DB_EXPORTER="$SCRIPT_DIR/db_exporter/target/release/db_exporter"
 # 0. Ensure db_exporter is built
 if [ ! -f "$DB_EXPORTER" ]; then
     echo "Building db_exporter..."
+    # If the user is running from ~/experiments/scripts/v2/
+    # the repo is at ~/wasm-based-evm/
+    # We try to find the repo root to set it for cargo if needed, but here we just run cargo build
     (cd "$SCRIPT_DIR/db_exporter" && cargo build --release)
 fi
 
