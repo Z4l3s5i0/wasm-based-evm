@@ -30,7 +30,10 @@ if [ ! -f "$DB_EXPORTER" ]; then
 fi
 
 echo "Starting analysis for experiment: $EXP_DIR"
-mkdir -p "$EXP_DIR/analysis"
+if [ ! -d "$EXP_DIR/analysis" ]; then
+    sudo mkdir -p "$EXP_DIR/analysis"
+fi
+sudo chown -R $(id -u):$(id -g) "$EXP_DIR/analysis" 2>/dev/null || true
 
 # 1. Extract Metrics Server Data
 METRICS_DB="$EXP_DIR/metrics_server_data/metrics.redb"
@@ -39,7 +42,7 @@ if [ -f "$METRICS_DB" ]; then
     METRICS_TABLES=("experiments" "nodes" "metric_samples" "rpc_observations")
     for table in "${METRICS_TABLES[@]}"; do
         echo "  Exporting table: $table"
-        "$DB_EXPORTER" export --db-path "$METRICS_DB" --table "$table" --db-type metrics > "$EXP_DIR/analysis/metrics_$table.json" 2>/dev/null || echo "    Warning: Could not export $table"
+        sudo "$DB_EXPORTER" export --db-path "$METRICS_DB" --table "$table" --db-type metrics | sudo tee "$EXP_DIR/analysis/metrics_$table.json" > /dev/null || echo "    Warning: Could not export $table"
     done
 else
     echo "Warning: Metrics database not found at $METRICS_DB"
@@ -65,12 +68,15 @@ if [ -d "$EXP_DIR/data_v2" ]; then
         
         if [ -n "$EL_DB" ]; then
             echo "  Checking EL data for $node_name at $EL_DB..."
-            mkdir -p "$EXP_DIR/analysis/$node_name"
+            if [ ! -d "$EXP_DIR/analysis/$node_name" ]; then
+                sudo mkdir -p "$EXP_DIR/analysis/$node_name"
+            fi
+            sudo chown -R $(id -u):$(id -g) "$EXP_DIR/analysis/$node_name" 2>/dev/null || true
             # List available tables first to debug
-            "$DB_EXPORTER" list --db-path "$EL_DB" > "$EXP_DIR/analysis/$node_name/tables.txt" 2>/dev/null
+            sudo "$DB_EXPORTER" list --db-path "$EL_DB" | sudo tee "$EXP_DIR/analysis/$node_name/tables.txt" > /dev/null
             
             for table in "${EL_TABLES[@]}"; do
-                "$DB_EXPORTER" export --db-path "$EL_DB" --table "$table" --db-type el > "$EXP_DIR/analysis/$node_name/el_$table.json" 2>/dev/null || echo "    Warning: Could not export $table for $node_name"
+                sudo "$DB_EXPORTER" export --db-path "$EL_DB" --table "$table" --db-type el | sudo tee "$EXP_DIR/analysis/$node_name/el_$table.json" > /dev/null || echo "    Warning: Could not export $table for $node_name"
             done
         else
             echo "  Warning: No EL database found for $node_name"
@@ -89,7 +95,7 @@ if [ ! -d "$LOGS_DIR" ]; then
 fi
 
 if [ -d "$LOGS_DIR" ]; then
-    bash "$SCRIPT_DIR/evaluate.sh" "$LOGS_DIR" "$CHAIN_ID" > "$EXP_DIR/analysis/log_evaluation.txt"
+    sudo bash "$SCRIPT_DIR/evaluate.sh" "$LOGS_DIR" "$CHAIN_ID" | sudo tee "$EXP_DIR/analysis/log_evaluation.txt" > /dev/null
     echo "  Log evaluation saved to $EXP_DIR/analysis/log_evaluation.txt"
 else
     echo "Warning: No logs found for evaluation."
@@ -97,12 +103,22 @@ fi
 
 # 4. Generate Plots
 echo "Generating plots..."
-python "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots"
+if [ ! -d "$EXP_DIR/plots" ]; then
+    sudo mkdir -p "$EXP_DIR/plots"
+fi
+sudo chown -R $(id -u):$(id -g) "$EXP_DIR/plots" 2>/dev/null || true
+# Try python3 then python
+if command -v python3 &>/dev/null; then
+    sudo python3 "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots"
+else
+    sudo python "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots"
+fi
 
 # 5. Generate Summary
 echo "Analysis complete. Results are in $EXP_DIR/analysis and $EXP_DIR/plots"
+sudo chown -R $(id -u):$(id -g) "$EXP_DIR/analysis" "$EXP_DIR/plots" 2>/dev/null || true
 
-cat <<EOF > "$EXP_DIR/analysis/SUMMARY.md"
+cat <<EOF | sudo tee "$EXP_DIR/analysis/SUMMARY.md" > /dev/null
 # Experiment Analysis Summary
 Experiment: $(basename "$EXP_DIR")
 Date: $(date)
