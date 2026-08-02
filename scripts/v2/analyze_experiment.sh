@@ -108,10 +108,20 @@ if [ ! -d "$EXP_DIR/plots" ]; then
 fi
 sudo chown -R $(id -u):$(id -g) "$EXP_DIR/plots" 2>/dev/null || true
 # Try python3 then python
+PLOT_EXIT_CODE=0
 if command -v python3 &>/dev/null; then
-    sudo python3 "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots"
+    sudo python3 "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots" || PLOT_EXIT_CODE=$?
 else
-    sudo python "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots"
+    sudo python "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots" || PLOT_EXIT_CODE=$?
+fi
+
+if [ $PLOT_EXIT_CODE -eq 2 ]; then
+    echo "Warning: Plotting skipped due to empty or invalid metrics data."
+    # Create a marker file for the loop script to detect skipping
+    touch "$EXP_DIR/analysis/PLOTS_SKIPPED"
+elif [ $PLOT_EXIT_CODE -ne 0 ]; then
+    echo "Error: Plotting failed with exit code $PLOT_EXIT_CODE"
+    exit $PLOT_EXIT_CODE
 fi
 
 # 5. Generate Summary

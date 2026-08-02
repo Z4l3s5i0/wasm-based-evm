@@ -15,6 +15,7 @@ RUN_EXPERIMENT="$SCRIPT_DIR/run_experiment.sh"
 
 TOTAL_COMBINATIONS=$((${#DURATIONS[@]} * ${#WAIT_DURATIONS[@]} * ${#NODE_COUNTS[@]} * ${#RATIOS[@]} * ${#WORKLOAD_NODE_PERCENTS[@]}))
 COUNTER=0
+FAILED_PLOTS=()
 
 echo "=== Starting Experiment Loop ==="
 echo "Total combinations to run: $TOTAL_COMBINATIONS"
@@ -47,6 +48,16 @@ for nodes in "${NODE_COUNTS[@]}"; do
                         --wait-duration "$wait_dur" \
                         --chain-id "$CHAIN_ID"
                     
+                    # Check if plotting was skipped
+                    # We need to find the experiment directory. run_experiment.sh doesn't output it easily,
+                    # but we know it's in experiments/exp_YYYYMMDD_HHMMSS/analysis/PLOTS_SKIPPED
+                    # Let's find the latest directory in experiments/
+                    LATEST_EXP=$(ls -td experiments/exp_* 2>/dev/null | head -1)
+                    if [ -f "$LATEST_EXP/analysis/PLOTS_SKIPPED" ]; then
+                        PARAM_INFO="Nodes: $nodes, Ratio: $ratio, WL%: $wl_percent, Dur: $duration, Wait: $wait_dur"
+                        FAILED_PLOTS+=("$LATEST_EXP ($PARAM_INFO)")
+                    fi
+                    
                     echo "--- Finished Experiment $COUNTER/$TOTAL_COMBINATIONS ---"
                     echo ""
                 done
@@ -56,3 +67,12 @@ for nodes in "${NODE_COUNTS[@]}"; do
 done
 
 echo "=== All Experiments Completed ==="
+
+if [ ${#FAILED_PLOTS[@]} -ne 0 ]; then
+    echo ""
+    echo "=== Experiments with skipped plotting (invalid/empty metrics) ==="
+    for failed in "${FAILED_PLOTS[@]}"; do
+        echo "- $failed"
+    done
+    echo "================================================================"
+fi
