@@ -131,12 +131,17 @@ for i in "${TARGET_INDICES[@]}"; do
         exit 1
     fi
 
-    echo "Launching workload for node $i at $RPC_URL"
+    echo "Launching workload for node $i at $RPC_URL with seed node$i"
+    # We derive a deterministic seed based on the node index
+    # to avoid collisions when using the same state directory.
+    SEED="0x$(printf "node$i" | sha256sum | cut -d' ' -f1)"
+
     # We pass --duration slightly longer than WORKLOAD_DURATION to ensure it doesn't exit early on its own
     # although we will kill it anyway.
     # We also redirect stdin from /dev/null because run_workload.sh uses docker run -it which needs a TTY or will fail without stdin
     bash "$SCRIPT_DIR/run_workload.sh" \
         --pk "$PRIV_KEY" \
+        --seed "$SEED" \
         --duration $((WORKLOAD_DURATION)) \
         --network experiments_blockchain-net \
         --scenario "exp/uber" \

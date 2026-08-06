@@ -29,6 +29,7 @@ usage() {
     echo "  --duration N     Duration in seconds (for single scenario) (default: $DURATION)"
     echo "  --accounts N     Number of accounts per agent (default: $ACCOUNTS)"
     echo "  --min-balance B  Minimum balance for accounts (default: $MIN_BALANCE)"
+    echo "  --seed SEED      Deterministic seed for agent addresses"
     echo "  --gas-limit N    Gas limit override for transactions"
     echo "  --network NAME   Docker network to join"
     echo "  --image NAME     Contender Docker image name (default: $CONTENDER_IMAGE)"
@@ -47,6 +48,7 @@ while [[ "$#" -gt 0 ]]; do
         --duration) DURATION="$2"; shift ;;
         --accounts) ACCOUNTS="$2"; shift ;;
         --min-balance) MIN_BALANCE="$2"; shift ;;
+        --seed) SEED="$2"; shift ;;
         --gas-limit) GAS_LIMIT="$2"; shift ;;
         --network) NETWORK="$2"; shift ;;
         --image) CONTENDER_IMAGE="$2"; shift ;;
@@ -148,6 +150,10 @@ fi
 
 if [ -n "$MIN_BALANCE" ]; then
     EXTRA_ARGS="$EXTRA_ARGS --min-balance $MIN_BALANCE"
+fi
+
+if [ -n "$SEED" ]; then
+    EXTRA_ARGS="$EXTRA_ARGS --seed $SEED"
 fi
 
 # Run setup if private key is provided
