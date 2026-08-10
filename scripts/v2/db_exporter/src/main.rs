@@ -54,7 +54,15 @@ fn main() -> Result<()> {
 }
 
 fn list_tables(db_path: &str) -> Result<()> {
-    let db = Database::open(db_path).context("Failed to open database")?;
+    let mut db = Database::open(db_path).context("Failed to open database")?;
+    
+    // Repair database if corrupted
+    match db.check_integrity() {
+        Ok(true) => (),
+        Ok(false) => println!("Database {} was repaired automatically", db_path),
+        Err(e) => eprintln!("Warning: integrity check failed for {}: {}", db_path, e),
+    }
+
     println!("Tables in {}:", db_path);
     
     if let Ok(write_txn) = db.begin_write() {
@@ -68,7 +76,15 @@ fn list_tables(db_path: &str) -> Result<()> {
 }
 
 fn export_metrics(db_path: &str, table_name: &str) -> Result<()> {
-    let db = Database::open(db_path).context("Failed to open database")?;
+    let mut db = Database::open(db_path).context("Failed to open database")?;
+    
+    // Repair database if corrupted
+    match db.check_integrity() {
+        Ok(true) => (),
+        Ok(false) => println!("Database {} was repaired automatically", db_path),
+        Err(e) => eprintln!("Warning: integrity check failed for {}: {}", db_path, e),
+    }
+
     let read_txn = db.begin_read()?;
     
     let definition: TableDefinition<&str, &str> = TableDefinition::new(table_name);
@@ -98,7 +114,15 @@ fn export_metrics(db_path: &str, table_name: &str) -> Result<()> {
 }
 
 fn export_el(db_path: &str, table_name: &str) -> Result<()> {
-    let db = Database::open(db_path).context("Failed to open database")?;
+    let mut db = Database::open(db_path).context("Failed to open database")?;
+    
+    // Repair database if corrupted
+    match db.check_integrity() {
+        Ok(true) => (),
+        Ok(false) => println!("Database {} was repaired automatically", db_path),
+        Err(e) => eprintln!("Warning: integrity check failed for {}: {}", db_path, e),
+    }
+
     let read_txn = db.begin_read()?;
 
     macro_rules! try_export {

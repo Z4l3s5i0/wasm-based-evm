@@ -144,7 +144,7 @@ for i in "${TARGET_INDICES[@]}"; do
         --seed "$SEED" \
         --duration $((WORKLOAD_DURATION)) \
         --network experiments_blockchain-net \
-        --scenario "exp/uber" \
+        --scenario "exp/counter" \
         --tps 4 \
         --accounts 4 \
         --min-balance 10000000000000000000 \
@@ -190,13 +190,13 @@ COLLECT_OUTPUT=$(sudo bash "$SCRIPT_DIR/collect_results.sh")
 echo "$COLLECT_OUTPUT"
 EXP_DIR_PATH=$(echo "$COLLECT_OUTPUT" | grep "RESULT_DIR=" | cut -d'=' -f2)
 
-# 10. Analyze experiment results
-if [ -n "$EXP_DIR_PATH" ] && [ -d "$EXP_DIR_PATH" ]; then
-    echo "Step 10: Analyzing experiment results..."
-    bash "$SCRIPT_DIR/analyze_experiment.sh" "$EXP_DIR_PATH" "$CHAIN_ID"
-else
-    echo "Warning: Could not determine experiment directory for analysis."
-fi
+## 10. Analyze experiment results
+#if [ -n "$EXP_DIR_PATH" ] && [ -d "$EXP_DIR_PATH" ]; then
+#    echo "Step 10: Analyzing experiment results..."
+#    bash "$SCRIPT_DIR/analyze_experiment.sh" "$EXP_DIR_PATH" "$CHAIN_ID"
+#else
+#    echo "Warning: Could not determine experiment directory for analysis."
+#fi
 
 # 11. Start cleanup
 echo "Step 11: Cleaning up..."
