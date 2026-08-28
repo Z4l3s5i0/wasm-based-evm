@@ -102,42 +102,42 @@ else
 fi
 
 # 4. Generate Plots
-echo "Generating plots..."
-if [ ! -d "$EXP_DIR/plots" ]; then
-    sudo mkdir -p "$EXP_DIR/plots"
-fi
-sudo chown -R $(id -u):$(id -g) "$EXP_DIR/plots" 2>/dev/null || true
-# Try python3 then python
-PLOT_EXIT_CODE=0
-if command -v python3 &>/dev/null; then
-    sudo python3 "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots" || PLOT_EXIT_CODE=$?
-else
-    sudo python "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots" || PLOT_EXIT_CODE=$?
-fi
-
-if [ $PLOT_EXIT_CODE -eq 2 ]; then
-    echo "Warning: Plotting skipped due to empty or invalid metrics data."
-    # Create a marker file for the loop script to detect skipping
-    touch "$EXP_DIR/analysis/PLOTS_SKIPPED"
-elif [ $PLOT_EXIT_CODE -ne 0 ]; then
-    echo "Error: Plotting failed with exit code $PLOT_EXIT_CODE"
-    exit $PLOT_EXIT_CODE
-fi
-
-# 5. Generate Summary
-echo "Analysis complete. Results are in $EXP_DIR/analysis and $EXP_DIR/plots"
-sudo chown -R $(id -u):$(id -g) "$EXP_DIR/analysis" "$EXP_DIR/plots" 2>/dev/null || true
-
-cat <<EOF | sudo tee "$EXP_DIR/analysis/SUMMARY.md" > /dev/null
-# Experiment Analysis Summary
-Experiment: $(basename "$EXP_DIR")
-Date: $(date)
-
-## Metrics
-- Metrics Server data exported to JSON files.
-- EL node data (Headers, BlockBodies, Transactions) exported per node.
-- Visualizations generated in [plots folder](../plots).
-
-## Log Evaluation
-See [log_evaluation.txt](./log_evaluation.txt) for detailed log analysis results.
-EOF
+##echo "Generating plots..."
+##if [ ! -d "$EXP_DIR/plots" ]; then
+##    sudo mkdir -p "$EXP_DIR/plots"
+##fi
+##sudo chown -R $(id -u):$(id -g) "$EXP_DIR/plots" 2>/dev/null || true
+### Try python3 then python
+##PLOT_EXIT_CODE=0
+##if command -v python3 &>/dev/null; then
+##    sudo python3 "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots" || PLOT_EXIT_CODE=$?
+##else
+##    sudo python "$SCRIPT_DIR/plot_metrics.py" "$EXP_DIR/analysis" "$EXP_DIR/plots" || PLOT_EXIT_CODE=$?
+##fi
+##
+##if [ $PLOT_EXIT_CODE -eq 2 ]; then
+##    echo "Warning: Plotting skipped due to empty or invalid metrics data."
+##    # Create a marker file for the loop script to detect skipping
+##    touch "$EXP_DIR/analysis/PLOTS_SKIPPED"
+##elif [ $PLOT_EXIT_CODE -ne 0 ]; then
+##    echo "Error: Plotting failed with exit code $PLOT_EXIT_CODE"
+##    exit $PLOT_EXIT_CODE
+##fi
+#
+## 5. Generate Summary
+#echo "Analysis complete. Results are in $EXP_DIR/analysis and $EXP_DIR/plots"
+#sudo chown -R $(id -u):$(id -g) "$EXP_DIR/analysis" "$EXP_DIR/plots" 2>/dev/null || true
+#
+#cat <<EOF | sudo tee "$EXP_DIR/analysis/SUMMARY.md" > /dev/null
+## Experiment Analysis Summary
+#Experiment: $(basename "$EXP_DIR")
+#Date: $(date)
+#
+### Metrics
+#- Metrics Server data exported to JSON files.
+#- EL node data (Headers, BlockBodies, Transactions) exported per node.
+#- Visualizations generated in [plots folder](../plots).
+#
+### Log Evaluation
+#See [log_evaluation.txt](./log_evaluation.txt) for detailed log analysis results.
+#EOF

@@ -60,7 +60,7 @@ echo "Running ethereum-genesis-generator..."
 docker run --rm -u "$(id -u)" \
   -v "$(pwd)/$OUTPUT_DIR/values.env:/config/values.env" \
   -v "$(pwd)/$OUTPUT_DIR:/data" \
-  ethpandaops/ethereum-genesis-generator:master all
+  ethpandaops/ethereum-genesis-generator:6.1.3 all
 
 # Cleanup and organize files
 if [ -d "$OUTPUT_DIR/metadata" ]; then

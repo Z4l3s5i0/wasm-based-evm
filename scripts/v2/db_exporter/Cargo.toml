@@ -14,9 +14,9 @@ hex = "0.4.3"
 
 alloy-primitives = { version = "1.5.7", features = ["serde"] }
 alloy-consensus = { version = "1.6.3" }
-wasix_eth_storage = { path = "../../../wasm-based-evm/wasix_eth/wasix_eth_storage" }
-wasix_eth_types = { path = "../../../wasm-based-evm/wasix_eth/wasix_eth_types" }
-wasix_eth_utils = { path = "../../../wasm-based-evm/wasix_eth/wasix_eth_utils" }
+wasix_eth_storage = { path = "../../../wasix_eth/wasix_eth_storage" }
+wasix_eth_types = { path = "../../../wasix_eth/wasix_eth_types" }
+wasix_eth_utils = { path = "../../../wasix_eth/wasix_eth_utils" }
 ruint = "1.12.3"
 alloy-trie = "0.9.5"
 alloy-rpc-types-engine = "1.6.3"

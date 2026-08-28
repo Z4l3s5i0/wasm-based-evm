@@ -1,7 +1,7 @@
 #!/bin/bash
 
 # Default values
-REGISTRY=""
+REGISTRY="docker.io/z4l3s5i0"
 TAG="latest"
 INTERVAL=60 # 1 minutes
 ONCE=false

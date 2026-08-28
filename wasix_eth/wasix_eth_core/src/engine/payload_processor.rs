@@ -296,6 +296,7 @@ impl PayloadProcessor {
             self.read_storage.block_number(parent_hash).ok().flatten() == Some(0);
 
         // If parent is not known (not in storage AND not in block_tree), it's SYNCING/ACCEPTED.
+        // todo check if it is processing as well
         if !is_genesis && !self.chain.has_block(parent_hash).await {
             info!("[PayloadProcessor] Parent block {:?} not found. Returning ACCEPTED.", parent_hash);
             

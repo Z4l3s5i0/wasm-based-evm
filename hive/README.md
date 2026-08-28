@@ -18,13 +18,7 @@ docker build -f ./hive/hive.dockerfile -t hive-custom .
 ## 2. Running the test suite
 Run the Wasix Wasm-Ethereum Client:
 ```bash
-docker run --rm \
-  -v /var/run/docker.sock:/var/run/docker.sock \
-  -v $(pwd)/workspace:/hive/workspace \
-  hive-custom \
-  --sim ethereum/engine \
-  --client wasix-w-eth \
-  --sim.parallelism 20
+docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v $(pwd)/workspace:/hive/workspace hive-custom --sim ethereum/engine --client wasix-w-eth --sim.parallelism 5
 ```
 Run the Wasix Rust-Ethereum Client:
 ```bash
@@ -39,10 +33,5 @@ docker run --rm \
 
 Run the Hiveview Server:
 ```bash
-docker run --rm -it \
-  -p 8080:8080 \
-  -v $(pwd)/workspace:/hive/workspace \
-  --entrypoint ./hiveview \
-  hive-custom \
-  --serve --logdir /hive/workspace/logs
+docker run --rm -it -p 8080:8080 -v $(pwd)/workspace:/hive/workspace --entrypoint ./hiveview hive-custom --serve --logdir /hive/workspace/logs
 ```

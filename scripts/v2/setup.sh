@@ -71,7 +71,7 @@ retry_command() {
 
 # 4. Pull necessary common images to speed up first start
 echo "Pre-pulling common Docker images..."
-retry_command docker pull ethpandaops/ethereum-genesis-generator:master
+retry_command docker pull ethpandaops/ethereum-genesis-generator:6.1.3
 retry_command docker pull sigp/lighthouse:latest
 retry_command docker pull ghcr.io/ethstaker/ethstaker-deposit-cli:latest
 retry_command docker pull prom/node-exporter:v1.8.1
